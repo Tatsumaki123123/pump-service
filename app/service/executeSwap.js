@@ -13,17 +13,9 @@ const {
   Connection,
 } = require("@solana/web3.js");
 
+const { boss, connection } = require("../constants");
+
 const bs58 = require("bs58");
-
-const RPC_URL =
-  process.env.SOLANA_RPC ||
-  "https://cassandra-bq5oqs-fast-mainnet.helius-rpc.com/";
-
-const WALLET_PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY;
-
-const boss = Keypair.fromSecretKey(bs58.decode(WALLET_PRIVATE_KEY));
-
-const connection = new Connection(RPC_URL, "confirmed");
 
 const WALLET_AMOUNTS = [
   { transferAmount: 0.03, buyAmount: 0.01 },

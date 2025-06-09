@@ -1,4 +1,3 @@
-const ethers = require("ethers");
 module.exports = (appInfo) => {
   const config = (exports = {});
   config.mongoose = {

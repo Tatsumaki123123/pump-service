@@ -1,5 +1,4 @@
 require("dotenv").config();
-const ethers = require("ethers");
 /**
  * @param {Egg.EggAppInfo} appInfo app info
  */
