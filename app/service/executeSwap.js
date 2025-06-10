@@ -2,8 +2,9 @@ const { Service } = require("egg");
 require("dotenv").config();
 const chalk = require("chalk");
 const fs = require("fs");
-const {} = require("../constants/executeData");
+// const {} = require("../constants/executeData");
 
+const bs58 = require("bs58");
 const {
   TransactionMessage,
   VersionedTransaction,
@@ -17,7 +18,12 @@ const {
 
 const { boss, connection } = require("../constants");
 
-const bs58 = require("bs58");
+const {
+  getSPLBalance,
+  closeAllTokenAccounts,
+  transferAllSol,
+  transferSol,
+} = require("../utils/solana");
 
 class ExecuteSwap extends Service {
   constructor(props) {
@@ -49,6 +55,7 @@ class ExecuteSwap extends Service {
   }
 
   async end() {
+    // await this.transferSolToWallets();
     await this.recycleSol();
     return true;
   }
@@ -103,7 +110,7 @@ class ExecuteSwap extends Service {
     await ctx.model.ExecuteData.updateMany({ active: true }, { active: false });
     await ctx.model.ExecuteData.create(newData);
     // transfer
-    await this.transferAllSol(lastBoss, boss.publicKey);
+    await transferAllSol(connection, lastBoss, boss.publicKey);
   }
 
   /**
@@ -128,10 +135,10 @@ class ExecuteSwap extends Service {
         };
       });
       fs.writeFileSync("keypair.json", JSON.stringify(dbData));
-      const boss = Keypair.fromSecretKey(executeData.privateKey);
+      const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
       const amounts = walletConfig.map((item) => item.transferAmount);
       const res = await ctx.model.ExecuteWallet.insertMany(dbData);
-      await this.transferSol(boss, wallets, amounts);
+      await transferSol(connection, boss, wallets, amounts);
       await ctx.model.ExecuteData.updateOne(
         { eid: executeData.eid },
         { walletsExist: true }
@@ -142,82 +149,17 @@ class ExecuteSwap extends Service {
     }
   }
 
-  async transferSol(from, wallets, amounts) {
-    const { blockhash } = await connection.getLatestBlockhash();
-    if (wallets && wallets.length > 0) {
-      const transferIxs = wallets.map((wallet, index) =>
-        SystemProgram.transfer({
-          fromPubkey: from.publicKey,
-          toPubkey: wallet,
-          lamports: amounts[index] * LAMPORTS_PER_SOL,
-        })
-      );
+  async transferSolToWallets() {
+    const wallets = await this.getWallets();
+    const executeData = await this.getExecuteData();
+    const walletConfig = await this.getWalletConfig();
 
-      const transferMessage = new TransactionMessage({
-        payerKey: boss.publicKey,
-        recentBlockhash: blockhash,
-        instructions: transferIxs,
-      }).compileToV0Message();
-
-      const transferTx = new VersionedTransaction(transferMessage);
-      transferTx.sign([from]);
-
-      try {
-        const signature = await connection.sendTransaction(transferTx, {
-          skipPreflight: false,
-        });
-        const tx = await connection.confirmTransaction(signature, "confirmed");
-        console.log(chalk.green(`Transaction sent: ${signature}`));
-      } catch (error) {
-        console.error(
-          chalk.red(`Failed to send transaction: ${error.message}`)
-        );
-      }
-      console.log(chalk.green("SOL transfers completed."));
-    } else {
-      throw new Error("no active wallet");
-    }
-  }
-
-  async transferAllSol(from, to) {
-    const { blockhash } = await connection.getLatestBlockhash();
-    const TRANSACTION_FEE = 5000;
-    const balance = await connection.getBalance(from.publicKey);
-    // const ataRent = await connection.getMinimumBalanceForRentExemption(165); // ATA 大小约为 165 字节
-    // const minRent = await connection.getMinimumBalanceForRentExemption(0);
-    const minRent = 0;
-
-    if (balance <= minRent + TRANSACTION_FEE) {
-      throw new Error(
-        `Insufficient balance for ${from.publicKey.toBase58()}, skipping.`
-      );
-    }
-
-    const ix = SystemProgram.transfer({
-      fromPubkey: from.publicKey,
-      toPubkey: to,
-      lamports: balance - minRent - TRANSACTION_FEE,
-    });
-
-    const volumeIxs = [ix];
-
-    const messageV0 = new TransactionMessage({
-      payerKey: from.publicKey,
-      recentBlockhash: blockhash,
-      instructions: volumeIxs,
-    }).compileToV0Message();
-
-    const tx = new VersionedTransaction(messageV0);
-    tx.sign([from]);
-
-    try {
-      const signature = await connection.sendTransaction(tx, {
-        skipPreflight: false,
-      });
-      await connection.confirmTransaction(signature, "confirmed");
-      console.log(chalk.green(`Transaction sent: ${signature}`));
-    } catch (error) {
-      throw new Error(`Failed to send transaction: ${error.message}`);
+    if (wallets && executeData) {
+      const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
+      console.log(boss.publicKey.toBase58());
+      const amounts = walletConfig.map((item) => item.transferAmount);
+      const newWallets = wallets.map((item) => new PublicKey(item.address));
+      await transferSol(connection, boss, newWallets, amounts);
     }
   }
 
@@ -269,78 +211,16 @@ class ExecuteSwap extends Service {
     console.log(chalk.green("Ended：recycle"));
     const { ctx } = this;
     const wallets = await this.getWallets();
-    if (wallets) {
-      const { blockhash } = await connection.getLatestBlockhash();
-      const TRANSACTION_FEE = 5000;
-
-      const returnTxns = [];
-      for (let i = 0; i < wallets.length; i++) {
-        const keypair = wallets[i].keypair;
-        const balance = await connection.getBalance(keypair.publicKey);
-        // const ataRent = await connection.getMinimumBalanceForRentExemption(165); // ATA 大小约为 165 字节
-        // const minRent = await connection.getMinimumBalanceForRentExemption(0);
-        const minRent = 0;
-
-        if (balance <= minRent + TRANSACTION_FEE) {
-          console.log(
-            chalk.yellow(
-              `Insufficient balance for ${keypair.publicKey.toString()}, skipping.`
-            )
-          );
-          continue;
-        }
-
-        const returnIx = SystemProgram.transfer({
-          fromPubkey: keypair.publicKey,
-          toPubkey: boss.publicKey,
-          lamports: balance - minRent - TRANSACTION_FEE,
-        });
-
-        const volumeIxs = [returnIx];
-        // if (i === keypairs.length - 1) {
-        //   volumeIxs.push(
-        //     SystemProgram.transfer({
-        //       fromPubkey: wallet.publicKey,
-        //       toPubkey: tipAcct,
-        //       lamports: BigInt(JITO_TIP_AMOUNT),
-        //     })
-        //   );
-        //   signer = [keypair, wallet];
-        // }
-
-        const messageV0 = new TransactionMessage({
-          payerKey: keypair.publicKey,
-          recentBlockhash: blockhash,
-          instructions: volumeIxs,
-        }).compileToV0Message();
-
-        const tx = new VersionedTransaction(messageV0);
-        tx.sign([keypair]);
-
-        returnTxns.push(tx);
-      }
-
-      if (returnTxns.length > 0) {
-        // await this.sendBundle(returnTxns);
-        for (const returnTxn of returnTxns) {
-          try {
-            const signature = await connection.sendTransaction(returnTxn, {
-              skipPreflight: false,
-            });
-            const tx = await connection.confirmTransaction(
-              signature,
-              "confirmed"
-            );
-            console.log(chalk.green(`Transaction sent: ${signature}`));
-          } catch (error) {
-            console.error(
-              chalk.red(`Failed to send transaction: ${error.message}`)
-            );
-          }
-        }
-        console.log(chalk.green("SOL balances returned to main wallet."));
-      } else {
-        console.log(chalk.yellow("No SOL balances to return."));
+    const executeData = await this.getExecuteData();
+    if (wallets && executeData) {
+      for (const wallet of wallets) {
+        // 先关闭账户
+        // await closeAllTokenAccounts(connection, wallet.keypair);
+        await transferAllSol(
+          connection,
+          wallet.keypair,
+          new PublicKey(executeData.bossAddress)
+        );
       }
     } else {
       console.log(chalk.yellow("No wallet."));
@@ -350,26 +230,25 @@ class ExecuteSwap extends Service {
   /**
    *
    * @param {*} token
-   * @param {*} canTwice,  true: buy twice,  little amount
+   * @param {*} type,  first, second, multi
    * @returns
    */
-  async buyToken(token, canTwice = false) {
+  async buyToken(token, type = "first") {
     console.log(chalk.green(`\nStep 3: Buying ${token}`));
     const { ctx } = this;
-    // const tokenInfo = await ctx.service.ave.getTokenInfo(token);
-    // console.log(tokenInfo);
-    // return;
-    const wallets = await this.getWallets(canTwice);
-    if (wallets && token) {
+
+    const wallets = await this.getWalletsWithConfig(type);
+
+    if (wallets && wallets.length > 0 && token) {
       const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
     }
   }
 
   // sell token
-  async sellToken(token) {
+  async sellToken(token, type = "all") {
     console.log(chalk.green(`Step 4: Selling ${token}`));
     const { ctx } = this;
-    const wallets = await this.getWallets();
+    const wallets = await this.getWalletsWithConfig(type);
     if (wallets && token) {
       const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
     }
@@ -378,22 +257,54 @@ class ExecuteSwap extends Service {
   /**
    * get keypair from db
    */
-  async getWallets(canTwice = false) {
+  async getWallets() {
     const { ctx } = this;
-    const filter = { active: true };
-    if (canTwice) {
-      filter.canTwice = true;
-    }
-    const dbData = await ctx.model.ExecuteWallet.find(filter);
-    if (dbData && dbData.length > 0) {
-      const wallets = dbData.map((wallet, index) => ({
-        keypair: Keypair.fromSecretKey(bs58.decode(wallet.privateKey)),
-        buyAmount: wallet.buyAmount,
-      }));
-      return wallets;
+    const executeData = await this.getExecuteData();
+    if (executeData) {
+      const dbData = await ctx.model.ExecuteWallet.find({
+        eid: executeData.eid,
+      });
+      if (dbData && dbData.length > 0) {
+        const wallets = dbData.map((wallet, index) => ({
+          address: wallet.address,
+          keypair: Keypair.fromSecretKey(bs58.decode(wallet.privateKey)),
+        }));
+        return wallets;
+      } else {
+        throw new Error("getWallets data error: No wallet");
+      }
     } else {
-      return null;
+      throw new Error("getWallets data error");
     }
+  }
+
+  async getWalletsWithConfig(type) {
+    const wallets = await this.getWallets();
+    const walletConfigs = await this.getWalletConfig();
+    const data = wallets.map((wallet, index) => {
+      const buyAmountArr = walletConfigs[index].buyAmount;
+      const buyAmount =
+        buyAmountArr[Math.floor(Math.random() * buyAmountArr.length)];
+      return {
+        ...wallet,
+        ...walletConfigs[index],
+        buyAmount: buyAmount,
+      };
+    });
+
+    const newWallets = data.filter((wallet) => {
+      if (type === "first") {
+        return wallet.firstBuy === true;
+      } else if (type === "second") {
+        return wallet.secondBuy === true;
+      } else if (type === "multi") {
+        return wallet.multiBuy === true;
+      } else {
+        return true;
+      }
+    });
+
+    return newWallets;
   }
 }
 

@@ -179,9 +179,7 @@ class PumpSwapSDK {
   constructor() {}
 
   async createBuyInstruction(params) {
-    const { tokenMint, user, buyAmount, slippage = 0.1 } = params;
-
-    const poolDetail = await getPoolsWithPrices(tokenMint);
+    const { tokenMint, user, buyAmount, slippage = 0.1, poolDetail } = params;
 
     const accounts = await this.getAccounts({
       poolDetail: poolDetail,
@@ -217,9 +215,8 @@ class PumpSwapSDK {
   }
 
   async createSellInstruction(params) {
-    const { tokenMint, user, tokenAmount, sellNewAccount } = params;
+    const { tokenMint, user, tokenAmount, sellNewAccount, poolDetail } = params;
 
-    const poolDetail = await getPoolsWithPrices(tokenMint);
     const accounts = await this.getAccounts({
       poolDetail,
       tokenMint,

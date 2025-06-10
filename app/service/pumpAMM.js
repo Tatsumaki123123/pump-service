@@ -27,6 +27,8 @@ const {
 const bs58 = require("bs58");
 const chalk = require("chalk");
 
+const { getPoolsWithPrices } = require("../libs/pool");
+
 const { connection, WSOL_TOKEN_ACCOUNT } = require("../constants");
 const PumpSwapSDK = require("../libs/pumpSwap");
 const { getSPLBalance } = require("../utils/solana");
@@ -62,6 +64,7 @@ class PumpAMM extends Service {
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
 
+      const poolDetail = await getPoolsWithPrices(tokenMint);
       const { blockhash } = await connection.getLatestBlockhash();
       const jipAcc = ctx.service.jito.getTipAcc();
       const ATA_RENT = await connection.getMinimumBalanceForRentExemption(165);
@@ -72,10 +75,12 @@ class PumpAMM extends Service {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
+        const { buyAmount, limit, price, fee } = wallet;
         // const user = new PublicKey(
         //   "CL3NczTBZh4mGfvLFVEb4LMrvg92QrpNXHwDuZ54Jq8g"
         // );
-        const buyAmount = wallet.buyAmount;
+
+        console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
 
         const wSolATA = getAssociatedTokenAddressSync(
           WSOL_TOKEN_ACCOUNT,
@@ -86,12 +91,12 @@ class PumpAMM extends Service {
 
         // 指令 1: 设置计算单位限制
         const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
-          units: 200000,
+          units: limit,
         });
 
         // 指令 2: 设置计算单位价格
         const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
-          microLamports: 69890,
+          microLamports: price,
         });
 
         // 指令 3: 创建 wSOL ATA, 获取账户 token account
@@ -133,6 +138,7 @@ class PumpAMM extends Service {
           user: user,
           buyAmount: buyAmount,
           slippage: SLIPPAGE_BASIS_POINTS,
+          poolDetail: poolDetail,
         });
 
         // 指令 8: 关闭 wSOL ATA
@@ -145,7 +151,7 @@ class PumpAMM extends Service {
         const jitoTipIx = SystemProgram.transfer({
           fromPubkey: user,
           toPubkey: jipAcc,
-          lamports: JITO_TIP_AMOUNT,
+          lamports: fee * LAMPORTS_PER_SOL,
         });
 
         const volumeIxs = [
@@ -170,24 +176,6 @@ class PumpAMM extends Service {
           const tx = new VersionedTransaction(messageV0);
           tx.sign([keypair]);
 
-          // //simulation tx
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.error(
-          //     chalk.red(
-          //       `Simulation error for ${user.toString()}:`,
-          //       JSON.stringify(simulationResult.value)
-          //     )
-          //   );
-          //   continue;
-          // }
-
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
-
           buyTxns.push(tx);
         } catch (error) {
           console.error(
@@ -201,15 +189,19 @@ class PumpAMM extends Service {
       }
 
       // for end
-      // return;
       if (buyTxns.length > 0) {
-        // const transferTx = buyTxns[0];
-        // const signature = await connection.sendTransaction(transferTx, {
-        //   skipPreflight: false,
-        // });
-        // const tx = await connection.confirmTransaction(signature, "confirmed");
+        // for (const transferTx of buyTxns) {
+        //   const signature = await connection.sendTransaction(transferTx, {
+        //     skipPreflight: false,
+        //   });
+        //   const tx = await connection.confirmTransaction(
+        //     signature,
+        //     "confirmed"
+        //   );
+        // }
+
         const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
-        console.log(bundleResult);
+        // console.log(bundleResult);
         console.log(chalk.green("Buy transactions completed."));
       }
     } else {
@@ -223,6 +215,7 @@ class PumpAMM extends Service {
 
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
+      const poolDetail = await getPoolsWithPrices(tokenMint);
       const { blockhash } = await connection.getLatestBlockhash();
       const jipAcc = ctx.service.jito.getTipAcc();
 
@@ -232,6 +225,8 @@ class PumpAMM extends Service {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
+
+        const { limit, price, fee } = wallet;
         // const user = new PublicKey(
         //   "CL3NczTBZh4mGfvLFVEb4LMrvg92QrpNXHwDuZ54Jq8g"
         // );
@@ -240,115 +235,101 @@ class PumpAMM extends Service {
           tokenMint,
           keypair.publicKey
         );
-        console.log("tokenAmount:", tokenAmount);
-        if (tokenAmount <= 10000) {
-          continue;
-        }
 
-        // 1, setComputeUnitLimitIx
-        const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
-          units: 200000,
-        });
+        console.log(`${user.toBase58()} sell ${tokenAmount} ${token}`);
+        if (tokenAmount >= 10000) {
+          // 1, setComputeUnitLimitIx
+          const setComputeUnitLimitIx =
+            ComputeBudgetProgram.setComputeUnitLimit({
+              units: limit,
+            });
 
-        // 2,
-        const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
-          microLamports: 69890,
-        });
+          // 2,
+          const setComputeUnitPriceIx =
+            ComputeBudgetProgram.setComputeUnitPrice({
+              microLamports: price,
+            });
 
-        // 3, createAccountWithSeed
-        // const seed = new Date().getTime().toString();
-        const seed = "1749356034021";
+          // 3, createAccountWithSeed
+          // const seed = new Date().getTime().toString();
+          const seed = "1749356034021";
 
-        const newAccount = await PublicKey.createWithSeed(
-          user,
-          seed,
-          TOKEN_PROGRAM_ID
-        );
-        const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
-          fromPubkey: user,
-          newAccountPubkey: newAccount,
-          basePubkey: user,
-          seed: seed,
-          lamports: 2039280,
-          space: 165,
-          programId: TOKEN_PROGRAM_ID,
-        });
-
-        // 4, initializeAccount
-        const initializeAccountIx = createInitializeAccountInstruction(
-          newAccount,
-          WSOL_TOKEN_ACCOUNT,
-          user,
-          TOKEN_PROGRAM_ID
-        );
-
-        // 5, pump sell
-        const swapTx = await pSwap.createSellInstruction({
-          user,
-          tokenMint,
-          tokenAmount,
-          sellNewAccount: newAccount,
-        });
-
-        // 6. Token Program: closeAccount
-        const closeAccountIx = createCloseAccountInstruction(
-          newAccount,
-          user,
-          user
-        );
-
-        //7
-        const jitoTipIx = SystemProgram.transfer({
-          fromPubkey: keypair.publicKey,
-          toPubkey: jipAcc,
-          lamports: JITO_TIP_AMOUNT,
-        });
-
-        const volumeIxs = [
-          setComputeUnitLimitIx,
-          setComputeUnitPriceIx,
-          createAccountWithSeedIx,
-          initializeAccountIx,
-          swapTx,
-          closeAccountIx,
-          jitoTipIx,
-        ];
-
-        try {
-          const messageV0 = new TransactionMessage({
-            payerKey: keypair.publicKey,
-            recentBlockhash: blockhash,
-            instructions: volumeIxs,
-          }).compileToV0Message();
-
-          const tx = new VersionedTransaction(messageV0);
-          tx.sign([keypair]);
-
-          sellTxns.push(tx);
-
-          //simulation tx
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.error(
-          //     chalk.red(
-          //       `Simulation error for ${keypair.publicKey.toString()}:`,
-          //       JSON.stringify(simulationResult.value)
-          //     )
-          //   );
-          //   continue;
-          // }
-
-          // console.log(chalk.green("simulation success", user.toString()));
-        } catch (error) {
-          console.error(
-            chalk.red(
-              `Error compiling transaction for ${user.toString()}:`,
-              error.message
-            )
+          const newAccount = await PublicKey.createWithSeed(
+            user,
+            seed,
+            TOKEN_PROGRAM_ID
           );
-          continue;
+          const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
+            fromPubkey: user,
+            newAccountPubkey: newAccount,
+            basePubkey: user,
+            seed: seed,
+            lamports: 2039280,
+            space: 165,
+            programId: TOKEN_PROGRAM_ID,
+          });
+
+          // 4, initializeAccount
+          const initializeAccountIx = createInitializeAccountInstruction(
+            newAccount,
+            WSOL_TOKEN_ACCOUNT,
+            user,
+            TOKEN_PROGRAM_ID
+          );
+
+          // 5, pump sell
+          const swapTx = await pSwap.createSellInstruction({
+            user,
+            tokenMint,
+            tokenAmount,
+            sellNewAccount: newAccount,
+            poolDetail: poolDetail,
+          });
+
+          // 6. Token Program: closeAccount
+          const closeAccountIx = createCloseAccountInstruction(
+            newAccount,
+            user,
+            user
+          );
+
+          //7
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: keypair.publicKey,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
+
+          const volumeIxs = [
+            setComputeUnitLimitIx,
+            setComputeUnitPriceIx,
+            createAccountWithSeedIx,
+            initializeAccountIx,
+            swapTx,
+            closeAccountIx,
+            jitoTipIx,
+          ];
+
+          try {
+            const messageV0 = new TransactionMessage({
+              payerKey: keypair.publicKey,
+              recentBlockhash: blockhash,
+              instructions: volumeIxs,
+            }).compileToV0Message();
+
+            const tx = new VersionedTransaction(messageV0);
+            tx.sign([keypair]);
+
+            sellTxns.push(tx);
+          } catch (error) {
+            console.error(
+              chalk.red(
+                `Error compiling transaction for ${user.toString()}:`,
+                error.message
+              )
+            );
+            continue;
+          }
         }
       }
       if (sellTxns.length > 0) {

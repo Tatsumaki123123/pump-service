@@ -27,9 +27,9 @@ class ExecuteSwap extends BaseController {
 
   async buyToken() {
     const { ctx } = this;
-    const { token, twice } = ctx.request.body;
-    if (token) {
-      const res = await ctx.service.executeSwap.buyToken(token, twice);
+    const { token, type } = ctx.request.body;
+    if (token && type) {
+      const res = await ctx.service.executeSwap.buyToken(token, type);
       this.success(res);
     } else {
       this.fail("params error");
@@ -38,16 +38,14 @@ class ExecuteSwap extends BaseController {
 
   async sellToken() {
     const { ctx } = this;
-    const { token } = ctx.request.body;
-    if (token) {
-      const res = await ctx.service.executeSwap.sellToken(token);
+    const { token, type } = ctx.request.body;
+    if (token && type) {
+      const res = await ctx.service.executeSwap.sellToken(token, type);
       this.success(res);
     } else {
       this.fail("params error");
     }
   }
-
-  async generateWallets() {}
 }
 
 module.exports = ExecuteSwap;

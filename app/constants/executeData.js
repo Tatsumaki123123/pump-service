@@ -16,7 +16,7 @@ const WALLET_CONFIGS = [
     price: 250000,
     fee: 0.00005,
     firstBuy: true,
-    secondBuy: false,
+    secondBuy: true,
   },
   {
     transferAmount: 1.5,
@@ -51,7 +51,7 @@ const TEST_WALLET_CONFIGS = [
     price: 250000,
     fee: 0.00005,
     firstBuy: true,
-    secondBuy: false,
+    secondBuy: true,
   },
   {
     transferAmount: 0.15,
