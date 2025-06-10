@@ -13,6 +13,7 @@
     "@solana/web3.js": "^1.91.7",
     "axios": "^1.8.4",
     "bs58": "^5.0.0",
+    "buffer-layout": "^1.2.2",
     "chalk": "^4.1.1",
     "dotenv": "^16.4.7",
     "egg": "^3",
@@ -23,6 +24,7 @@
     "egg-scripts": "^2",
     "form-data": "^4.0.2",
     "jito-ts": "^4.2.0",
+    "js-sha3": "^0.9.3",
     "lodash": "^4.17.21",
     "moment": "^2.30.1",
     "sequelize": "^6.37.3"
@@ -36,9 +38,9 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "start": "egg-scripts start --port=8888 --daemon --four-service --ignore-stderr --inspect",
+    "start": "egg-scripts start --port=8899 --daemon --four-service --ignore-stderr --inspect",
     "stop": "egg-scripts stop --title=four-service",
-    "dev": "egg-bin dev  --port=8888",
+    "dev": "egg-bin dev  --port=8899",
     "debug": "egg-bin debug",
     "test": "npm run lint -- --fix && npm run test-local",
     "test-local": "egg-bin test",

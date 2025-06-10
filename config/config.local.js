@@ -10,7 +10,7 @@ module.exports = (appInfo) => {
   const config = (exports = {});
   config.mongoose = {
     client: {
-      // url: "mongodb://pumpservice:Ay4reRmLhpsLE7sh@162.0.224.219:27017/pumpservice",
+      // url: "mongodb://pumpservice:88DH3BHKKWiy23Hm@172.17.0.2:27017/pumpservice",
       url: "mongodb://127.0.0.1:27017/pumpservice",
 
       options: { directConnection: true, retryWrites: true, w: "majority" },

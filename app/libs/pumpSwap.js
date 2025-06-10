@@ -1,7 +1,4 @@
 const {
-  Commitment,
-  Connection,
-  Finality,
   Keypair,
   PublicKey,
   Transaction,
@@ -12,7 +9,7 @@ const {
   TransactionMessage,
   VersionedTransaction,
 } = require("@solana/web3.js");
-const { Program, Provider } = require("@coral-xyz/anchor");
+
 const {
   createAssociatedTokenAccountInstruction,
   getAccount,
@@ -20,31 +17,25 @@ const {
   getOrCreateAssociatedTokenAccount,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountIdempotentInstruction,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } = require("@solana/spl-token");
-const { connection, boss } = require("../constants");
-const { sendNozomiTx } = require("./nozomi/tx-submission");
-const { sendBundle } = require("./jito");
-const {
-  getBuyTokenAmount,
-  calculateWithSlippageBuy,
-  getPumpSwapPool,
-} = require("./pool");
-const { getSPLBalance, logger } = require("./utils");
 
-const PUMP_AMM_PROGRAM_ID = new PublicKey(
-  "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+const { WSOL_TOKEN_ACCOUNT, PUMP_AMM_PROGRAM_ID } = require("../constants");
+
+const { calculateBuyAmount } = require("./pool");
+
+const GLOBAL_CONFIG = new PublicKey(
+  "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw"
 );
-const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
-  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+
+const PUMP_AMM_FEE = new PublicKey(
+  "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX"
+); // 3
+const PUMP_AMM_FEE_TOKEN_ACCOUNT = new PublicKey(
+  "X5QPJcpph4mBAJDzc4hRziFftSbcygV59kRb2Fu6Je1"
 );
-const TOKEN_PROGRAM_ID = new PublicKey(
-  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-);
-const WSOL_TOKEN_ACCOUNT = new PublicKey(
-  "So11111111111111111111111111111111111111112"
-);
-const global = new PublicKey("ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw");
-const eventAuthority = new PublicKey(
+const EVENT_AUTHORITY = new PublicKey(
   "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR"
 );
 const feeRecipient = new PublicKey(
@@ -53,6 +44,124 @@ const feeRecipient = new PublicKey(
 const feeRecipientAta = new PublicKey(
   "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb"
 );
+
+const defaultBuyAccounts = {
+  pool: {
+    account: null,
+    signer: false,
+    writable: false,
+    label: "pool",
+  },
+  user: {
+    account: null,
+    signer: true,
+    writable: true,
+    label: "user",
+  },
+  global_config: {
+    account: GLOBAL_CONFIG,
+    signer: false,
+    writable: false,
+    label: "global_config",
+  },
+  base_mint: {
+    account: null,
+    signer: false,
+    writable: false,
+    label: "base_mint",
+  },
+  quote_mint: {
+    account: WSOL_TOKEN_ACCOUNT,
+    signer: false,
+    writable: false,
+    label: "quote_mint",
+  },
+  user_base_token_account: {
+    account: null,
+    signer: false,
+    writable: true,
+    label: "user_base_token_account",
+  },
+  user_quote_token_account: {
+    account: null,
+    signer: false,
+    writable: true,
+    label: "user_quote_token_account",
+  },
+  pool_base_token_account: {
+    account: null,
+    signer: false,
+    writable: true,
+    label: "pool_base_token_account",
+  },
+  pool_quote_token_account: {
+    account: null,
+    signer: false,
+    writable: true,
+    label: "pool_quote_token_account",
+  },
+  protocol_fee_recipient: {
+    account: PUMP_AMM_FEE,
+    signer: false,
+    writable: false,
+    label: "protocol_fee_recipient",
+  },
+  protocol_fee_recipient_token_account: {
+    account: PUMP_AMM_FEE_TOKEN_ACCOUNT,
+    signer: false,
+    writable: true,
+    label: "protocol_fee_recipient_token_account",
+  },
+  base_token_program: {
+    account: TOKEN_PROGRAM_ID,
+    signer: false,
+    writable: false,
+    label: "base_token_program",
+  },
+  quote_token_program: {
+    account: TOKEN_PROGRAM_ID,
+    signer: false,
+    writable: false,
+    label: "quote_token_program",
+  },
+  system_program: {
+    account: SystemProgram.programId,
+    signer: false,
+    writable: false,
+    label: "system_program",
+  },
+  associated_token_program: {
+    account: ASSOCIATED_TOKEN_PROGRAM_ID,
+    signer: false,
+    writable: false,
+    label: "associated_token_program",
+  },
+  event_authority: {
+    account: EVENT_AUTHORITY,
+    signer: false,
+    writable: false,
+    label: "event_authority",
+  },
+  program: {
+    account: PUMP_AMM_PROGRAM_ID,
+    signer: false,
+    writable: false,
+    label: "program",
+  },
+  coin_creator_vault_ata: {
+    account: null,
+    signer: false,
+    writable: true,
+    label: "coin_creator_vault_ata",
+  },
+  coin_creator_vault_authority: {
+    account: null,
+    signer: false,
+    writable: false,
+    label: "coin_creator_vault_authority",
+  },
+};
+
 const BUY_DISCRIMINATOR = new Uint8Array([102, 6, 61, 18, 1, 218, 235, 234]);
 const SELL_DISCRIMINATOR = new Uint8Array([
   51, 230, 133, 164, 1, 127, 131, 173,
@@ -63,194 +172,34 @@ const DEFAULT_DECIMALS = 6;
 class PumpSwapSDK {
   constructor() {}
 
-  async buy(mint, user, solToBuy) {
-    const slippage = 0.3; // Default: 30%
-    const bought_token_amount = await getBuyTokenAmount(
-      BigInt(solToBuy * LAMPORTS_PER_SOL),
-      mint
-    );
-    logger.info({
-      status: `finding pumpswap pool for ${mint}`,
-    });
-    const pool = await getPumpSwapPool(mint);
-    const pumpswap_buy_tx = await this.createBuyInstruction(
+  async createBuyInstruction(params) {
+    const {
       pool,
+      tokenMint,
       user,
-      mint,
-      bought_token_amount,
-      BigInt(Math.floor(solToBuy * (1 + slippage) * LAMPORTS_PER_SOL))
-    );
-    const ata = getAssociatedTokenAddressSync(mint, user);
-    const ix_list = [
-      ...[
-        ComputeBudgetProgram.setComputeUnitLimit({
-          units: 300000,
-        }),
-        ComputeBudgetProgram.setComputeUnitPrice({
-          microLamports: 696969,
-        }),
-      ],
-      createAssociatedTokenAccountIdempotentInstruction(
-        wallet_1.publicKey,
-        ata,
-        wallet_1.publicKey,
-        mint
-      ),
-      pumpswap_buy_tx,
-    ];
-
-    const latestBlockhash = await connection.getLatestBlockhash();
-    const messageV0 = new TransactionMessage({
-      payerKey: wallet_1.publicKey,
-      recentBlockhash: latestBlockhash.blockhash,
-      instructions: ix_list,
-    }).compileToV0Message();
-    const transaction = new VersionedTransaction(messageV0);
-    transaction.sign([wallet_1]);
-    // sendNozomiTx(ix_list, wallet_1, latestBlockhash, "PumpSwap", "buy");
-    sendBundle(false, latestBlockhash.blockhash, transaction, pool, wallet_1);
-  }
-
-  async sell_exactAmount(mint, user, tokenAmount) {
-    const sell_token_amount = tokenAmount;
-    logger.info({
-      status: `finding pumpswap pool for ${mint}`,
-    });
-    const pool = await getPumpSwapPool(mint);
-    const pumpswap_buy_tx = await this.createSellInstruction(
+      developer,
+      buyAmount,
+      slippage = 0.1,
+    } = params;
+    const res = await calculateBuyAmount(0.1, pool);
+    console.log(res);
+    return;
+    const accounts = await this.getAccounts({
       pool,
+      tokenMint,
       user,
-      mint,
-      BigInt(Math.floor(sell_token_amount * 10 ** 6)),
-      BigInt(0)
-    );
-    const ata = getAssociatedTokenAddressSync(mint, user);
-    const ix_list = [
-      ...[
-        ComputeBudgetProgram.setComputeUnitLimit({
-          units: 100000,
-        }),
-        ComputeBudgetProgram.setComputeUnitPrice({
-          microLamports: 696969,
-        }),
-      ],
-      createAssociatedTokenAccountIdempotentInstruction(
-        wallet_1.publicKey,
-        ata,
-        wallet_1.publicKey,
-        mint
-      ),
-      pumpswap_buy_tx,
-    ];
-
-    const latestBlockhash = await connection.getLatestBlockhash();
-    const messageV0 = new TransactionMessage({
-      payerKey: wallet_1.publicKey,
-      recentBlockhash: latestBlockhash.blockhash,
-      instructions: ix_list,
-    }).compileToV0Message();
-    const transaction = new VersionedTransaction(messageV0);
-    transaction.sign([wallet_1]);
-    // sendNozomiTx(ix_list, wallet_1, latestBlockhash, "PumpSwap", "sell");
-    sendBundle(false, latestBlockhash.blockhash, transaction, pool, wallet_1);
-  }
-
-  async sell_percentage(mint, user, percentage_to_sell) {
-    const holding_token_amount = await getSPLBalance(connection, mint, user);
-    const sell_token_amount = percentage_to_sell * holding_token_amount;
-    logger.info({
-      status: `finding pumpswap pool for ${mint}`,
+      developer,
     });
-    const pool = await getPumpSwapPool(mint);
-    const pumpswap_buy_tx = await this.createSellInstruction(
-      pool,
-      user,
-      mint,
-      BigInt(Math.floor(sell_token_amount * 10 ** 6)),
-      BigInt(0)
-    );
-    const ata = getAssociatedTokenAddressSync(mint, user);
-    const ix_list = [
-      ...[
-        ComputeBudgetProgram.setComputeUnitLimit({
-          units: 100000,
-        }),
-        ComputeBudgetProgram.setComputeUnitPrice({
-          microLamports: 696969,
-        }),
-      ],
-      createAssociatedTokenAccountIdempotentInstruction(
-        wallet_1.publicKey,
-        ata,
-        wallet_1.publicKey,
-        mint
-      ),
-      pumpswap_buy_tx,
-    ];
 
-    const latestBlockhash = await connection.getLatestBlockhash();
-    const messageV0 = new TransactionMessage({
-      payerKey: wallet_1.publicKey,
-      recentBlockhash: latestBlockhash.blockhash,
-      instructions: ix_list,
-    }).compileToV0Message();
-    const transaction = new VersionedTransaction(messageV0);
-    transaction.sign([wallet_1]);
-    // sendNozomiTx(ix_list, wallet_1, latestBlockhash, "PumpSwap", "sell");
-    sendBundle(false, latestBlockhash.blockhash, transaction, pool, wallet_1);
-  }
-
-  async createBuyInstruction(
-    poolId,
-    user,
-    mint,
-    baseAmountOut,
-    maxQuoteAmountIn
-  ) {
-    const userBaseTokenAccount = await getAssociatedTokenAddress(mint, user);
-    const userQuoteTokenAccount = await getAssociatedTokenAddress(
-      WSOL_TOKEN_ACCOUNT,
-      user
-    );
-    const poolBaseTokenAccount = await getAssociatedTokenAddress(
-      mint,
-      poolId,
-      true
-    );
-    const poolQuoteTokenAccount = await getAssociatedTokenAddress(
-      WSOL_TOKEN_ACCOUNT,
-      poolId,
-      true
+    const baseAmountOut = BigInt(buyAmount * LAMPORTS_PER_SOL);
+    const maxQuoteAmountIn = BigInt(
+      Math.floor(buyAmount * (1 + slippage) * LAMPORTS_PER_SOL)
     );
 
-    const accounts = [
-      { pubkey: poolId, isSigner: false, isWritable: false },
-      { pubkey: user, isSigner: true, isWritable: true },
-      { pubkey: global, isSigner: false, isWritable: false },
-      { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: WSOL_TOKEN_ACCOUNT, isSigner: false, isWritable: false },
-      { pubkey: userBaseTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: userQuoteTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: poolBaseTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: poolQuoteTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: feeRecipient, isSigner: false, isWritable: false },
-      { pubkey: feeRecipientAta, isSigner: false, isWritable: true },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      {
-        pubkey: ASSOCIATED_TOKEN_PROGRAM_ID,
-        isSigner: false,
-        isWritable: false,
-      },
-      { pubkey: eventAuthority, isSigner: false, isWritable: false },
-      { pubkey: PUMP_AMM_PROGRAM_ID, isSigner: false, isWritable: false },
-    ];
-
-    const data = Buffer.alloc(8 + 8 + 8);
+    const data = Buffer.alloc(48);
     data.set(BUY_DISCRIMINATOR, 0);
-    data.writeBigUInt64LE(BigInt(baseAmountOut), 8);
-    data.writeBigUInt64LE(BigInt(maxQuoteAmountIn), 16);
+    data.writeBigUInt64LE(BigInt(baseAmountOut), 24);
+    data.writeBigUInt64LE(BigInt(maxQuoteAmountIn), 24);
 
     return new TransactionInstruction({
       keys: accounts,
@@ -316,6 +265,69 @@ class PumpSwapSDK {
       programId: PUMP_AMM_PROGRAM_ID,
       data: data,
     });
+  }
+
+  async getAccounts({ pool, tokenMint, user, developer }) {
+    const accountObj = { ...defaultBuyAccounts };
+
+    // Get user's token accounts
+    const userBaseTokenAccount = await getAssociatedTokenAddress(
+      tokenMint,
+      user
+    );
+    const userQuoteTokenAccount = await getAssociatedTokenAddress(
+      WSOL_TOKEN_ACCOUNT,
+      user
+    );
+
+    const poolBaseTokenAccount = await getAssociatedTokenAddress(
+      tokenMint,
+      pool,
+      true
+    );
+    const poolQuoteTokenAccount = await getAssociatedTokenAddress(
+      WSOL_TOKEN_ACCOUNT,
+      pool,
+      true
+    );
+
+    const [coinCreatorVaultAuthority] = PublicKey.findProgramAddressSync(
+      [Buffer.from("creator_vault"), developer.toBuffer()],
+      PUMP_AMM_PROGRAM_ID
+    );
+
+    const coinCreatorVaultAta = getAssociatedTokenAddressSync(
+      WSOL_TOKEN_ACCOUNT,
+      coinCreatorVaultAuthority,
+      true
+    );
+    /**
+     * pool, user, base_mint,
+     * user_base_token_account, user_quote_token_account
+     * pool_base_token_account, pool_quote_token_account,
+     * coin_creator_vault_ata, coin_creator_vault_authority
+     */
+    accountObj.pool.account = pool;
+    accountObj.user.account = user;
+    accountObj.base_mint.account = tokenMint;
+    accountObj.user_base_token_account.account = userBaseTokenAccount;
+    accountObj.user_quote_token_account.account = userQuoteTokenAccount;
+    accountObj.pool_base_token_account.account = poolBaseTokenAccount;
+    accountObj.pool_quote_token_account.account = poolQuoteTokenAccount;
+
+    // new add
+    accountObj.coin_creator_vault_ata.account = coinCreatorVaultAta;
+    accountObj.coin_creator_vault_authority.account = coinCreatorVaultAuthority;
+
+    const accounts = Object.values(accountObj).map((item) => ({
+      pubkey: item.account,
+      isSigner: item.signer,
+      isWritable: item.writable,
+    }));
+
+    // console.log(accounts.map((item) => item.pubkey.toBase58()));
+
+    return accounts;
   }
 }
 

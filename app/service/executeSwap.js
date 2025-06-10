@@ -230,6 +230,9 @@ class ExecuteSwap extends Service {
   async buyToken(token, canTwice = false) {
     console.log(chalk.green(`\nStep 3: Buying ${token}`));
     const { ctx } = this;
+    const tokenInfo = await ctx.service.ave.getTokenInfo(token);
+    console.log(tokenInfo);
+    return;
     const wallets = await this.getWallets(canTwice);
     if (wallets && token) {
       const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
