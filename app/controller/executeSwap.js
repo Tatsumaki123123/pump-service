@@ -10,7 +10,13 @@ class ExecuteSwap extends BaseController {
   async start() {
     const { ctx } = this;
     const res = await ctx.service.executeSwap.start();
-    this.success(res);
+    this.success(true);
+  }
+
+  async generateWallets() {
+    const { ctx } = this;
+    const res = await ctx.service.executeSwap.generateWallets();
+    this.success(true);
   }
 
   async end() {

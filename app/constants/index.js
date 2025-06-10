@@ -16,10 +16,6 @@ constants.WSOL_TOKEN_ACCOUNT = new PublicKey(
 );
 constants.usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-const WALLET_PRIVATE_KEY = retrieveEnvVariable("WALLET_PRIVATE_KEY");
-
-constants.boss = Keypair.fromSecretKey(bs58.decode(WALLET_PRIVATE_KEY));
-
 constants.connection = new Connection(RPC_URL, "confirmed");
 
 constants.PUMP_AMM_PROGRAM_ID = new PublicKey(
