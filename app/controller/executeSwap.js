@@ -32,9 +32,9 @@ class ExecuteSwap extends BaseController {
 
   async sellToken() {
     const { ctx } = this;
-    const { address } = ctx.request.body;
-    if (address) {
-      const res = await ctx.service.executeSwap.sellTokenToken(address);
+    const { token } = ctx.request.body;
+    if (token) {
+      const res = await ctx.service.executeSwap.sellToken(token);
       this.success(res);
     } else {
       this.fail("params error");

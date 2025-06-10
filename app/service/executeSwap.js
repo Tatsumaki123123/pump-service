@@ -18,8 +18,8 @@ const { boss, connection } = require("../constants");
 const bs58 = require("bs58");
 
 const WALLET_AMOUNTS = [
-  { transferAmount: 0.03, buyAmount: 0.01 },
-  { transferAmount: 0.03, buyAmount: 0.01, canTwice: true },
+  { transferAmount: 0.1, buyAmount: 0.01 },
+  { transferAmount: 0.1, buyAmount: 0.01, canTwice: true },
   //   { transferAmount: 0.3, buyAmount: 0.1 },
   //   { transferAmount: 0.3, buyAmount: 0.1 },
   //   { transferAmount: 0.3, buyAmount: 0.1 },
@@ -42,7 +42,7 @@ class ExecuteSwap extends Service {
       throw new Error("Insufficient SOL in main wallet");
     }
     console.log(chalk.green("\nStep1, generate new wallet"));
-    await this.generateWallet();
+    // await this.generateWallet();
 
     console.log(chalk.green("\nStep2, transfer out sol"));
     await this.distributeSol();
@@ -230,9 +230,9 @@ class ExecuteSwap extends Service {
   async buyToken(token, canTwice = false) {
     console.log(chalk.green(`\nStep 3: Buying ${token}`));
     const { ctx } = this;
-    const tokenInfo = await ctx.service.ave.getTokenInfo(token);
-    console.log(tokenInfo);
-    return;
+    // const tokenInfo = await ctx.service.ave.getTokenInfo(token);
+    // console.log(tokenInfo);
+    // return;
     const wallets = await this.getWallets(canTwice);
     if (wallets && token) {
       const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
@@ -243,9 +243,9 @@ class ExecuteSwap extends Service {
   async sellToken(token) {
     console.log(chalk.green(`Step 4: Selling ${token}`));
     const { ctx } = this;
-    const keypairs = this.getKeypairs();
-    if (keypairs && token) {
-      const res = await ctx.service.pumpAMM.buyToken(token);
+    const wallets = await this.getWallets();
+    if (wallets && token) {
+      const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
     }
   }
 

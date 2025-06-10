@@ -19,11 +19,19 @@ const {
   createAssociatedTokenAccountIdempotentInstruction,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  NATIVE_MINT,
 } = require("@solana/spl-token");
+
+const BufferLayout = require("@solana/buffer-layout");
 
 const { WSOL_TOKEN_ACCOUNT, PUMP_AMM_PROGRAM_ID } = require("../constants");
 
-const { calculateBuyAmount } = require("./pool");
+const {
+  getPoolsWithPrices,
+  getCoinCreatorVaultAuthorityPda,
+  getCoinCreatorVaultAtaPda,
+  getBuyTokenAmountBuyPoolDetail,
+} = require("./pool");
 
 const GLOBAL_CONFIG = new PublicKey(
   "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw"
@@ -167,39 +175,39 @@ const SELL_DISCRIMINATOR = new Uint8Array([
   51, 230, 133, 164, 1, 127, 131, 173,
 ]);
 
-const DEFAULT_DECIMALS = 6;
-
 class PumpSwapSDK {
   constructor() {}
 
   async createBuyInstruction(params) {
-    const {
-      pool,
-      tokenMint,
-      user,
-      developer,
-      buyAmount,
-      slippage = 0.1,
-    } = params;
-    const res = await calculateBuyAmount(0.1, pool);
-    console.log(res);
-    return;
+    const { tokenMint, user, buyAmount, slippage = 0.1 } = params;
+
+    const poolDetail = await getPoolsWithPrices(tokenMint);
+
     const accounts = await this.getAccounts({
-      pool,
+      poolDetail: poolDetail,
       tokenMint,
       user,
-      developer,
     });
 
-    const baseAmountOut = BigInt(buyAmount * LAMPORTS_PER_SOL);
+    // console.log(
+    //   accounts.map((account, index) => [index + 1, account.pubkey.toBase58()])
+    // );
+
+    const buyTokenAmount = getBuyTokenAmountBuyPoolDetail(
+      buyAmount,
+      poolDetail
+    );
+
+    const baseAmountOut = buyTokenAmount;
     const maxQuoteAmountIn = BigInt(
       Math.floor(buyAmount * (1 + slippage) * LAMPORTS_PER_SOL)
     );
+    console.log("buyTokenAmount", buyAmount, buyTokenAmount, maxQuoteAmountIn);
 
-    const data = Buffer.alloc(48);
+    const data = Buffer.alloc(8 + 8 + 8); // 24 bytes total
     data.set(BUY_DISCRIMINATOR, 0);
-    data.writeBigUInt64LE(BigInt(baseAmountOut), 24);
-    data.writeBigUInt64LE(BigInt(maxQuoteAmountIn), 24);
+    data.writeBigUInt64LE(BigInt(baseAmountOut), 8); // Write base_amount_in as little-endian u64
+    data.writeBigUInt64LE(BigInt(maxQuoteAmountIn), 16); // Write min_quote_amount_out as little-endian u64
 
     return new TransactionInstruction({
       keys: accounts,
@@ -208,56 +216,25 @@ class PumpSwapSDK {
     });
   }
 
-  async createSellInstruction(
-    poolId,
-    user,
-    mint,
-    baseAmountIn,
-    minQuoteAmountOut
-  ) {
-    const userBaseTokenAccount = await getAssociatedTokenAddress(mint, user);
-    const userQuoteTokenAccount = await getAssociatedTokenAddress(
-      WSOL_TOKEN_ACCOUNT,
-      user
-    );
-    const poolBaseTokenAccount = await getAssociatedTokenAddress(
-      mint,
-      poolId,
-      true
-    );
-    const poolQuoteTokenAccount = await getAssociatedTokenAddress(
-      WSOL_TOKEN_ACCOUNT,
-      poolId,
-      true
-    );
+  async createSellInstruction(params) {
+    const { tokenMint, user, tokenAmount, sellNewAccount } = params;
 
-    const accounts = [
-      { pubkey: poolId, isSigner: false, isWritable: false },
-      { pubkey: user, isSigner: true, isWritable: true },
-      { pubkey: global, isSigner: false, isWritable: false },
-      { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: WSOL_TOKEN_ACCOUNT, isSigner: false, isWritable: false },
-      { pubkey: userBaseTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: userQuoteTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: poolBaseTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: poolQuoteTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: feeRecipient, isSigner: false, isWritable: false },
-      { pubkey: feeRecipientAta, isSigner: false, isWritable: true },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      {
-        pubkey: ASSOCIATED_TOKEN_PROGRAM_ID,
-        isSigner: false,
-        isWritable: false,
-      },
-      { pubkey: eventAuthority, isSigner: false, isWritable: false },
-      { pubkey: PUMP_AMM_PROGRAM_ID, isSigner: false, isWritable: false },
-    ];
-
-    const data = Buffer.alloc(8 + 8 + 8);
+    const poolDetail = await getPoolsWithPrices(tokenMint);
+    const accounts = await this.getAccounts({
+      poolDetail,
+      tokenMint,
+      user,
+      sellNewAccount,
+      type: "sell",
+    });
+    // console.log(
+    //   accounts.map((account, index) => [index + 1, account.pubkey.toBase58()])
+    // );
+    const baseAmountIn = BigInt(Math.floor(tokenAmount * 10 ** 6));
+    const minQuoteAmountOut = BigInt(0);
+    const data = Buffer.alloc(8 + 8 + 8); // 24 bytes total
     data.set(SELL_DISCRIMINATOR, 0);
-    data.writeBigUInt64LE(BigInt(baseAmountIn), 8);
+    data.writeBigUInt64LE(BigInt(baseAmountIn), 8); // Write base_amount_in as little-endian u64
     data.writeBigUInt64LE(BigInt(minQuoteAmountOut), 16);
 
     return new TransactionInstruction({
@@ -267,7 +244,13 @@ class PumpSwapSDK {
     });
   }
 
-  async getAccounts({ pool, tokenMint, user, developer }) {
+  async getAccounts({
+    poolDetail,
+    tokenMint,
+    user,
+    type = "buy",
+    sellNewAccount,
+  }) {
     const accountObj = { ...defaultBuyAccounts };
 
     // Get user's token accounts
@@ -275,31 +258,22 @@ class PumpSwapSDK {
       tokenMint,
       user
     );
-    const userQuoteTokenAccount = await getAssociatedTokenAddress(
-      WSOL_TOKEN_ACCOUNT,
-      user
-    );
+    const userQuoteTokenAccount =
+      type === "buy"
+        ? await getAssociatedTokenAddress(WSOL_TOKEN_ACCOUNT, user)
+        : sellNewAccount;
 
-    const poolBaseTokenAccount = await getAssociatedTokenAddress(
-      tokenMint,
-      pool,
-      true
-    );
-    const poolQuoteTokenAccount = await getAssociatedTokenAddress(
-      WSOL_TOKEN_ACCOUNT,
-      pool,
-      true
-    );
+    const poolBaseTokenAccount = poolDetail.poolData.poolBaseTokenAccount;
+    const poolQuoteTokenAccount = poolDetail.poolData.poolQuoteTokenAccount;
 
-    const [coinCreatorVaultAuthority] = PublicKey.findProgramAddressSync(
-      [Buffer.from("creator_vault"), developer.toBuffer()],
+    const coin_creator_vault_authority = getCoinCreatorVaultAuthorityPda(
+      poolDetail.poolData.coinCreator,
       PUMP_AMM_PROGRAM_ID
     );
-
-    const coinCreatorVaultAta = getAssociatedTokenAddressSync(
-      WSOL_TOKEN_ACCOUNT,
-      coinCreatorVaultAuthority,
-      true
+    const coin_creator_vault_ata = getCoinCreatorVaultAtaPda(
+      coin_creator_vault_authority[0],
+      TOKEN_PROGRAM_ID,
+      NATIVE_MINT
     );
     /**
      * pool, user, base_mint,
@@ -307,7 +281,7 @@ class PumpSwapSDK {
      * pool_base_token_account, pool_quote_token_account,
      * coin_creator_vault_ata, coin_creator_vault_authority
      */
-    accountObj.pool.account = pool;
+    accountObj.pool.account = poolDetail.address;
     accountObj.user.account = user;
     accountObj.base_mint.account = tokenMint;
     accountObj.user_base_token_account.account = userBaseTokenAccount;
@@ -316,16 +290,15 @@ class PumpSwapSDK {
     accountObj.pool_quote_token_account.account = poolQuoteTokenAccount;
 
     // new add
-    accountObj.coin_creator_vault_ata.account = coinCreatorVaultAta;
-    accountObj.coin_creator_vault_authority.account = coinCreatorVaultAuthority;
+    accountObj.coin_creator_vault_ata.account = coin_creator_vault_ata[0];
+    accountObj.coin_creator_vault_authority.account =
+      coin_creator_vault_authority[0];
 
     const accounts = Object.values(accountObj).map((item) => ({
       pubkey: item.account,
       isSigner: item.signer,
       isWritable: item.writable,
     }));
-
-    // console.log(accounts.map((item) => item.pubkey.toBase58()));
 
     return accounts;
   }
