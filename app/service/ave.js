@@ -9,7 +9,6 @@ class Ave extends Service {
   }
 
   async getTokenInfo(tokenAddress) {
-    console.log("get token info");
     const { ctx } = this;
     const X_AUTH = await this.getXAuth();
     const uri = `${AVE_API_URL}v1api/v3/tokens/${tokenAddress}-solana`;
@@ -22,7 +21,6 @@ class Ave extends Service {
     });
     const data = res.data?.data;
     const devData = await this.getTokenDev(tokenAddress);
-    console.log(data, devData);
     if (data && devData) {
       const result = {};
       const { pairs, token } = data;

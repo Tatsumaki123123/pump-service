@@ -35,20 +35,17 @@ async function closeAllTokenAccounts(connection, keypair) {
   try {
     const wallet = keypair;
 
-    // 2. 获取所有 token account
     const tokenAccounts = await connection.getTokenAccountsByOwner(
       wallet.publicKey,
       {
-        programId: TOKEN_PROGRAM_ID, // SPL Token 程序 ID
+        programId: TOKEN_PROGRAM_ID,
       }
     );
 
     if (tokenAccounts.value.length === 0) {
-      console.log("没有找到 token account");
+      console.log("no token account");
       return;
     }
-
-    // 3. 遍历并关闭每个 token account
     for (const account of tokenAccounts.value) {
       const accountPubkey = account.pubkey;
       const accountInfo = await getAccount(connection, accountPubkey);
@@ -78,9 +75,10 @@ async function closeAllTokenAccounts(connection, keypair) {
       );
     }
 
-    console.log("所有符合条件的 token account 已关闭");
+    console.log("all token account closed");
+    return true;
   } catch (error) {
-    console.error("关闭 token account 时出错:", error);
+    throw new Error("close account error", error.message);
   }
 }
 async function transferAllSol(connection, from, to) {
@@ -92,9 +90,12 @@ async function transferAllSol(connection, from, to) {
   const minRent = 0;
 
   if (balance <= minRent + TRANSACTION_FEE) {
-    throw new Error(
-      `Insufficient balance for ${from.publicKey.toBase58()}, skipping.`
+    console.log(
+      chalk.yellow(
+        `Insufficient balance for ${from.publicKey.toBase58()}, skipping.`
+      )
     );
+    return;
   }
 
   const ix = SystemProgram.transfer({

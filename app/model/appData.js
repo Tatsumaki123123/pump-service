@@ -4,7 +4,6 @@ module.exports = (app) => {
 
   const AppDataSchema = new Schema({
     X_AUTH: { type: String },
-    executeWalletConfig: { type: Array },
     currentExecuteId: { type: Number, default: 10000 },
   });
 

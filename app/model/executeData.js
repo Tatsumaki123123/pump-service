@@ -9,6 +9,7 @@ module.exports = (app) => {
     active: { type: Boolean, default: false },
     createTime: { type: Date },
     walletsExist: { type: Boolean, default: false },
+    line: { type: Number },
   });
 
   return mongoose.model("ExecuteData", ExecuteDataSchema);
