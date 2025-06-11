@@ -23,6 +23,7 @@ const {
   closeAllTokenAccounts,
   transferAllSol,
   transferSol,
+  isValidSolanaAddress,
 } = require("../utils/solana");
 
 const { getPoolsWithPrices } = require("../libs/pool");
@@ -127,7 +128,7 @@ class ExecuteSwap extends Service {
    */
   async generateWallets(line) {
     const { ctx } = this;
-    const walletConfig = await this.getWalletConfig(line);
+
     const executeData = await this.getExecuteData(line);
 
     const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
@@ -136,21 +137,38 @@ class ExecuteSwap extends Service {
     if (balance / LAMPORTS_PER_SOL < BOSS_MIN_AMOUNT) {
       throw new Error(`Boss balance is not enough`);
     }
-    if (walletConfig && executeData && !executeData.walletsExist) {
+    const walletConfig = await this.getWalletConfig(line);
+    if (walletConfig && executeData) {
       const wallets = [];
-      const dbData = walletConfig.map((item, index) => {
-        const keypair = Keypair.generate();
-        wallets.push(keypair.publicKey);
-        return {
-          wid: index + 1,
-          address: keypair.publicKey.toBase58(),
-          privateKey: bs58.encode(keypair.secretKey),
-          eid: executeData.eid,
-        };
-      });
-      fs.writeFileSync("keypair.json", JSON.stringify(dbData));
-      const amounts = walletConfig.map((item) => item.transferAmount);
-      const res = await ctx.model.ExecuteWallet.insertMany(dbData);
+      const amounts = [];
+      if (executeData.walletsExist) {
+        const walletData = await this.getWalletsWithBalance(line);
+        walletData.forEach((item, index) => {
+          if (item.balance === 0) {
+            wallets.push(item.publicKey);
+            amounts.push(walletConfig[index].transferAmount);
+          }
+        });
+      } else {
+        const dbData = walletConfig.map((item, index) => {
+          const keypair = Keypair.generate();
+          wallets.push(keypair.publicKey);
+          amounts.push(walletConfig[index].transferAmount);
+          return {
+            wid: index + 1,
+            address: keypair.publicKey.toBase58(),
+            privateKey: bs58.encode(keypair.secretKey),
+            eid: executeData.eid,
+          };
+        });
+        fs.writeFileSync("keypair.json", JSON.stringify(dbData));
+        const res = await ctx.model.ExecuteWallet.insertMany(dbData);
+      }
+
+      console.log(wallets, amounts);
+      if (wallets.length === 0) {
+        throw new Error("no wallet to transfer");
+      }
       await transferSol(connection, boss, wallets, amounts);
       await ctx.model.ExecuteData.updateOne(
         { eid: executeData.eid },
@@ -207,27 +225,38 @@ class ExecuteSwap extends Service {
    * @param {*} type,  first, second, multi
    * @returns
    */
-  async buyToken(token, line, type = "first") {
-    console.log(chalk.green(`\nStep 3: Buying ${token}`));
+  async buyToken(tid, type = "first") {
     const { ctx } = this;
 
-    const wallets = await this.getWalletsWithConfig(line, type);
-
-    if (wallets && wallets.length > 0 && token) {
-      if (type === first) {
-        const tokenDB = await ctx.model.ExecuteToken.findOne({ token: token });
-        if (!tokenDB) {
-          throw new Error("Token no check");
-        }
-        if (tokenDB.status === "buy") {
-          throw new Error("You had buy first");
-        } else {
-        }
+    const tokenInfo = await ctx.model.ExecuteToken.findOne({ tid: tid });
+    if (!tokenInfo) {
+      throw new Error("Token  not checked");
+    }
+    if (tokenInfo.status === "pending") {
+      if (type !== "first") {
+        throw new Error("You should buy first");
       }
+    }
+    if (tokenInfo.status === "buy") {
+      if (type === "first") {
+        throw new Error("You have buy first...");
+      }
+    }
+
+    if (tokenInfo.status === "end") {
+      throw new Error("You have sell all,  Please check and start new Token");
+    }
+
+    const token = tokenInfo.token;
+    const line = tokenInfo.line;
+    console.log(chalk.green(`\nStep 3: Buying ${token}`));
+
+    const wallets = await this.getWalletsWithConfig(line, type);
+    if (wallets && wallets.length > 0 && token) {
       const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
-      if (tokenDB) {
+      if (type === "first") {
         await ctx.model.ExecuteToken.updateOne(
-          { id: tokenDB.id },
+          { tid: tokenInfo.tid },
           { status: "buy" }
         );
       }
@@ -238,27 +267,25 @@ class ExecuteSwap extends Service {
   }
 
   // sell token
-  async sellToken(token, line, type = "all") {
-    console.log(chalk.green(`Step 4: Selling ${token}`));
+  async sellToken(tid, type = "all") {
     const { ctx } = this;
+    const tokenInfo = await ctx.model.ExecuteToken.findOne({ tid: tid });
+    if (!tokenInfo) {
+      throw new Error("Token  not checked");
+    }
+    const token = tokenInfo.token;
+    const line = tokenInfo.line;
+    console.log(chalk.green(`Step 4: Selling ${token}, ${type}`));
     const wallets = await this.getWalletsWithConfig(line, type);
     if (wallets && wallets.length > 0 && token) {
-      const tokenDB = await ctx.model.ExecuteToken.findOne({ token: token });
-      if (!tokenDB) {
-        throw new Error("Token no check");
-      }
-      if (tokenDB.status !== "buy") {
-        throw new Error("You had not buy this token");
-      }
+      const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
       if (type === "all") {
         await ctx.model.ExecuteToken.updateOne(
-          { id: tokenDB.id },
+          { tid: tokenInfo.tid },
           { status: "sell" }
         );
       }
-
-      const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
-      return res;
+      return true;
     } else {
       throw new Error("There are not wallets to sell");
     }
@@ -337,13 +364,15 @@ class ExecuteSwap extends Service {
     const { ctx } = this;
     const wallets = await this.getWalletsWithConfig(line);
     const data = [];
+    console.log(line, token);
     for (const wallet of wallets) {
       const balance = await connection.getBalance(wallet.publicKey);
       let tokenBalance = 0;
       if (token) {
-        const tokenBalance = await getSPLBalance(
+        tokenBalance = await getSPLBalance(
           connection,
-          new PublicKey(token)
+          new PublicKey(token),
+          wallet.publicKey
         );
       }
       const { privateKey, keypair, ...other } = wallet;
@@ -360,6 +389,11 @@ class ExecuteSwap extends Service {
   async checkToken(token, eid) {
     const { ctx } = this;
 
+    if (!isValidSolanaAddress(token)) {
+      throw new Error("Valid solana address");
+      return;
+    }
+
     const tokenInfo = await ctx.service.ave.getTokenInfo(token);
     console.log(tokenInfo);
 
@@ -371,8 +405,10 @@ class ExecuteSwap extends Service {
         token: token,
         status: "pending",
       });
+      let tid = new Date().getTime();
       if (!tokenDb) {
         await ctx.model.ExecuteToken.create({
+          tid: tid,
           token,
           dev,
           pool,
@@ -382,14 +418,28 @@ class ExecuteSwap extends Service {
           line: executeData.line,
           status: "pending",
         });
+      } else {
+        tid = tokenDb.tid;
       }
       const buyTimes = await ctx.model.ExecuteToken.count({
         token: token,
         status: "end",
       });
-      return { ...tokenInfo, buyTimes };
+      return { ...tokenInfo, buyTimes, tid };
     } else {
       throw new Error("Can not find token info");
+    }
+  }
+
+  async closeAllAccounts(line) {
+    const wallets = await this.getWallets(line);
+    if (wallets) {
+      for (const wallet of wallets) {
+        const res = await closeAllTokenAccounts(connection, wallet.keypair);
+      }
+      return true;
+    } else {
+      console.log(chalk.yellow("No wallet."));
     }
   }
 }

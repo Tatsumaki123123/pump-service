@@ -3,6 +3,7 @@ module.exports = (app) => {
   const Schema = mongoose.Schema;
 
   const schema = new Schema({
+    tid: { type: Number },
     token: { type: String },
     symbol: { type: String },
     dev: { type: String },

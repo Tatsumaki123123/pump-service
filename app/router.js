@@ -19,4 +19,8 @@ module.exports = (app) => {
   router.post("/v1/execute/getBoss", controller.executeSwap.getBoss);
   router.post("/v1/execute/getLines", controller.executeSwap.getLines);
   router.post("/v1/execute/checkToken", controller.executeSwap.checkToken);
+  router.post(
+    "/v1/execute/closeAllAccounts",
+    controller.executeSwap.closeAllAccounts
+  );
 };

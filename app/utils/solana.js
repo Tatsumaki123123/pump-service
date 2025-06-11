@@ -27,7 +27,9 @@ async function getSPLBalance(
     let ata = getAssociatedTokenAddressSync(tokenMint, owner, allowOffCurve);
     const balance = await connection.getTokenAccountBalance(ata, "confirmed");
     return balance.value.uiAmount || 0;
-  } catch (e) {}
+  } catch (e) {
+    console.error(e.message);
+  }
   return 0;
 }
 
@@ -161,9 +163,20 @@ async function transferSol(connection, from, wallets, amounts) {
     throw new Error("no active wallet");
   }
 }
+
+function isValidSolanaAddress(address) {
+  try {
+    new PublicKey(address);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 module.exports = {
   getSPLBalance,
   closeAllTokenAccounts,
   transferAllSol,
   transferSol,
+  isValidSolanaAddress,
 };

@@ -42,9 +42,9 @@ class ExecuteSwap extends BaseController {
 
   async buyToken() {
     const { ctx } = this;
-    const { token, type, line } = ctx.request.body;
-    if (token && type && line) {
-      const res = await ctx.service.executeSwap.buyToken(token, line, type);
+    const { tid, type } = ctx.request.body;
+    if (tid && type) {
+      const res = await ctx.service.executeSwap.buyToken(tid, type);
       this.success(res);
     } else {
       this.fail("params error");
@@ -53,9 +53,9 @@ class ExecuteSwap extends BaseController {
 
   async sellToken() {
     const { ctx } = this;
-    const { token, type, line } = ctx.request.body;
-    if (token && type && line) {
-      const res = await ctx.service.executeSwap.sellToken(token, line, type);
+    const { tid, type, line } = ctx.request.body;
+    if (tid && type) {
+      const res = await ctx.service.executeSwap.sellToken(tid, type);
       this.success(res);
     } else {
       this.fail("params error");
@@ -98,6 +98,18 @@ class ExecuteSwap extends BaseController {
     const { token, eid } = ctx.request.body;
     if (token && eid) {
       const res = await ctx.service.executeSwap.checkToken(token, eid);
+      this.success(res);
+    } else {
+      throw new Error("Params error");
+    }
+  }
+
+  async closeAllAccounts() {
+    const { ctx } = this;
+
+    const { line } = ctx.request.body;
+    if (line) {
+      const res = await ctx.service.executeSwap.closeAllAccounts(line);
       this.success(res);
     } else {
       throw new Error("Params error");

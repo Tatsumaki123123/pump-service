@@ -342,6 +342,8 @@ class PumpAMM extends Service {
         const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
         console.log(bundleResult);
         console.log(chalk.green("Sell transactions completed."));
+      } else {
+        throw new Error("There no token to sell");
       }
       return;
     } else {
