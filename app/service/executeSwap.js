@@ -28,7 +28,7 @@ const {
 
 const { getPoolsWithPrices } = require("../libs/pool");
 
-const BOSS_MIN_AMOUNT = 0.3;
+const BOSS_MIN_AMOUNT = 3;
 
 class ExecuteSwap extends Service {
   constructor(props) {
@@ -38,7 +38,8 @@ class ExecuteSwap extends Service {
   async start(line) {
     const lastExecuteData = await this.getExecuteData(line);
     if (!lastExecuteData) {
-      return;
+      const res = this.generateNewBoss(line);
+      return res;
     }
     const wallets = await this.getWallets(line);
     let canStart = true;
@@ -81,6 +82,30 @@ class ExecuteSwap extends Service {
     return executeWalletConfig;
   }
 
+  async generateNewBoss(line) {
+    const { ctx } = this;
+    const boss = Keypair.generate();
+
+    const newData = {
+      eid: line * 1000,
+      bossAddress: boss.publicKey.toBase58(),
+      privateKey: bs58.encode(boss.secretKey),
+      active: true,
+      createTime: new Date(),
+      line: line,
+    };
+
+    fs.writeFileSync(
+      "keypair.json",
+      JSON.stringify({
+        bossAddress: boss.publicKey.toBase58(),
+        privateKey: bs58.encode(boss.secretKey),
+      })
+    );
+    await ctx.model.ExecuteData.create(newData);
+    return true;
+  }
+
   /**
    * Step 1, start -> generateBoss
    * @param {} lastExecuteData
@@ -91,8 +116,9 @@ class ExecuteSwap extends Service {
       bs58.decode(lastExecuteData.privateKey)
     );
     const balance = await connection.getBalance(lastBoss.publicKey);
-
-    if (balance / LAMPORTS_PER_SOL < BOSS_MIN_AMOUNT) {
+    const bossMinAmount =
+      lastExecuteData.line === 10000 ? 0.3 : BOSS_MIN_AMOUNT;
+    if (balance / LAMPORTS_PER_SOL < bossMinAmount) {
       throw new Error(`Boss balance is not enough`);
     }
     const boss = Keypair.generate();
