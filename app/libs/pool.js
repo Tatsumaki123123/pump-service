@@ -39,14 +39,16 @@ const getPoolsWithBaseMint = async (mintAddress) => {
       });
       if (response.length > 0) {
         is_err = false;
-      } else {
-        console.log("no data returned, retrying...");
       }
     } catch (err) {
       is_err = true;
     }
     cnt++;
     await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  if (is_err) {
+    throw new Error(`Can not get Token ${mintAddress.toBase58()} pool data`);
   }
 
   const mappedPools = response.map((pool) => {

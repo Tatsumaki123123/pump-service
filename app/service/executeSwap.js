@@ -28,7 +28,7 @@ const {
 
 const { getPoolsWithPrices } = require("../libs/pool");
 
-const BOSS_MIN_AMOUNT = 3;
+const BOSS_MIN_AMOUNT = 2.8;
 
 class ExecuteSwap extends Service {
   constructor(props) {
@@ -433,6 +433,22 @@ class ExecuteSwap extends Service {
 
     if (!isValidSolanaAddress(token)) {
       throw new Error("Valid solana address");
+      return;
+    }
+
+    const otherData = await ctx.model.ExecuteToken.findOne({
+      eid: { $ne: eid },
+      token: token,
+      status: "buy",
+    });
+    if (otherData) {
+      throw new Error("Other buy this token");
+    }
+
+    const poolDetail = await getPoolsWithPrices(new PublicKey(token));
+
+    if (!poolDetail) {
+      throw new Error("Cannot find pool data");
       return;
     }
 

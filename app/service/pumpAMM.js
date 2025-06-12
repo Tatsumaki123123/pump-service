@@ -37,11 +37,21 @@ const RENT_SYSVAR = new PublicKey(
   "SysvarRent111111111111111111111111111111111"
 );
 
-const Direction = { quoteToBase: "quoteToBase", baseToQuote: "baseToQuote" };
+const GMGN_FEES_VAULT = new PublicKey(
+  "BB5dnY55FXS1e1NXqZDwCzgdYJdMCj3B92PU6Q5Fb6DT"
+);
+const GMGN_FEE = 0.001;
+
+const TROGAN_FEES_VAULT = new PublicKey(
+  "9yMwSPk9mrXSN7yDHUuZurAh1sjbJsfpUqjZ7SvVtdco"
+);
+
+const TROGAN_FEE = 0.00036;
 
 const TRANSACTION_FEE = 5000;
 const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
 const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
+// const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
 
 const pSwap = new PumpSwapSDK();
 // const pSwap = new PumpAmmSdk(connection);
@@ -59,14 +69,14 @@ class PumpAMM extends Service {
    */
   async batchBuyToken(token, wallets) {
     const { ctx } = this;
-    console.log(chalk.green("\n batchBuyToken----"));
+    console.log(chalk.green("\n batchBuyToken----", wallets.length));
 
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
 
       const { blockhash } = await connection.getLatestBlockhash();
       const jipAcc = ctx.service.jito.getTipAcc();
-      const ATA_RENT = await connection.getMinimumBalanceForRentExemption(165);
+      // const ATA_RENT = await connection.getMinimumBalanceForRentExemption(165);
       const poolDetail = await getPoolsWithPrices(tokenMint);
 
       const buyTxns = [];
@@ -117,11 +127,13 @@ class PumpAMM extends Service {
         const transferLamportsWSOLIx = SystemProgram.transfer({
           fromPubkey: user,
           toPubkey: wSolATA,
-          // lamports: Math.trunc(buyAmount * LAMPORTS_PER_SOL),
-          lamports:
-            Math.trunc(buyAmount * LAMPORTS_PER_SOL) +
-            ATA_RENT * 2 +
-            TRANSACTION_FEE,
+          lamports: Math.trunc(
+            buyAmount * (1 + SLIPPAGE_BASIS_POINTS) * LAMPORTS_PER_SOL
+          ),
+          // lamports:
+          //   Math.trunc(buyAmount * LAMPORTS_PER_SOL) +
+          //   ATA_RENT * 2 +
+          //   TRANSACTION_FEE,
         });
         // 指令 6: 同步 wSOL ATA
         const syncNativeIx = createSyncNativeInstruction(
@@ -144,13 +156,6 @@ class PumpAMM extends Service {
           user,
           user
         );
-        // 指令 9: Jito 提示（由子钱包支付）
-        const jitoTipIx = SystemProgram.transfer({
-          fromPubkey: user,
-          toPubkey: jipAcc,
-          lamports: fee * LAMPORTS_PER_SOL,
-        });
-
         const volumeIxs = [
           setComputeUnitLimitIx,
           setComputeUnitPriceIx,
@@ -160,8 +165,33 @@ class PumpAMM extends Service {
           syncNativeIx,
           swapIxs,
           closeWSOLAtaIx,
-          jitoTipIx,
         ];
+
+        // 指令 9: Jito 提示（由子钱包支付）
+        if (wallet.isGmgn) {
+          const gmgnTipTx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: GMGN_FEES_VAULT,
+            lamports: GMGN_FEE * LAMPORTS_PER_SOL,
+          });
+          volumeIxs.push(gmgnTipTx);
+        }
+        if (wallet.isTrogan) {
+          const troganTipIx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: TROGAN_FEES_VAULT,
+            lamports: TROGAN_FEE * LAMPORTS_PER_SOL,
+          });
+
+          volumeIxs.push(troganTipIx);
+        } else {
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
+          volumeIxs.push(jitoTipIx);
+        }
 
         try {
           const messageV0 = new TransactionMessage({
