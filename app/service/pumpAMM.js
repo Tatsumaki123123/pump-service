@@ -195,14 +195,14 @@ class PumpAMM extends Service {
       // for end
       console.log("buyTxns", buyTxns.length);
       if (buyTxns.length > 0) {
-        // if (buyTxns.length === 1) {
-        //   const transferTx = buyTxns[0];
-        //   const signature = await connection.sendTransaction(transferTx, {
-        //     skipPreflight: false,
-        //   });
-        //   await connection.confirmTransaction(signature, "processed");
-        //   return;
-        // }
+        if (buyTxns.length === 1) {
+          const transferTx = buyTxns[0];
+          const signature = await connection.sendTransaction(transferTx, {
+            skipPreflight: false,
+          });
+          // await connection.confirmTransaction(signature, "processed");
+          return;
+        }
         const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
         console.log(bundleResult);
 
@@ -350,22 +350,20 @@ class PumpAMM extends Service {
       }
       console.log("sellTxns", sellTxns.length);
       if (sellTxns.length > 0) {
-        // if (sellTxns.length === 1) {
-        //   const transferTx = sellTxns[0];
-        //   const signature = await connection.sendTransaction(transferTx, {
-        //     skipPreflight: false,
-        //   });
-        //   await connection.confirmTransaction(signature, "confirmed");
-        //   return;
-        // }
+        if (sellTxns.length === 1) {
+          const transferTx = sellTxns[0];
+          const signature = await connection.sendTransaction(transferTx, {
+            skipPreflight: false,
+          });
+          // await connection.confirmTransaction(signature, "confirmed");
+          return;
+        }
         const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
         console.log(bundleResult);
 
         console.log(chalk.green("Sell transactions completed."));
-      } else {
-        throw new Error("There no token to sell");
       }
-      return;
+      return true;
     } else {
       throw new Error("batch sell Token: param error");
     }

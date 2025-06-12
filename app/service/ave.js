@@ -21,17 +21,16 @@ class Ave extends Service {
     });
     const data = res.data?.data;
 
-    console.log(data);
-    const devData = await this.getTokenDev(tokenAddress);
-    if (data && devData) {
+    // const devData = await this.getTokenDev(tokenAddress);
+    if (data) {
       const result = {};
       const { pairs, token } = data;
       // const pair = pairs.find((item) => item.amm === "pumpfunamm");
-      const pair = pair[0] || {};
+      const pair = pairs[0] || {};
 
       result.token = token.token;
       result.symbol = token.symbol;
-      result.dev = devData;
+      // result.dev = devData;
       result.usePrice = token.current_price_usd;
       result.solPrice = token.current_price_eth;
       result.pool = pair.pair;
