@@ -129,7 +129,12 @@ async function transferAllSol(connection, from, to) {
 }
 
 async function transferSol(connection, from, wallets, amounts) {
-  console.log(from, wallets, amounts);
+  console.log(
+    "transferSol",
+    from.publicKey.toBase58(),
+    wallets.map((item) => item.toBase58()),
+    amounts
+  );
   const { blockhash } = await connection.getLatestBlockhash();
   if (wallets && wallets.length > 0) {
     const transferIxs = wallets.map((wallet, index) =>

@@ -44,7 +44,12 @@ class ExecuteSwap extends BaseController {
     const { ctx } = this;
     const { tid, type } = ctx.request.body;
     if (tid && type) {
-      const res = await ctx.service.executeSwap.buyToken(tid, type);
+      let res;
+      if (Array.isArray(type)) {
+        res = await ctx.service.executeSwap.buyTokenArr(tid, type);
+      } else {
+        res = await ctx.service.executeSwap.buyToken(tid, type);
+      }
       this.success(res);
     } else {
       this.fail("params error");
@@ -55,7 +60,12 @@ class ExecuteSwap extends BaseController {
     const { ctx } = this;
     const { tid, type, line } = ctx.request.body;
     if (tid && type) {
-      const res = await ctx.service.executeSwap.sellToken(tid, type);
+      let res;
+      if (Array.isArray(type)) {
+        res = await ctx.service.executeSwap.sellTokenArr(tid, type);
+      } else {
+        res = await ctx.service.executeSwap.sellToken(tid, type);
+      }
       this.success(res);
     } else {
       this.fail("params error");

@@ -64,10 +64,10 @@ class PumpAMM extends Service {
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
 
-      const poolDetail = await getPoolsWithPrices(tokenMint);
       const { blockhash } = await connection.getLatestBlockhash();
       const jipAcc = ctx.service.jito.getTipAcc();
       const ATA_RENT = await connection.getMinimumBalanceForRentExemption(165);
+      const poolDetail = await getPoolsWithPrices(tokenMint);
 
       const buyTxns = [];
 
@@ -76,9 +76,6 @@ class PumpAMM extends Service {
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
         const { buyAmount, limit, price, fee } = wallet;
-        // const user = new PublicKey(
-        //   "CL3NczTBZh4mGfvLFVEb4LMrvg92QrpNXHwDuZ54Jq8g"
-        // );
 
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
 
@@ -176,32 +173,39 @@ class PumpAMM extends Service {
           const tx = new VersionedTransaction(messageV0);
           tx.sign([keypair]);
 
+          // 模拟交易
+          // const simulationResult = await connection.simulateTransaction(tx, {
+          //   commitment: "confirmed",
+          // });
+          // if (simulationResult.value.err) {
+          //   console.error("simulation", simulationResult.value);
+          //   throw new Error(simulationResult.value);
+          // }
+
+          // console.log(
+          //   chalk.green("simulation success", keypair.publicKey.toString())
+          // );
           buyTxns.push(tx);
         } catch (error) {
-          console.error(
-            chalk.red(
-              `Error compiling transaction for ${keypair.publicKey.toString()}:`,
-              error.message
-            )
-          );
+          console.error(error.message);
           continue;
         }
       }
 
       // for end
+      console.log("buyTxns", buyTxns.length);
       if (buyTxns.length > 0) {
-        // for (const transferTx of buyTxns) {
+        // if (buyTxns.length === 1) {
+        //   const transferTx = buyTxns[0];
         //   const signature = await connection.sendTransaction(transferTx, {
         //     skipPreflight: false,
         //   });
-        //   const tx = await connection.confirmTransaction(
-        //     signature,
-        //     "confirmed"
-        //   );
+        //   await connection.confirmTransaction(signature, "processed");
+        //   return;
         // }
-
         const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
-        // console.log(bundleResult);
+        console.log(bundleResult);
+
         console.log(chalk.green("Buy transactions completed."));
       }
     } else {
@@ -251,8 +255,8 @@ class PumpAMM extends Service {
             });
 
           // 3, createAccountWithSeed
-          // const seed = new Date().getTime().toString();
-          const seed = "1749356034021";
+          const seed = new Date().getTime().toString();
+          // const seed = "1749356034021";
 
           const newAccount = await PublicKey.createWithSeed(
             user,
@@ -320,11 +324,23 @@ class PumpAMM extends Service {
             const tx = new VersionedTransaction(messageV0);
             tx.sign([keypair]);
 
+            // 模拟交易
+            // const simulationResult = await connection.simulateTransaction(tx, {
+            //   commitment: "confirmed",
+            // });
+            // if (simulationResult.value.err) {
+            //   console.log("simulation", simulationResult.value);
+            //   throw new Error(simulationResult.value);
+            // }
+
+            // console.log(
+            //   chalk.green("simulation success", keypair.publicKey.toString())
+            // );
             sellTxns.push(tx);
           } catch (error) {
             console.error(
               chalk.red(
-                `Error compiling transaction for ${user.toString()}:`,
+                `Error compiling transaction for ${user.toBase58()}:`,
                 error.message
               )
             );
@@ -332,15 +348,19 @@ class PumpAMM extends Service {
           }
         }
       }
+      console.log("sellTxns", sellTxns.length);
       if (sellTxns.length > 0) {
-        // const transferTx = sellTxns[0];
-        // const signature = await connection.sendTransaction(transferTx, {
-        //   skipPreflight: false,
-        // });
-        // const tx = await connection.confirmTransaction(signature, "confirmed");
-        // return;
+        // if (sellTxns.length === 1) {
+        //   const transferTx = sellTxns[0];
+        //   const signature = await connection.sendTransaction(transferTx, {
+        //     skipPreflight: false,
+        //   });
+        //   await connection.confirmTransaction(signature, "confirmed");
+        //   return;
+        // }
         const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
         console.log(bundleResult);
+
         console.log(chalk.green("Sell transactions completed."));
       } else {
         throw new Error("There no token to sell");

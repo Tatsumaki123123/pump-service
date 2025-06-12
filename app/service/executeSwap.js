@@ -160,7 +160,8 @@ class ExecuteSwap extends Service {
     const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
     const balance = await connection.getBalance(boss.publicKey);
 
-    if (balance / LAMPORTS_PER_SOL < BOSS_MIN_AMOUNT) {
+    const bossMinAmount = line === 10000 ? 0.3 : BOSS_MIN_AMOUNT;
+    if (balance / LAMPORTS_PER_SOL < bossMinAmount) {
       throw new Error(`Boss balance is not enough`);
     }
     const walletConfig = await this.getWalletConfig(line);
@@ -263,11 +264,11 @@ class ExecuteSwap extends Service {
         throw new Error("You should buy first");
       }
     }
-    if (tokenInfo.status === "buy") {
-      if (type === "first") {
-        throw new Error("You have buy first...");
-      }
-    }
+    // if (tokenInfo.status === "buy") {
+    //   if (type === "first") {
+    //     throw new Error("You have buy first...");
+    //   }
+    // }
 
     if (tokenInfo.status === "end") {
       throw new Error("You have sell all,  Please check and start new Token");
@@ -290,6 +291,13 @@ class ExecuteSwap extends Service {
     } else {
       throw new Error("There are not wallets to buy");
     }
+  }
+
+  async buyTokenArr(tid, types) {
+    for (const type of types) {
+      await this.buyToken(tid, type);
+    }
+    return true;
   }
 
   // sell token
@@ -315,6 +323,13 @@ class ExecuteSwap extends Service {
     } else {
       throw new Error("There are not wallets to sell");
     }
+  }
+
+  async sellTokenArr(tid, types) {
+    for (const type of types) {
+      await this.sellToken(tid, type);
+    }
+    return true;
   }
 
   /**
@@ -383,6 +398,7 @@ class ExecuteSwap extends Service {
       address: executeData.bossAddress,
       balance: bossBalance / LAMPORTS_PER_SOL,
       createTime: executeData.createTime,
+      eid: executeData.eid,
     };
   }
 
@@ -428,8 +444,9 @@ class ExecuteSwap extends Service {
 
       const { token, dev, pool, symbol } = tokenInfo;
       const tokenDb = await ctx.model.ExecuteToken.findOne({
+        eid: eid,
         token: token,
-        status: "pending",
+        status: { $in: ["pending", "buy"] },
       });
       let tid = new Date().getTime();
       if (!tokenDb) {

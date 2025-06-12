@@ -20,11 +20,14 @@ class Ave extends Service {
       },
     });
     const data = res.data?.data;
+
+    console.log(data);
     const devData = await this.getTokenDev(tokenAddress);
     if (data && devData) {
       const result = {};
       const { pairs, token } = data;
-      const pair = pairs.find((item) => item.amm === "pumpfunamm");
+      // const pair = pairs.find((item) => item.amm === "pumpfunamm");
+      const pair = pair[0] || {};
 
       result.token = token.token;
       result.symbol = token.symbol;
