@@ -184,6 +184,15 @@ class PumpAMM extends Service {
           });
 
           volumeIxs.push(troganTipIx);
+
+          if (wallets.length > 1 && i === wallets.length - 1) {
+            const jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: fee * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(jitoTipIx);
+          }
         } else {
           const jitoTipIx = SystemProgram.transfer({
             fromPubkey: user,
