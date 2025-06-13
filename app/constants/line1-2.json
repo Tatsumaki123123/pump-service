@@ -2,15 +2,16 @@
   {
     "transferAmount": 0.3,
     "buyAmount": [0.04],
-    "limit": 200000,
-    "price": 250000,
-    "fee": 0.00005,
+    "limit": 1000000,
+    "price": 999,
+    "fee": 0.000001,
     "firstBuy": true,
-    "secondBuy": false
+    "secondBuy": false,
+    "isProxyBuy": true
   },
   {
     "transferAmount": 1.7,
-    "buyAmount": [1.37],
+    "buyAmount": [1.36],
     "limit": 150000,
     "price": 66667,
     "fee": 0.00005,

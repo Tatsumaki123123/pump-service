@@ -527,4 +527,453 @@ for (const key in obj1) {
   },
 ];
 
-console.log(sameObj);
+const acc1 = [
+  {
+    account: "7wcLfVpp6P7dzJeqpdoaEERgR4sdf93ESKF6CHiboM47",
+    signer: true,
+    writable: true,
+  },
+  {
+    account: "FJiP296BtbfjXUqjUyTts5D4o2GZQbyXNbJGRAuZGSgk",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "So11111111111111111111111111111111111111112",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "3UKMb7GUznFVmb9WPdHBjaLSCX7fPPyyXVCrqqzMkdqt",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "CrRBhx2WzpixFzVoNezyGPdnBUsMubJ1uRkU9Gwipump",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "4RAnsC6m5gqb6eod2RdW4mKqhTNBckJrsjf2Z9JD5N2s",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "7kRfYgbpichh83KfYGubHrNrzNukesSzgD4xvf6CcB5D",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    signer: false,
+    writable: false,
+  },
+  {
+    account: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    signer: false,
+    writable: false,
+  },
+  {
+    account: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    signer: false,
+    writable: false,
+  },
+  {
+    account: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+    signer: false,
+    writable: false,
+  },
+  {
+    account: "11111111111111111111111111111111",
+    signer: false,
+    writable: false,
+  },
+  {
+    account: "SysvarRent111111111111111111111111111111111",
+    signer: false,
+    writable: false,
+  },
+  {
+    account: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+    signer: false,
+    writable: false,
+  },
+  {
+    account: "8qvaTfV6tGL9pGtQLwiSnhKT5WCqaG9JPCouCZC7upqX",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "CrRBhx2WzpixFzVoNezyGPdnBUsMubJ1uRkU9Gwipump",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "So11111111111111111111111111111111111111112",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "EDg2xwPYjKMZdsdaMV6RSaFz1YyUhH2DhNuxCpD6NKD",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "FuqcTh1LMa6dvK2cZeSbkQA9AHi4rr2LTFWUnfxv3gTH",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "FGptqdxjahafaCzpZ1T6EDtCzYMv7Dyn5MgBLyB3VUFW",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+    signer: false,
+    writable: false,
+  },
+  {
+    account: "5t6bRcS1ZHc18VFhDqfbbMBXeq4CwFuuxBrg7cvUfV8C",
+    signer: false,
+    writable: true,
+  },
+  {
+    account: "jNVt29grYpgPfZAL85b3wQRKYJSENQ4SKAgUDQhWF1J",
+    signer: false,
+    writable: false,
+  },
+];
+
+const acc2 = [
+  {
+    account: "8qvaTfV6tGL9pGtQLwiSnhKT5WCqaG9JPCouCZC7upqX",
+    signer: false,
+    writable: true,
+    label: "pool",
+  },
+  {
+    account: "7wcLfVpp6P7dzJeqpdoaEERgR4sdf93ESKF6CHiboM47",
+    signer: true,
+    writable: true,
+    label: "user",
+  },
+  {
+    account: "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+    signer: false,
+    writable: true,
+    label: "global_config",
+  },
+  {
+    account: "CrRBhx2WzpixFzVoNezyGPdnBUsMubJ1uRkU9Gwipump",
+    signer: false,
+    writable: true,
+    label: "base_mint",
+  },
+  {
+    account: "So11111111111111111111111111111111111111112",
+    signer: false,
+    writable: true,
+    label: "quote_mint",
+  },
+  {
+    account: "3UKMb7GUznFVmb9WPdHBjaLSCX7fPPyyXVCrqqzMkdqt",
+    signer: false,
+    writable: true,
+    label: "user_base_token_account",
+  },
+  {
+    account: "FJiP296BtbfjXUqjUyTts5D4o2GZQbyXNbJGRAuZGSgk",
+    signer: false,
+    writable: true,
+    label: "user_quote_token_account",
+  },
+  {
+    account: "EDg2xwPYjKMZdsdaMV6RSaFz1YyUhH2DhNuxCpD6NKD",
+    signer: false,
+    writable: true,
+    label: "pool_base_token_account",
+  },
+  {
+    account: "FuqcTh1LMa6dvK2cZeSbkQA9AHi4rr2LTFWUnfxv3gTH",
+    signer: false,
+    writable: true,
+    label: "pool_quote_token_account",
+  },
+  {
+    account: "AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY",
+    signer: false,
+    writable: true,
+    label: "protocol_fee_recipient",
+  },
+  {
+    account: "FGptqdxjahafaCzpZ1T6EDtCzYMv7Dyn5MgBLyB3VUFW",
+    signer: false,
+    writable: true,
+    label: "protocol_fee_recipient_token_account",
+  },
+  {
+    account: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    signer: false,
+    writable: false,
+    label: "base_token_program",
+  },
+  {
+    account: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    signer: false,
+    writable: false,
+    label: "quote_token_program",
+  },
+  {
+    account: "11111111111111111111111111111111",
+    signer: false,
+    writable: false,
+    label: "system_program",
+  },
+  {
+    account: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    signer: false,
+    writable: false,
+    label: "associated_token_program",
+  },
+  {
+    account: "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+    signer: false,
+    writable: false,
+    label: "event_authority",
+  },
+  {
+    account: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+    signer: false,
+    writable: false,
+    label: "program",
+  },
+  {
+    account: "5t6bRcS1ZHc18VFhDqfbbMBXeq4CwFuuxBrg7cvUfV8C",
+    signer: false,
+    writable: true,
+    label: "coin_creator_vault_ata",
+  },
+  {
+    account: "jNVt29grYpgPfZAL85b3wQRKYJSENQ4SKAgUDQhWF1J",
+    signer: false,
+    writable: false,
+    label: "coin_creator_vault_authority",
+  },
+];
+
+const main = () => {
+  const arr = [];
+  const obj = {};
+  acc1.forEach((item, index) => {
+    let label = `unknown_` + index;
+    acc2.forEach((item2, index2) => {
+      if (item.account === item2.account) {
+        label = item2.label;
+        delete acc2[index2];
+      }
+    });
+    const newItem = { label, order: index, ...item };
+    arr.push(newItem);
+    obj[label] = newItem;
+  });
+  console.log(obj);
+};
+
+/**
+ * user, user_quote_token_account, user_base_token_account,
+ * base_mint
+ * pool
+ * base_mint_2,
+ * pool_base_token_account, pool_quote_token_account,
+ * coin_creator_vault_ata, coin_creator_vault_authority
+ */
+const proxyBuyAccount = {
+  user: {
+    label: "user",
+    order: 0,
+    account: "7wcLfVpp6P7dzJeqpdoaEERgR4sdf93ESKF6CHiboM47",
+    signer: true,
+    writable: true,
+  },
+  user_quote_token_account: {
+    label: "user_quote_token_account",
+    order: 1,
+    account: "FJiP296BtbfjXUqjUyTts5D4o2GZQbyXNbJGRAuZGSgk",
+    signer: false,
+    writable: true,
+  },
+  quote_mint: {
+    label: "quote_mint",
+    order: 2,
+    account: "So11111111111111111111111111111111111111112",
+    signer: false,
+    writable: true,
+  },
+  user_base_token_account: {
+    label: "user_base_token_account",
+    order: 3,
+    account: "3UKMb7GUznFVmb9WPdHBjaLSCX7fPPyyXVCrqqzMkdqt",
+    signer: false,
+    writable: true,
+  },
+  base_mint: {
+    label: "base_mint",
+    order: 4,
+    account: "CrRBhx2WzpixFzVoNezyGPdnBUsMubJ1uRkU9Gwipump",
+    signer: false,
+    writable: true,
+  },
+  unknown_5: {
+    label: "unknown_5",
+    order: 5,
+    account: "4RAnsC6m5gqb6eod2RdW4mKqhTNBckJrsjf2Z9JD5N2s",
+    signer: false,
+    writable: true,
+  },
+  unknown_6: {
+    label: "unknown_6",
+    order: 6,
+    account: "7kRfYgbpichh83KfYGubHrNrzNukesSzgD4xvf6CcB5D",
+    signer: false,
+    writable: true,
+  },
+  quote_token_program: {
+    label: "quote_token_program",
+    order: 7,
+    account: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    signer: false,
+    writable: false,
+  },
+  unknown_8: {
+    label: "unknown_8",
+    order: 8,
+    account: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    signer: false,
+    writable: false,
+  },
+  associated_token_program: {
+    label: "associated_token_program",
+    order: 9,
+    account: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    signer: false,
+    writable: false,
+  },
+  unknown_10: {
+    label: "unknown_10",
+    order: 10,
+    account: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+    signer: false,
+    writable: false,
+  },
+  system_program: {
+    label: "system_program",
+    order: 11,
+    account: "11111111111111111111111111111111",
+    signer: false,
+    writable: false,
+  },
+  unknown_12: {
+    label: "unknown_12",
+    order: 12,
+    account: "SysvarRent111111111111111111111111111111111",
+    signer: false,
+    writable: false,
+  },
+  program: {
+    label: "program",
+    order: 13,
+    account: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+    signer: false,
+    writable: false,
+  },
+  pool: {
+    label: "pool",
+    order: 14,
+    account: "8qvaTfV6tGL9pGtQLwiSnhKT5WCqaG9JPCouCZC7upqX",
+    signer: false,
+    writable: true,
+  },
+  global_config: {
+    label: "global_config",
+    order: 15,
+    account: "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+    signer: false,
+    writable: true,
+  },
+  unknown_16: {
+    label: "unknown_16",
+    order: 16,
+    account: "CrRBhx2WzpixFzVoNezyGPdnBUsMubJ1uRkU9Gwipump",
+    signer: false,
+    writable: true,
+  },
+  unknown_17: {
+    label: "unknown_17",
+    order: 17,
+    account: "So11111111111111111111111111111111111111112",
+    signer: false,
+    writable: true,
+  },
+  pool_base_token_account: {
+    label: "pool_base_token_account",
+    order: 18,
+    account: "EDg2xwPYjKMZdsdaMV6RSaFz1YyUhH2DhNuxCpD6NKD",
+    signer: false,
+    writable: true,
+  },
+  pool_quote_token_account: {
+    label: "pool_quote_token_account",
+    order: 19,
+    account: "FuqcTh1LMa6dvK2cZeSbkQA9AHi4rr2LTFWUnfxv3gTH",
+    signer: false,
+    writable: true,
+  },
+  protocol_fee_recipient: {
+    label: "protocol_fee_recipient",
+    order: 20,
+    account: "AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY",
+    signer: false,
+    writable: true,
+  },
+  protocol_fee_recipient_token_account: {
+    label: "protocol_fee_recipient_token_account",
+    order: 21,
+    account: "FGptqdxjahafaCzpZ1T6EDtCzYMv7Dyn5MgBLyB3VUFW",
+    signer: false,
+    writable: true,
+  },
+  event_authority: {
+    label: "event_authority",
+    order: 22,
+    account: "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+    signer: false,
+    writable: false,
+  },
+  coin_creator_vault_ata: {
+    label: "coin_creator_vault_ata",
+    order: 23,
+    account: "5t6bRcS1ZHc18VFhDqfbbMBXeq4CwFuuxBrg7cvUfV8C",
+    signer: false,
+    writable: true,
+  },
+  coin_creator_vault_authority: {
+    label: "coin_creator_vault_authority",
+    order: 24,
+    account: "jNVt29grYpgPfZAL85b3wQRKYJSENQ4SKAgUDQhWF1J",
+    signer: false,
+    writable: false,
+  },
+};
+
+main();

@@ -22,8 +22,6 @@ const {
   NATIVE_MINT,
 } = require("@solana/spl-token");
 
-const BufferLayout = require("@solana/buffer-layout");
-
 const { WSOL_TOKEN_ACCOUNT, PUMP_AMM_PROGRAM_ID } = require("../constants");
 
 const {

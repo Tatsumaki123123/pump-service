@@ -31,7 +31,9 @@ const { getPoolsWithPrices } = require("../libs/pool");
 
 const { connection, WSOL_TOKEN_ACCOUNT } = require("../constants");
 const PumpSwapSDK = require("../libs/pumpSwap");
+const ProxyPumpSwapSDK = require("../libs/proxyPumpSwap");
 const { getSPLBalance } = require("../utils/solana");
+const { createTroProxyInstruction } = require("../libs/trogan");
 
 const RENT_SYSVAR = new PublicKey(
   "SysvarRent111111111111111111111111111111111"
@@ -42,10 +44,6 @@ const GMGN_FEES_VAULT = new PublicKey(
 );
 const GMGN_FEE = 0.001;
 
-const TROGAN_FEES_VAULT = new PublicKey(
-  "9yMwSPk9mrXSN7yDHUuZurAh1sjbJsfpUqjZ7SvVtdco"
-);
-
 const TROGAN_FEE = 0.00036;
 
 const TRANSACTION_FEE = 5000;
@@ -54,6 +52,7 @@ const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
 // const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
 
 const pSwap = new PumpSwapSDK();
+const proxyPumpSwap = new ProxyPumpSwapSDK();
 // const pSwap = new PumpAmmSdk(connection);
 
 class PumpAMM extends Service {
@@ -107,65 +106,85 @@ class PumpAMM extends Service {
           microLamports: price,
         });
 
-        // 指令 3: 创建 wSOL ATA, 获取账户 token account
-        const createWSOLAtaIx =
-          createAssociatedTokenAccountIdempotentInstruction(
-            user,
+        let proxyBuyIxs = [];
+
+        if (wallet.isProxyBuy) {
+          console.log("Proxy buy");
+
+          const proxyBuyIx = await proxyPumpSwap.createBuyInstruction({
+            tokenMint: tokenMint,
+            user: user,
+            buyAmount: buyAmount,
+            slippage: SLIPPAGE_BASIS_POINTS,
+            poolDetail: poolDetail,
+          });
+          proxyBuyIxs = [proxyBuyIx];
+        } else {
+          // 指令 3: 创建 wSOL ATA, 获取账户 token account
+          const createWSOLAtaIx =
+            createAssociatedTokenAccountIdempotentInstruction(
+              user,
+              wSolATA,
+              user,
+              WSOL_TOKEN_ACCOUNT
+            );
+
+          // 指令 4: 创建 tokenA ATA
+          const createTokenAtaIx =
+            createAssociatedTokenAccountIdempotentInstruction(
+              user,
+              tokenAta,
+              user,
+              tokenMint
+            );
+          // 指令 5: 转账 SOL 到 wSOL ATA
+          const transferLamportsWSOLIx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: wSolATA,
+            lamports: Math.trunc(
+              buyAmount * (1 + SLIPPAGE_BASIS_POINTS) * LAMPORTS_PER_SOL
+            ),
+            // lamports:
+            //   Math.trunc(buyAmount * LAMPORTS_PER_SOL) +
+            //   ATA_RENT * 2 +
+            //   TRANSACTION_FEE,
+          });
+          // 指令 6: 同步 wSOL ATA
+          const syncNativeIx = createSyncNativeInstruction(
+            wSolATA,
+            TOKEN_PROGRAM_ID
+          );
+
+          // 指令 7: Pump AMM buy
+          let swapIxs = await pSwap.createBuyInstruction({
+            tokenMint: tokenMint,
+            user: user,
+            buyAmount: buyAmount,
+            slippage: SLIPPAGE_BASIS_POINTS,
+            poolDetail: poolDetail,
+          });
+
+          // 指令 8: 关闭 wSOL ATA
+          const closeWSOLAtaIx = createCloseAccountInstruction(
             wSolATA,
             user,
-            WSOL_TOKEN_ACCOUNT
+            user
           );
 
-        // 指令 4: 创建 tokenA ATA
-        const createTokenAtaIx =
-          createAssociatedTokenAccountIdempotentInstruction(
-            user,
-            tokenAta,
-            user,
-            tokenMint
-          );
-        // 指令 5: 转账 SOL 到 wSOL ATA
-        const transferLamportsWSOLIx = SystemProgram.transfer({
-          fromPubkey: user,
-          toPubkey: wSolATA,
-          lamports: Math.trunc(
-            buyAmount * (1 + SLIPPAGE_BASIS_POINTS) * LAMPORTS_PER_SOL
-          ),
-          // lamports:
-          //   Math.trunc(buyAmount * LAMPORTS_PER_SOL) +
-          //   ATA_RENT * 2 +
-          //   TRANSACTION_FEE,
-        });
-        // 指令 6: 同步 wSOL ATA
-        const syncNativeIx = createSyncNativeInstruction(
-          wSolATA,
-          TOKEN_PROGRAM_ID
-        );
+          proxyBuyIxs = [
+            createWSOLAtaIx,
+            createTokenAtaIx,
+            transferLamportsWSOLIx,
+            syncNativeIx,
+            swapIxs,
+            closeWSOLAtaIx,
+          ];
+        }
 
-        // 指令 7: Pump AMM buy
-        let swapIxs = await pSwap.createBuyInstruction({
-          tokenMint: tokenMint,
-          user: user,
-          buyAmount: buyAmount,
-          slippage: SLIPPAGE_BASIS_POINTS,
-          poolDetail: poolDetail,
-        });
-
-        // 指令 8: 关闭 wSOL ATA
-        const closeWSOLAtaIx = createCloseAccountInstruction(
-          wSolATA,
-          user,
-          user
-        );
         const volumeIxs = [
           setComputeUnitLimitIx,
           setComputeUnitPriceIx,
-          createWSOLAtaIx,
-          createTokenAtaIx,
-          transferLamportsWSOLIx,
-          syncNativeIx,
-          swapIxs,
-          closeWSOLAtaIx,
+          ...proxyBuyIxs,
         ];
 
         // 指令 9: Jito 提示（由子钱包支付）
@@ -178,11 +197,7 @@ class PumpAMM extends Service {
           volumeIxs.push(gmgnTipTx);
         }
         if (wallet.isTrogan) {
-          const troganTipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: TROGAN_FEES_VAULT,
-            lamports: TROGAN_FEE * LAMPORTS_PER_SOL,
-          });
+          const troganTipIx = createTroProxyInstruction(user, jipAcc);
 
           volumeIxs.push(troganTipIx);
         } else {
@@ -235,6 +250,7 @@ class PumpAMM extends Service {
 
       // for end
       console.log("buyTxns", buyTxns.length);
+      // return;
       if (buyTxns.length > 0) {
         if (buyTxns.length === 1) {
           const transferTx = buyTxns[0];

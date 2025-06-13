@@ -264,9 +264,9 @@ class ExecuteSwap extends Service {
       throw new Error("Token  not checked");
     }
     if (tokenInfo.status === "pending") {
-      if (type !== "first") {
-        throw new Error("You should buy first");
-      }
+      // if (type !== "first") {
+      //   throw new Error("You should buy first");
+      // }
     }
     // if (tokenInfo.status === "buy") {
     //   if (type === "first") {
