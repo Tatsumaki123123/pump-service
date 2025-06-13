@@ -160,7 +160,7 @@ class ExecuteSwap extends Service {
     const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
     const balance = await connection.getBalance(boss.publicKey);
 
-    const bossMinAmount = line === 10000 ? 0.3 : 0.3;
+    const bossMinAmount = line === 10000 ? 0.3 : BOSS_MIN_AMOUNT;
     if (balance / LAMPORTS_PER_SOL < bossMinAmount) {
       throw new Error(`Boss balance is not enough`);
     }
@@ -516,6 +516,24 @@ class ExecuteSwap extends Service {
       return true;
     } else {
       console.log(chalk.yellow("No wallet."));
+    }
+  }
+
+  async withdraw(line) {
+    const { ctx } = this;
+    const executeData = await this.getExecuteData(line);
+    const lineData = await ctx.model.ExecuteLine.findOne({ lineId: line });
+    console.log(lineData.withdrawAddress);
+    if (lineData.withdrawAddress) {
+      const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
+      await transferAllSol(
+        connection,
+        boss,
+        new PublicKey(lineData.withdrawAddress)
+      );
+      return true;
+    } else {
+      throw new Error("To address not exist");
     }
   }
 }

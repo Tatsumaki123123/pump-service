@@ -23,4 +23,5 @@ module.exports = (app) => {
     "/v1/execute/closeAllAccounts",
     controller.executeSwap.closeAllAccounts
   );
+  router.post("/v1/execute/withdraw", controller.executeSwap.withdraw);
 };

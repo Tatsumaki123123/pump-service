@@ -81,7 +81,7 @@ class PumpAMM extends Service {
 
       const buyTxns = [];
 
-      const existJitoIx = false;
+      let existJitoIx = false;
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;

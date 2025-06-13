@@ -125,6 +125,18 @@ class ExecuteSwap extends BaseController {
       throw new Error("Params error");
     }
   }
+
+  async withdraw() {
+    const { ctx } = this;
+
+    const { line } = ctx.request.body;
+    if (line) {
+      const res = await ctx.service.executeSwap.withdraw(line);
+      this.success(res);
+    } else {
+      throw new Error("Params error");
+    }
+  }
 }
 
 module.exports = ExecuteSwap;
