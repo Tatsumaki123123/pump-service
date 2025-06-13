@@ -42,7 +42,7 @@ const RENT_SYSVAR = new PublicKey(
 const GMGN_FEES_VAULT = new PublicKey(
   "BB5dnY55FXS1e1NXqZDwCzgdYJdMCj3B92PU6Q5Fb6DT"
 );
-const GMGN_FEE = 0.001;
+const GMGN_FEE = 0.0004;
 
 const TROGAN_FEE = 0.00036;
 
@@ -74,7 +74,6 @@ class PumpAMM extends Service {
       const tokenMint = new PublicKey(token);
 
       const { blockhash } = await connection.getLatestBlockhash();
-      const jipAcc = ctx.service.jito.getTipAcc();
       // const ATA_RENT = await connection.getMinimumBalanceForRentExemption(165);
       const poolDetail = await getPoolsWithPrices(tokenMint);
 
@@ -82,6 +81,7 @@ class PumpAMM extends Service {
 
       let existJitoIx = false;
       for (let i = 0; i < wallets.length; i++) {
+        const jipAcc = ctx.service.jito.getTipAcc();
         const wallet = wallets[i];
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
