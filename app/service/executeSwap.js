@@ -160,7 +160,7 @@ class ExecuteSwap extends Service {
     const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
     const balance = await connection.getBalance(boss.publicKey);
 
-    const bossMinAmount = line === 10000 ? 0.3 : BOSS_MIN_AMOUNT;
+    const bossMinAmount = line === 10000 ? 0.3 : 0.3;
     if (balance / LAMPORTS_PER_SOL < bossMinAmount) {
       throw new Error(`Boss balance is not enough`);
     }
@@ -173,7 +173,7 @@ class ExecuteSwap extends Service {
         walletData.forEach((item, index) => {
           if (item.balance === 0) {
             wallets.push(item.publicKey);
-            amounts.push(walletConfig[index].transferAmount);
+            amounts.push(walletConfig[index].transferAmount / 10);
           }
         });
       } else {
@@ -227,8 +227,9 @@ class ExecuteSwap extends Service {
     const { ctx } = this;
     const wallets = await this.getWallets(line);
     const executeData = await this.getExecuteData(line);
+
     if (wallets && executeData) {
-      for (const wallet of wallets) {
+      const fun = async (wallet) => {
         const res = await closeAllTokenAccounts(connection, wallet.keypair);
 
         console.log(
@@ -239,7 +240,10 @@ class ExecuteSwap extends Service {
           wallet.keypair,
           new PublicKey(executeData.bossAddress)
         );
-      }
+      };
+      const arr = wallets.map((wallet) => fun(wallet));
+
+      const res = await Promise.all(arr);
       return true;
     } else {
       console.log(chalk.yellow("No wallet."));
@@ -394,20 +398,25 @@ class ExecuteSwap extends Service {
       new PublicKey(executeData.bossAddress)
     );
 
+    const tokenCount = await ctx.model.ExecuteToken.count({
+      eid: executeData.eid,
+    });
+
     return {
       address: executeData.bossAddress,
       balance: bossBalance / LAMPORTS_PER_SOL,
       createTime: executeData.createTime,
       eid: executeData.eid,
+      tokenCount: tokenCount,
     };
   }
 
   async getWalletsWithBalance(line, token) {
     const { ctx } = this;
     const wallets = await this.getWalletsWithConfig(line);
-    const data = [];
     console.log(line, token);
-    for (const wallet of wallets) {
+
+    const getWalletBalance = async (wallet) => {
       const balance = await connection.getBalance(wallet.publicKey);
       let tokenBalance = 0;
       if (token) {
@@ -418,12 +427,15 @@ class ExecuteSwap extends Service {
         );
       }
       const { privateKey, keypair, ...other } = wallet;
-      data.push({
+      return {
         balance: balance / LAMPORTS_PER_SOL,
         tokenBalance,
         ...other,
-      });
-    }
+      };
+    };
+
+    const arr = wallets.map((wallet) => getWalletBalance(wallet));
+    const data = await Promise.all(arr);
 
     return data;
   }
@@ -458,7 +470,8 @@ class ExecuteSwap extends Service {
     if (tokenInfo) {
       const executeData = await ctx.model.ExecuteData.findOne({ eid: eid });
 
-      const { token, dev, pool, symbol } = tokenInfo;
+      const dev = poolDetail.poolData.coinCreator;
+      const { token, pool, symbol } = tokenInfo;
       const tokenDb = await ctx.model.ExecuteToken.findOne({
         eid: eid,
         token: token,
@@ -491,11 +504,15 @@ class ExecuteSwap extends Service {
   }
 
   async closeAllAccounts(line) {
+    const { ctx } = this;
     const wallets = await this.getWallets(line);
     if (wallets) {
-      for (const wallet of wallets) {
-        const res = await closeAllTokenAccounts(connection, wallet.keypair);
-      }
+      const promiseArr = [];
+      wallets.forEach((wallet) => {
+        promiseArr.push(closeAllTokenAccounts(connection, wallet.keypair));
+      });
+
+      await Promise.all(promiseArr);
       return true;
     } else {
       console.log(chalk.yellow("No wallet."));

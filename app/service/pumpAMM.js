@@ -81,6 +81,7 @@ class PumpAMM extends Service {
 
       const buyTxns = [];
 
+      const existJitoIx = false;
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
@@ -184,16 +185,17 @@ class PumpAMM extends Service {
           });
 
           volumeIxs.push(troganTipIx);
-
-          if (wallets.length > 1 && i === wallets.length - 1) {
-            const jitoTipIx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(jitoTipIx);
-          }
         } else {
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
+          volumeIxs.push(jitoTipIx);
+          existJitoIx = true;
+        }
+
+        if (existJitoIx === false && i === wallets.length - 1) {
           const jitoTipIx = SystemProgram.transfer({
             fromPubkey: user,
             toPubkey: jipAcc,

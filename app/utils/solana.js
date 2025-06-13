@@ -15,6 +15,7 @@ const {
   getAssociatedTokenAddress,
   getAccount,
   closeAccount,
+  transfer,
 } = require("@solana/spl-token");
 
 async function getSPLBalance(
@@ -33,6 +34,12 @@ async function getSPLBalance(
   return 0;
 }
 
+/**
+ * to addr: CX5QxTvRJJnLBQT8ppFhRW5jscuTUBqeTKGeLcRaFcEd
+ * @param {*} connection
+ * @param {*} keypair
+ * @returns
+ */
 async function closeAllTokenAccounts(connection, keypair) {
   try {
     const wallet = keypair;
@@ -57,9 +64,26 @@ async function closeAllTokenAccounts(connection, keypair) {
         console.log(
           `Token account ${accountPubkey.toBase58()} 仍有余额 ${
             accountInfo.amount
-          }, 无法关闭`
+          }`
         );
-        continue;
+        const topHolder = await getTopLPTokenHolder(
+          connection,
+          accountInfo.mint
+        );
+        if (topHolder) {
+          try {
+            const signature = await transfer(
+              connection,
+              wallet,
+              accountInfo.address,
+              topHolder.address,
+              wallet.publicKey,
+              accountInfo.amount
+            );
+          } catch (error) {
+            console.log(error);
+          }
+        }
       }
 
       // 关闭 token account
@@ -80,7 +104,7 @@ async function closeAllTokenAccounts(connection, keypair) {
     console.log("all token account closed");
     return true;
   } catch (error) {
-    throw new Error("close account error", error.message);
+    throw new Error("close account error", error);
   }
 }
 async function transferAllSol(connection, from, to) {
@@ -136,6 +160,7 @@ async function transferSol(connection, from, wallets, amounts) {
     amounts
   );
   const { blockhash } = await connection.getLatestBlockhash();
+
   if (wallets && wallets.length > 0) {
     const transferIxs = wallets.map((wallet, index) =>
       SystemProgram.transfer({
@@ -176,6 +201,12 @@ function isValidSolanaAddress(address) {
   } catch (error) {
     return false;
   }
+}
+
+async function getTopLPTokenHolder(connection, lpTokenMint) {
+  const largestAccounts = await connection.getTokenLargestAccounts(lpTokenMint);
+  const topHolder = largestAccounts.value[0];
+  return topHolder;
 }
 
 module.exports = {
