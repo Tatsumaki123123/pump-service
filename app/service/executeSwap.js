@@ -159,7 +159,9 @@ class ExecuteSwap extends Service {
     const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
     const balance = await connection.getBalance(boss.publicKey);
 
-    const bossMinAmount = line === 10000 ? 0.3 : BOSS_MIN_AMOUNT;
+    const isTest = line === 10000;
+
+    const bossMinAmount = isTest ? 0.3 : BOSS_MIN_AMOUNT;
     if (balance / LAMPORTS_PER_SOL < bossMinAmount) {
       throw new Error(`Boss balance is not enough`);
     }
@@ -172,7 +174,7 @@ class ExecuteSwap extends Service {
         walletData.forEach((item, index) => {
           if (item.balance === 0) {
             wallets.push(item.publicKey);
-            amounts.push(walletConfig[index].transferAmount / 10);
+            amounts.push(walletConfig[index].transferAmount);
           }
         });
       } else {
@@ -359,6 +361,7 @@ class ExecuteSwap extends Service {
   }
 
   async getWalletsWithConfig(line, type) {
+    console.log(chalk.green("getWalletsWithConfig:", line, type));
     const wallets = await this.getWallets(line);
     const walletConfigs = await this.getWalletConfig(line);
     const data = wallets.map((wallet, index) => {
@@ -378,6 +381,8 @@ class ExecuteSwap extends Service {
         return wallet.firstBuy === true;
       } else if (type === "second") {
         return wallet.secondBuy === true;
+      } else if (type === "third") {
+        return wallet.thirdBuy === true;
       } else if (type === "multi") {
         return wallet.multiBuy === true;
       } else {
