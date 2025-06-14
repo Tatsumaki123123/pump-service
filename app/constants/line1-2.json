@@ -44,8 +44,8 @@
   {
     "transferAmount": 0.3,
     "buyAmount": [0.04],
-    "limit": 131446,
-    "price": 152154,
+    "limit": 133096,
+    "price": 150268,
     "fee": 0.0002,
     "firstBuy": false,
     "secondBuy": false,
@@ -55,8 +55,8 @@
   {
     "transferAmount": 0.3,
     "buyAmount": [0.04],
-    "limit": 131446,
-    "price": 152154,
+    "limit": 134746,
+    "price": 148428,
     "fee": 0.0002,
     "firstBuy": false,
     "secondBuy": false,

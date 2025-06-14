@@ -138,7 +138,6 @@ class ExecuteSwap extends Service {
         privateKey: bs58.encode(boss.secretKey),
       })
     );
-    console.log(newData);
     await ctx.model.ExecuteData.updateMany(
       { active: true, line: lastExecuteData.line },
       { active: false }
@@ -192,7 +191,6 @@ class ExecuteSwap extends Service {
         const res = await ctx.model.ExecuteWallet.insertMany(dbData);
       }
 
-      console.log(wallets, amounts);
       if (wallets.length === 0) {
         throw new Error("no wallet to transfer");
       }
@@ -214,7 +212,6 @@ class ExecuteSwap extends Service {
 
     if (wallets && executeData) {
       const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
-      console.log(boss.publicKey.toBase58());
       const amounts = walletConfig.map((item) => item.transferAmount);
       const newWallets = wallets.map((item) => new PublicKey(item.address));
       await transferSol(connection, boss, newWallets, amounts);
@@ -414,7 +411,6 @@ class ExecuteSwap extends Service {
   async getWalletsWithBalance(line, token) {
     const { ctx } = this;
     const wallets = await this.getWalletsWithConfig(line);
-    console.log(line, token);
 
     const getWalletBalance = async (wallet) => {
       const balance = await connection.getBalance(wallet.publicKey);
@@ -440,8 +436,10 @@ class ExecuteSwap extends Service {
     return data;
   }
 
-  async checkToken(token, eid) {
+  async checkToken(tokenData, eid) {
+    console.log(chalk.green("checkToken"));
     const { ctx } = this;
+    const { token } = tokenData;
 
     if (!isValidSolanaAddress(token)) {
       throw new Error("Valid solana address");
@@ -464,55 +462,46 @@ class ExecuteSwap extends Service {
       return;
     }
 
-    const tokenInfo = await ctx.service.ave.getTokenInfo(token);
-    console.log(tokenInfo);
+    const executeData = await ctx.model.ExecuteData.findOne({ eid: eid });
 
-    if (tokenInfo) {
-      const executeData = await ctx.model.ExecuteData.findOne({ eid: eid });
-
-      const dev = poolDetail.poolData.coinCreator;
-      const { token, pool, symbol } = tokenInfo;
-      const tokenDb = await ctx.model.ExecuteToken.findOne({
-        eid: eid,
-        token: token,
-        status: { $in: ["pending", "buy"] },
-      });
-      let tid = new Date().getTime();
-      if (!tokenDb) {
-        await ctx.model.ExecuteToken.create({
-          tid: tid,
-          token,
-          dev,
-          pool,
-          symbol,
-          createTime: new Date(),
-          eid: executeData.eid,
-          line: executeData.line,
-          status: "pending",
-        });
-      } else {
-        tid = tokenDb.tid;
-      }
-      const buyTimes = await ctx.model.ExecuteToken.count({
-        token: token,
-        status: "end",
-      });
-      return { ...tokenInfo, buyTimes, tid };
+    const dev = poolDetail.poolData.coinCreator;
+    const pool = poolDetail.address;
+    const tokenDb = await ctx.model.ExecuteToken.findOne({
+      eid: eid,
+      token: token,
+      status: { $in: ["pending", "buy"] },
+    });
+    let tid = new Date().getTime();
+    if (!tokenDb) {
+      const tokenInfo = {
+        tid: tid,
+        symbol: tokenData.symbol,
+        token,
+        dev,
+        pool,
+        createTime: new Date(),
+        eid: executeData.eid,
+        line: executeData.line,
+        status: "pending",
+      };
+      await ctx.model.ExecuteToken.create(tokenInfo);
     } else {
-      throw new Error("Can not find token info");
+      tid = tokenDb.tid;
     }
+    const buyTimes = await ctx.model.ExecuteToken.count({
+      token: token,
+      status: "end",
+    });
+    return { ...tokenData, buyTimes, tid };
   }
 
   async closeAllAccounts(line) {
     const { ctx } = this;
     const wallets = await this.getWallets(line);
-    if (wallets) {
-      const promiseArr = [];
-      wallets.forEach((wallet) => {
-        promiseArr.push(closeAllTokenAccounts(connection, wallet.keypair));
-      });
-
-      await Promise.all(promiseArr);
+    if (wallets && wallets.length > 0) {
+      for (const wallet of wallets) {
+        await closeAllTokenAccounts(connection, wallet.keypair);
+      }
       return true;
     } else {
       console.log(chalk.yellow("No wallet."));
@@ -523,7 +512,6 @@ class ExecuteSwap extends Service {
     const { ctx } = this;
     const executeData = await this.getExecuteData(line);
     const lineData = await ctx.model.ExecuteLine.findOne({ lineId: line });
-    console.log(lineData.withdrawAddress);
     if (lineData.withdrawAddress) {
       const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
       await transferAllSol(

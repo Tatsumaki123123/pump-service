@@ -24,4 +24,10 @@ module.exports = (app) => {
     controller.executeSwap.closeAllAccounts
   );
   router.post("/v1/execute/withdraw", controller.executeSwap.withdraw);
+
+  router.post("/v1/executetoken/tokenList", controller.executeToken.tokenList);
+  router.post(
+    "/v1/executetoken/initTokenList",
+    controller.executeToken.initTokenList
+  );
 };

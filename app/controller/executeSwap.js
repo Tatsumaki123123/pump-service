@@ -3,9 +3,6 @@
 const { Controller } = require("egg");
 const BaseController = require("./base");
 
-/**
- * 1, 生成6个钱包地址，每个转入固定金额sol
- */
 class ExecuteSwap extends BaseController {
   async start() {
     const { ctx } = this;
@@ -105,9 +102,9 @@ class ExecuteSwap extends BaseController {
   async checkToken() {
     const { ctx } = this;
 
-    const { token, eid } = ctx.request.body;
-    if (token && eid) {
-      const res = await ctx.service.executeSwap.checkToken(token, eid);
+    const { tokenData, eid } = ctx.request.body;
+    if (tokenData && eid) {
+      const res = await ctx.service.executeSwap.checkToken(tokenData, eid);
       this.success(res);
     } else {
       throw new Error("Params error");

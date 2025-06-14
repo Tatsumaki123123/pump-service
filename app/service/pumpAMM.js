@@ -230,17 +230,17 @@ class PumpAMM extends Service {
           tx.sign([keypair]);
 
           // 模拟交易
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.error("simulation", simulationResult.value);
-          //   throw new Error(simulationResult.value);
-          // }
+          const simulationResult = await connection.simulateTransaction(tx, {
+            commitment: "confirmed",
+          });
+          if (simulationResult.value.err) {
+            console.error("simulation", simulationResult.value);
+            throw new Error(simulationResult.value);
+          }
 
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
+          console.log(
+            chalk.green("simulation success", keypair.publicKey.toString())
+          );
           buyTxns.push(tx);
         } catch (error) {
           console.error(error.message);
@@ -282,15 +282,12 @@ class PumpAMM extends Service {
 
       const sellTxns = [];
 
+      const newWallets = [];
+
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
-
-        const { limit, price, fee } = wallet;
-        // const user = new PublicKey(
-        //   "CL3NczTBZh4mGfvLFVEb4LMrvg92QrpNXHwDuZ54Jq8g"
-        // );
         const tokenAmount = await getSPLBalance(
           connection,
           tokenMint,
@@ -298,111 +295,121 @@ class PumpAMM extends Service {
         );
 
         console.log(`${user.toBase58()} sell ${tokenAmount} ${token}`);
-        if (tokenAmount >= 10000) {
-          // 1, setComputeUnitLimitIx
-          const setComputeUnitLimitIx =
-            ComputeBudgetProgram.setComputeUnitLimit({
-              units: limit,
-            });
+        if (tokenAmount >= 100) {
+          newWallets.push({ ...wallet, tokenAmount });
+        }
+      }
 
-          // 2,
-          const setComputeUnitPriceIx =
-            ComputeBudgetProgram.setComputeUnitPrice({
-              microLamports: price,
-            });
+      const len = newWallets.length > 5 ? 5 : newWallets.length;
+      for (let i = 0; i < len; i++) {
+        const wallet = newWallets[i];
+        const keypair = wallet.keypair;
+        const user = keypair.publicKey;
+        const tokenAmount = wallet.tokenAmount;
 
-          // 3, createAccountWithSeed
-          const seed = new Date().getTime().toString();
-          // const seed = "1749356034021";
+        const { limit, price, fee } = wallet;
 
-          const newAccount = await PublicKey.createWithSeed(
-            user,
-            seed,
-            TOKEN_PROGRAM_ID
+        // 1, setComputeUnitLimitIx
+        const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
+          units: limit,
+        });
+
+        // 2,
+        const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
+          microLamports: price,
+        });
+
+        // 3, createAccountWithSeed
+        const seed = new Date().getTime().toString();
+        // const seed = "1749356034021";
+
+        const newAccount = await PublicKey.createWithSeed(
+          user,
+          seed,
+          TOKEN_PROGRAM_ID
+        );
+        const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
+          fromPubkey: user,
+          newAccountPubkey: newAccount,
+          basePubkey: user,
+          seed: seed,
+          lamports: 2039280,
+          space: 165,
+          programId: TOKEN_PROGRAM_ID,
+        });
+
+        // 4, initializeAccount
+        const initializeAccountIx = createInitializeAccountInstruction(
+          newAccount,
+          WSOL_TOKEN_ACCOUNT,
+          user,
+          TOKEN_PROGRAM_ID
+        );
+
+        // 5, pump sell
+        const swapTx = await pSwap.createSellInstruction({
+          user,
+          tokenMint,
+          tokenAmount,
+          sellNewAccount: newAccount,
+          poolDetail: poolDetail,
+        });
+
+        // 6. Token Program: closeAccount
+        const closeAccountIx = createCloseAccountInstruction(
+          newAccount,
+          user,
+          user
+        );
+
+        //7
+        const jitoTipIx = SystemProgram.transfer({
+          fromPubkey: keypair.publicKey,
+          toPubkey: jipAcc,
+          lamports: fee * LAMPORTS_PER_SOL,
+        });
+
+        const volumeIxs = [
+          setComputeUnitLimitIx,
+          setComputeUnitPriceIx,
+          createAccountWithSeedIx,
+          initializeAccountIx,
+          swapTx,
+          closeAccountIx,
+          jitoTipIx,
+        ];
+
+        try {
+          const messageV0 = new TransactionMessage({
+            payerKey: keypair.publicKey,
+            recentBlockhash: blockhash,
+            instructions: volumeIxs,
+          }).compileToV0Message();
+
+          const tx = new VersionedTransaction(messageV0);
+          tx.sign([keypair]);
+
+          // 模拟交易
+          // const simulationResult = await connection.simulateTransaction(tx, {
+          //   commitment: "confirmed",
+          // });
+          // if (simulationResult.value.err) {
+          //   console.log("simulation", simulationResult.value);
+          //   throw new Error(simulationResult.value);
+          // }
+
+          // console.log(
+          //   chalk.green("simulation success", keypair.publicKey.toString())
+          // );
+          sellTxns.push(tx);
+        } catch (error) {
+          console.error(
+            chalk.red(
+              `Error compiling transaction for ${user.toBase58()}:`,
+              error.message
+            )
           );
-          const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
-            fromPubkey: user,
-            newAccountPubkey: newAccount,
-            basePubkey: user,
-            seed: seed,
-            lamports: 2039280,
-            space: 165,
-            programId: TOKEN_PROGRAM_ID,
-          });
-
-          // 4, initializeAccount
-          const initializeAccountIx = createInitializeAccountInstruction(
-            newAccount,
-            WSOL_TOKEN_ACCOUNT,
-            user,
-            TOKEN_PROGRAM_ID
-          );
-
-          // 5, pump sell
-          const swapTx = await pSwap.createSellInstruction({
-            user,
-            tokenMint,
-            tokenAmount,
-            sellNewAccount: newAccount,
-            poolDetail: poolDetail,
-          });
-
-          // 6. Token Program: closeAccount
-          const closeAccountIx = createCloseAccountInstruction(
-            newAccount,
-            user,
-            user
-          );
-
-          //7
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: keypair.publicKey,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-
-          const volumeIxs = [
-            setComputeUnitLimitIx,
-            setComputeUnitPriceIx,
-            createAccountWithSeedIx,
-            initializeAccountIx,
-            swapTx,
-            closeAccountIx,
-            jitoTipIx,
-          ];
-
-          try {
-            const messageV0 = new TransactionMessage({
-              payerKey: keypair.publicKey,
-              recentBlockhash: blockhash,
-              instructions: volumeIxs,
-            }).compileToV0Message();
-
-            const tx = new VersionedTransaction(messageV0);
-            tx.sign([keypair]);
-
-            // 模拟交易
-            // const simulationResult = await connection.simulateTransaction(tx, {
-            //   commitment: "confirmed",
-            // });
-            // if (simulationResult.value.err) {
-            //   console.log("simulation", simulationResult.value);
-            //   throw new Error(simulationResult.value);
-            // }
-
-            // console.log(
-            //   chalk.green("simulation success", keypair.publicKey.toString())
-            // );
-            sellTxns.push(tx);
-          } catch (error) {
-            console.error(
-              chalk.red(
-                `Error compiling transaction for ${user.toBase58()}:`,
-                error.message
-              )
-            );
-            continue;
-          }
+          continue;
         }
       }
       console.log("sellTxns", sellTxns.length);
