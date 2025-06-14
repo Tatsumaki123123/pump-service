@@ -13,10 +13,13 @@ class ExecuteToken extends Service {
       const { groupId } = lineData;
 
       if (groupId) {
-        const allList = await ctx.service.debot.getHotToken(groupId);
+        const allList = await ctx.service.debot.getHotToken(
+          groupId,
+          lineData.groupSort
+        );
         const buyTokens = await ctx.model.ExecuteToken.find({
           eid: executeData.eid,
-          status: { $in: ["buy", "end"] },
+          status: { $in: ["buy", "sell"] },
         }).lean();
         const newList = [];
         allList.forEach((item) => {

@@ -48,7 +48,7 @@ const TROGAN_FEE = 0.00036;
 
 const TRANSACTION_FEE = 5000;
 const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
-const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
+const SLIPPAGE_BASIS_POINTS = 0.05; // 10% 滑点
 // const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
 
 const pSwap = new PumpSwapSDK();

@@ -8,6 +8,7 @@ module.exports = (app) => {
     walletConfig: { type: Array },
     withdrawAddress: { type: String },
     groupId: { type: Number },
+    groupSort: { type: Object },
   });
 
   return mongoose.model("ExecuteLine", schema);
