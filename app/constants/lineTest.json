@@ -1,0 +1,33 @@
+[
+  {
+    "transferAmount": 2,
+    "buyAmount": [1.48],
+    "limit": 212000,
+    "price": 133585,
+    "fee": 0.000001,
+    "firstBuy": true,
+    "isOkx": true
+  },
+  {
+    "transferAmount": 0.5,
+    "buyAmount": [0.13],
+    "limit": 200000,
+    "price": 250000,
+    "fee": 0.00005,
+    "firstBuy": false,
+    "multiBuy": true,
+    "isGmgn": true,
+    "isProxyBuy2": true
+  },
+  {
+    "transferAmount": 0.5,
+    "buyAmount": [0.13],
+    "limit": 200000,
+    "price": 250000,
+    "fee": 0.00005,
+    "firstBuy": false,
+    "multiBuy": true,
+    "isGmgn": true,
+    "isProxy2": true
+  }
+]

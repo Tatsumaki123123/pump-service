@@ -95,7 +95,7 @@ class ExecuteSwap extends BaseController {
 
   async getLines() {
     const { ctx } = this;
-    const res = await ctx.model.ExecuteLine.find().sort("");
+    const res = await ctx.model.ExecuteLine.find().sort({ lineId: "asc" });
     this.success(res);
   }
 
