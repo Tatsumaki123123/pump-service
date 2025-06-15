@@ -9,6 +9,7 @@ module.exports = (app) => {
     withdrawAddress: { type: String },
     groupId: { type: Number },
     groupSort: { type: Object },
+    autoStep: { type: Array },
   });
 
   return mongoose.model("ExecuteLine", schema);
