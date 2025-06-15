@@ -19,6 +19,7 @@ class Ave extends Service {
         "x-auth": X_AUTH,
       },
     });
+    console.log(res);
     const data = res.data?.data;
 
     // const devData = await this.getTokenDev(tokenAddress);

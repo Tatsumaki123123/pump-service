@@ -181,7 +181,7 @@ class PumpAMM extends Service {
           const signature = await connection.sendTransaction(transferTx, {
             skipPreflight: false,
           });
-          // await connection.confirmTransaction(signature, "processed");
+          await connection.confirmTransaction(signature, "confirmed");
           return;
         }
         const bundleResult = await ctx.service.jito.sendBundle(buyTxns);

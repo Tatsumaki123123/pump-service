@@ -13,6 +13,8 @@ module.exports = (app) => {
     eid: { type: Number },
     line: { type: Number },
     status: { type: String }, // pending, buy, sell
+    buyStatus: { type: String, default: "" }, // pending, buy, sell
+    buyStartTime: { type: Date },
   });
 
   return mongoose.model("ExecuteToken", schema);

@@ -12,10 +12,14 @@ const chalk = require("chalk");
 const {
   getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   getAssociatedTokenAddress,
   getAccount,
   closeAccount,
   transfer,
+  getMint,
+  getMetadataPointerState,
+  getTokenMetadata,
 } = require("@solana/spl-token");
 
 async function getSPLBalance(
@@ -43,6 +47,7 @@ async function getSPLBalance(
 async function closeAllTokenAccounts(connection, keypair) {
   try {
     const wallet = keypair;
+    console.log(chalk.green("Close account:", wallet.publicKey.toBase58()));
 
     const tokenAccounts = await connection.getTokenAccountsByOwner(
       wallet.publicKey,
@@ -59,13 +64,15 @@ async function closeAllTokenAccounts(connection, keypair) {
       const accountPubkey = account.pubkey;
       const accountInfo = await getAccount(connection, accountPubkey);
 
-      // 检查余额是否为 0
-      if (accountInfo.amount > 0) {
-        console.log(
-          `Token account ${accountPubkey.toBase58()} 仍有余额 ${
+      if (accountInfo.amount >= 1000) {
+        throw new Error(
+          `Token account ${wallet.publicKey.toBase58()} has balance ${
             accountInfo.amount
           }`
         );
+      }
+      // 检查余额是否为 0
+      if (accountInfo.amount > 0 && accountInfo.amount < 1000) {
         const topHolder = await getTopLPTokenHolder(
           connection,
           accountInfo.mint
@@ -86,25 +93,23 @@ async function closeAllTokenAccounts(connection, keypair) {
         }
       }
 
-      // 关闭 token account
-      console.log(`正在关闭 token account: ${accountPubkey.toBase58()}`);
+      // close token account
+      console.log(`cloase token account: ${accountPubkey.toBase58()}`);
       const transaction = await closeAccount(
         connection,
-        wallet, // 签名者
-        accountPubkey, // 要关闭的 token account
-        wallet.publicKey, // 接收退款的地址（通常是 owner）
-        wallet.publicKey // 授权者
+        wallet,
+        accountPubkey,
+        wallet.publicKey,
+        wallet.publicKey
       );
 
-      console.log(
-        `Token account ${accountPubkey.toBase58()} 已关闭，交易签名: ${transaction}`
-      );
+      console.log(`Token account ${accountPubkey.toBase58()} closed`);
     }
 
     console.log("all token account closed");
     return true;
   } catch (error) {
-    throw new Error("close account error", error);
+    throw new Error(error);
   }
 }
 async function transferAllSol(connection, from, to) {
@@ -209,10 +214,52 @@ async function getTopLPTokenHolder(connection, lpTokenMint) {
   return topHolder;
 }
 
+async function getTokenMeta(connection, mintAddress) {
+  try {
+    console.log("getTokenMeta", mintAddress);
+    const mintPublicKey = new PublicKey(mintAddress);
+
+    const mint = await getMint(
+      connection,
+      mintPublicKey,
+      "confirmed",
+      TOKEN_2022_PROGRAM_ID
+    );
+
+    const metadataPointer = getMetadataPointerState(mint);
+
+    if (!metadataPointer?.metadataAddress) {
+      throw new Error("No metadata address found for this token.");
+    }
+
+    // 获取代币元数据
+    const metadata = await getTokenMetadata(
+      connection,
+      mintPublicKey,
+      "confirmed",
+      TOKEN_2022_PROGRAM_ID
+    );
+
+    if (!metadata) {
+      throw new Error("No metadata found for this token.");
+    }
+
+    return {
+      name: metadata.name,
+      symbol: metadata.symbol,
+      uri: metadata.uri,
+    };
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
 module.exports = {
   getSPLBalance,
   closeAllTokenAccounts,
   transferAllSol,
   transferSol,
   isValidSolanaAddress,
+  getTokenMeta,
 };

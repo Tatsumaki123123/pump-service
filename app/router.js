@@ -24,6 +24,12 @@ module.exports = (app) => {
     controller.executeSwap.closeAllAccounts
   );
   router.post("/v1/execute/withdraw", controller.executeSwap.withdraw);
+  router.post("/v1/execute/getBuyTokes", controller.executeSwap.getBuyTokes);
+  router.post(
+    "/v1/execute/getTokenAccounts",
+    controller.executeSwap.getTokenAccounts
+  );
+  router.post("/v1/execute/deleteToken", controller.executeSwap.deleteToken);
 
   router.post("/v1/executetoken/tokenList", controller.executeToken.tokenList);
   router.post(

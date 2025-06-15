@@ -24,6 +24,7 @@ const {
   transferAllSol,
   transferSol,
   isValidSolanaAddress,
+  getTokenMeta,
 } = require("../utils/solana");
 
 const { getPoolsWithPrices } = require("../libs/pool");
@@ -262,16 +263,6 @@ class ExecuteSwap extends Service {
     if (!tokenInfo) {
       throw new Error("Token  not checked");
     }
-    if (tokenInfo.status === "pending") {
-      // if (type !== "first") {
-      //   throw new Error("You should buy first");
-      // }
-    }
-    // if (tokenInfo.status === "buy") {
-    //   if (type === "first") {
-    //     throw new Error("You have buy first...");
-    //   }
-    // }
 
     if (tokenInfo.status === "end") {
       throw new Error("You have sell all,  Please check and start new Token");
@@ -284,12 +275,11 @@ class ExecuteSwap extends Service {
     const wallets = await this.getWalletsWithConfig(line, type);
     if (wallets && wallets.length > 0 && token) {
       const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
-      if (type === "first") {
-        await ctx.model.ExecuteToken.updateOne(
-          { tid: tokenInfo.tid },
-          { status: "buy" }
-        );
-      }
+
+      await ctx.model.ExecuteToken.updateOne(
+        { tid: tokenInfo.tid },
+        { status: "buy", buyStatus: type, buyStartTime: new Date() }
+      );
       return true;
     } else {
       throw new Error("There are not wallets to buy");
@@ -410,6 +400,7 @@ class ExecuteSwap extends Service {
       createTime: executeData.createTime,
       eid: executeData.eid,
       tokenCount: tokenCount,
+      line: executeData.line,
     };
   }
 
@@ -419,18 +410,10 @@ class ExecuteSwap extends Service {
 
     const getWalletBalance = async (wallet) => {
       const balance = await connection.getBalance(wallet.publicKey);
-      let tokenBalance = 0;
-      if (token) {
-        tokenBalance = await getSPLBalance(
-          connection,
-          new PublicKey(token),
-          wallet.publicKey
-        );
-      }
+
       const { privateKey, keypair, ...other } = wallet;
       return {
         balance: balance / LAMPORTS_PER_SOL,
-        tokenBalance,
         ...other,
       };
     };
@@ -460,14 +443,27 @@ class ExecuteSwap extends Service {
       throw new Error("Other buy this token");
     }
 
+    const executeData = await ctx.model.ExecuteData.findOne({ eid: eid });
+
+    const lineBotAccounts = await this.getLineBotTokenBalance(
+      executeData.line,
+      token
+    );
+    if (lineBotAccounts.total > 1000) {
+      throw new Error("Bot has to many token");
+    }
+
     const poolDetail = await getPoolsWithPrices(new PublicKey(token));
 
     if (!poolDetail) {
       throw new Error("Cannot find pool data");
-      return;
     }
 
-    const executeData = await ctx.model.ExecuteData.findOne({ eid: eid });
+    let symbol = tokenData.symbol;
+    if (!symbol) {
+      const metaData = await ctx.service.debot.getTokenInfo(token);
+      symbol = metaData.symbol;
+    }
 
     const dev = poolDetail.poolData.coinCreator;
     const pool = poolDetail.address;
@@ -477,18 +473,18 @@ class ExecuteSwap extends Service {
       status: { $in: ["pending", "buy"] },
     });
     let tid = new Date().getTime();
+    const tokenInfo = {
+      tid: tid,
+      symbol: symbol,
+      token,
+      dev,
+      pool,
+      createTime: new Date(),
+      eid: executeData.eid,
+      line: executeData.line,
+      status: "pending",
+    };
     if (!tokenDb) {
-      const tokenInfo = {
-        tid: tid,
-        symbol: tokenData.symbol,
-        token,
-        dev,
-        pool,
-        createTime: new Date(),
-        eid: executeData.eid,
-        line: executeData.line,
-        status: "pending",
-      };
       await ctx.model.ExecuteToken.create(tokenInfo);
     } else {
       tid = tokenDb.tid;
@@ -497,7 +493,7 @@ class ExecuteSwap extends Service {
       token: token,
       status: "end",
     });
-    return { ...tokenData, buyTimes, tid };
+    return { ...tokenInfo, buyTimes, tid };
   }
 
   async closeAllAccounts(line) {
@@ -527,6 +523,71 @@ class ExecuteSwap extends Service {
       return true;
     } else {
       throw new Error("To address not exist");
+    }
+  }
+
+  async getLineBotTokenBalance(line, token) {
+    const { ctx } = this;
+    const lineData = await ctx.model.ExecuteLine.findOne({ lineId: line });
+    if (lineData && lineData?.lineBots.length > 0) {
+      const { lineBots } = lineData;
+      let list = lineBots.map((item) => ({ ...item, tokenBalance: 0 }));
+      let total = 0;
+      const fun = async (lineBot) => {
+        const tokenBalance = await getSPLBalance(
+          connection,
+          new PublicKey(token),
+          new PublicKey(lineBot.address)
+        );
+
+        return {
+          name: lineBot.name,
+          address: lineBot.address,
+          tokenBalance: tokenBalance,
+        };
+      };
+
+      const arr = lineBots.map((lineBot) => fun(lineBot));
+      list = await Promise.all(arr);
+      list.forEach((item) => {
+        total += item.tokenBalance;
+      });
+      return { total: total, list: list };
+    } else {
+      throw new Error("getLineBotTokenBalance error");
+    }
+  }
+
+  async getWalletTokenBalance(eid, token) {
+    const { ctx } = this;
+    if (eid && token) {
+      const wallets = await ctx.model.ExecuteWallet.find(
+        { eid: eid },
+        { address: 1 }
+      );
+      let list = [];
+      if (wallets && wallets.length > 0) {
+        // for (const wallet of wallets) {
+        // }
+        list = wallets.map((item) => ({
+          address: item.address,
+          tokenBalance: 0,
+        }));
+        const fun = async (wallet) => {
+          const tokenBalance = await getSPLBalance(
+            connection,
+            new PublicKey(token),
+            new PublicKey(wallet.address)
+          );
+          return { address: wallet.address, tokenBalance: tokenBalance };
+        };
+
+        const arr = wallets.map((wallet) => fun(wallet));
+        list = await Promise.all(arr);
+      }
+      return list;
+    } else {
+      throw new Error("getWalletTokenBalance error");
     }
   }
 }

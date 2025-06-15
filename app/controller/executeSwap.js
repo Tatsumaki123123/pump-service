@@ -70,12 +70,9 @@ class ExecuteSwap extends BaseController {
   }
   async getWallets() {
     const { ctx } = this;
-    const { line, token } = ctx.request.body;
+    const { line } = ctx.request.body;
     if (line) {
-      const res = await ctx.service.executeSwap.getWalletsWithBalance(
-        line,
-        token
-      );
+      const res = await ctx.service.executeSwap.getWalletsWithBalance(line);
       this.success(res);
     } else {
       this.fail("params error");
@@ -132,6 +129,63 @@ class ExecuteSwap extends BaseController {
       this.success(res);
     } else {
       throw new Error("Params error");
+    }
+  }
+
+  async getBuyTokes() {
+    const { ctx } = this;
+
+    const { eid, tid } = ctx.request.body;
+    if (eid || tid) {
+      if (tid) {
+        const res = await ctx.model.ExecuteToken.findOne({
+          tid,
+        });
+        this.success(res);
+      } else {
+        const res = await ctx.model.ExecuteToken.find({
+          eid,
+          status: { $in: ["pending", "buy"] },
+        }).sort({
+          createTime: -1,
+        });
+        this.success(res);
+      }
+    } else {
+      throw new Error("Params error");
+    }
+  }
+
+  async getTokenAccounts() {
+    const { ctx } = this;
+    const { token, tokenEid, botLine } = ctx.request.body;
+    if (token) {
+      const data = { tokenAccounts: [], lineBotsAccounts: [] };
+      if (tokenEid) {
+        data.tokenAccounts =
+          await ctx.service.executeSwap.getWalletTokenBalance(tokenEid, token);
+      }
+      if (botLine) {
+        const res = await ctx.service.executeSwap.getLineBotTokenBalance(
+          botLine,
+          token
+        );
+        data.lineBotsAccounts = res.list;
+      }
+      this.success(data);
+    } else {
+      throw new Error("params error");
+    }
+  }
+
+  async deleteToken() {
+    const { ctx } = this;
+    const { tid } = ctx.request.body;
+    if (tid) {
+      await ctx.model.ExecuteToken.deleteOne({ tid: tid });
+      this.success(true);
+    } else {
+      throw new Error("params error");
     }
   }
 }

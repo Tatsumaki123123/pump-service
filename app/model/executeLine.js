@@ -10,6 +10,7 @@ module.exports = (app) => {
     groupId: { type: Number },
     groupSort: { type: Object },
     autoStep: { type: Array },
+    lineBots: { type: Array },
   });
 
   return mongoose.model("ExecuteLine", schema);
