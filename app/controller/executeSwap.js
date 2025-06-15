@@ -182,8 +182,16 @@ class ExecuteSwap extends BaseController {
     const { ctx } = this;
     const { tid } = ctx.request.body;
     if (tid) {
-      await ctx.model.ExecuteToken.deleteOne({ tid: tid });
-      this.success(true);
+      const dbData = await ctx.model.ExecuteToken.findOne({
+        tid: tid,
+        status: "pending",
+      });
+      if (dbData) {
+        await ctx.model.ExecuteToken.deleteOne({ tid: tid });
+        this.success(true);
+      } else {
+        throw new Error("Your can only delete Pending token");
+      }
     } else {
       throw new Error("params error");
     }
