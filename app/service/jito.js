@@ -9,6 +9,7 @@ const {
   SystemProgram,
   TransactionMessage,
 } = require("@solana/web3.js");
+const bs58 = require("bs58");
 require("dotenv").config();
 const chalk = require("chalk");
 
@@ -21,7 +22,9 @@ const { Bundle } = require("jito-ts/dist/sdk/block-engine/types");
 const JITO_RPC =
   process.env.JITO_RPC || "https://mainnet.block-engine.jito.wtf";
 
-const jitoClient = searcherClient(JITO_RPC);
+const jitoClient = searcherClient(
+  "https://little-practical-lake.solana-mainnet.quiknode.pro/748dd52b1227a0602d41ef4ac30d2b4a01f39dc3/"
+);
 
 const tipAccounts = [
   "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
@@ -34,8 +37,19 @@ const tipAccounts = [
   "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
 ];
 
+const quickNodeConnection = new Connection(
+  "https://little-practical-lake.solana-mainnet.quiknode.pro/748dd52b1227a0602d41ef4ac30d2b4a01f39dc3/",
+  "confirmed"
+);
+
+function serializeTransaction(transaction) {
+  const serialized = transaction.serialize();
+  return bs58.encode(serialized);
+}
+
 class Jito extends Service {
   async sendBundle(bundledTxns) {
+    return await this.setQuickNodeBundle(bundledTxns);
     try {
       console.log(chalk.green("Send Bundle:"));
       const bundleResult = await jitoClient.sendBundle(
@@ -52,6 +66,23 @@ class Jito extends Service {
       console.error(chalk.red("Error sending bundle:", error.message));
       throw error;
     }
+  }
+
+  async setQuickNodeBundle(bundledTxns) {
+    const transactions = bundledTxns.map((tx) => serializeTransaction(tx));
+    console.log(transactions);
+    const request = {
+      method: "sendBundle",
+      params: [transactions, "ny"],
+    };
+
+    const result = await quickNodeConnection._rpcRequest(
+      request.method,
+      request.params
+    );
+
+    console.log(JSON.stringify(result, null, 2));
+    return result;
   }
 
   getTipAcc() {
