@@ -49,7 +49,7 @@ const TROGAN_FEE = 0.00036;
 
 const TRANSACTION_FEE = 5000;
 const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
-const SLIPPAGE_BASIS_POINTS = 0.02; // 10% 滑点
+const SLIPPAGE_BASIS_POINTS = 0.05; // 10% 滑点
 // const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
 
 const pSwap = new PumpSwapSDK();
@@ -189,13 +189,18 @@ class PumpAMM extends Service {
       // for end
       console.log("buyTxns", buyTxns.length);
       if (buyTxns.length > 0) {
+        // for (const transferTx of buyTxns) {
+        //   const signature = await connection.sendTransaction(transferTx, {
+        //     skipPreflight: false,
+        //   });
+        //   await connection.confirmTransaction(signature, "processed");
+        // }
         if (buyTxns.length === 1) {
           const transferTx = buyTxns[0];
           const signature = await connection.sendTransaction(transferTx, {
             skipPreflight: false,
           });
           await connection.confirmTransaction(signature, "confirmed");
-          return;
         }
         const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
         console.log(bundleResult);

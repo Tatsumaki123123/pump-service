@@ -69,8 +69,8 @@ class Jito extends Service {
   }
 
   async setQuickNodeBundle(bundledTxns) {
+    console.log(chalk.green("Send bundle quick node"));
     const transactions = bundledTxns.map((tx) => serializeTransaction(tx));
-    console.log(transactions);
     const request = {
       method: "sendBundle",
       params: [transactions, "ny"],
