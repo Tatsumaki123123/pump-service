@@ -73,6 +73,13 @@ async function closeAllTokenAccounts(connection, keypair) {
       }
       // 检查余额是否为 0
       if (accountInfo.amount > 0 && accountInfo.amount < 1000) {
+        console.log(
+          chalk.red(
+            `Token account ${wallet.publicKey.toBase58()} has balance ${
+              accountInfo.amount
+            }`
+          )
+        );
         const topHolder = await getTopLPTokenHolder(
           connection,
           accountInfo.mint
@@ -87,6 +94,7 @@ async function closeAllTokenAccounts(connection, keypair) {
               wallet.publicKey,
               accountInfo.amount
             );
+            await connection.confirmTransaction(signature, "confirmed");
           } catch (error) {
             console.log(error);
           }

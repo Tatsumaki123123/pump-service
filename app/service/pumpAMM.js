@@ -83,64 +83,78 @@ class PumpAMM extends Service {
 
       let existJitoIx = false;
       for (let i = 0; i < wallets.length; i++) {
-        const jipAcc = ctx.service.jito.getTipAcc();
         const wallet = wallets[i];
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
         const { buyAmount, limit, price, fee } = wallet;
-        console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
-
-        //  1: limit
-        const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
-          units: limit,
-        });
-
-        //  2: price
-        const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
-          microLamports: price,
-        });
-
-        const proxyBuyIxs = await this.genBuyProxyIxs(
-          tokenMint,
-          wallet,
-          poolDetail
-        );
-        const volumeIxs = [
-          setComputeUnitLimitIx,
-          setComputeUnitPriceIx,
-          ...proxyBuyIxs,
-        ];
-
-        // 9, gmgn, trogan, jito
-        if (wallet.isGmgn) {
-          const gmgnTipTx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: GMGN_FEES_VAULT,
-            lamports: GMGN_FEE * LAMPORTS_PER_SOL,
+        let volumeIxs = [];
+        if (wallet.isOkx) {
+          const okxIxs = await okxSwap.getBuyInstructions(ctx, {
+            user,
+            tokenMint,
+            buyAmount: buyAmount,
+            slippage: SLIPPAGE_BASIS_POINTS,
+            poolDetail,
           });
-          volumeIxs.push(gmgnTipTx);
-        }
-        if (wallet.isTrogan) {
-          const troganTipIx = createTroProxyInstruction(user, jipAcc);
-
-          volumeIxs.push(troganTipIx);
+          volumeIxs = okxIxs;
         } else {
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(jitoTipIx);
-          existJitoIx = true;
-        }
+          const jipAcc = ctx.service.jito.getTipAcc();
+          console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
 
-        if (existJitoIx === false && i === wallets.length - 1) {
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(jitoTipIx);
+          //  1: limit
+          const setComputeUnitLimitIx =
+            ComputeBudgetProgram.setComputeUnitLimit({
+              units: limit,
+            });
+
+          //  2: price
+          const setComputeUnitPriceIx =
+            ComputeBudgetProgram.setComputeUnitPrice({
+              microLamports: price,
+            });
+
+          const proxyBuyIxs = await this.genBuyProxyIxs(
+            tokenMint,
+            wallet,
+            poolDetail
+          );
+          volumeIxs = [
+            setComputeUnitLimitIx,
+            setComputeUnitPriceIx,
+            ...proxyBuyIxs,
+          ];
+
+          // 9, gmgn, trogan, jito
+          if (wallet.isGmgn) {
+            const gmgnTipTx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: GMGN_FEES_VAULT,
+              lamports: GMGN_FEE * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(gmgnTipTx);
+          }
+          if (wallet.isTrogan) {
+            const troganTipIx = createTroProxyInstruction(user, jipAcc);
+
+            volumeIxs.push(troganTipIx);
+          } else {
+            const jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: fee * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(jitoTipIx);
+            existJitoIx = true;
+          }
+
+          if (existJitoIx === false && i === wallets.length - 1) {
+            const jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: fee * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(jitoTipIx);
+          }
         }
 
         try {
@@ -154,17 +168,17 @@ class PumpAMM extends Service {
           tx.sign([keypair]);
 
           // 模拟交易
-          const simulationResult = await connection.simulateTransaction(tx, {
-            commitment: "confirmed",
-          });
-          if (simulationResult.value.err) {
-            console.error("simulation", simulationResult.value);
-            throw new Error(simulationResult.value);
-          }
+          // const simulationResult = await connection.simulateTransaction(tx, {
+          //   commitment: "confirmed",
+          // });
+          // if (simulationResult.value.err) {
+          //   console.error("simulation", simulationResult.value);
+          //   throw new Error(simulationResult.value);
+          // }
 
-          console.log(
-            chalk.green("simulation success", keypair.publicKey.toString())
-          );
+          // console.log(
+          //   chalk.green("simulation success", keypair.publicKey.toString())
+          // );
           buyTxns.push(tx);
         } catch (error) {
           console.error(error.message);
@@ -174,7 +188,6 @@ class PumpAMM extends Service {
 
       // for end
       console.log("buyTxns", buyTxns.length);
-      // return;
       if (buyTxns.length > 0) {
         if (buyTxns.length === 1) {
           const transferTx = buyTxns[0];
@@ -442,85 +455,11 @@ class PumpAMM extends Service {
         poolDetail: poolDetail,
       });
       proxyBuyIxs = [proxyBuyIx];
-    } else if (wallet.isOkx) {
-      proxyBuyIxs = await this.genBuyProxOKXIxs(tokenMint, wallet, poolDetail);
     } else {
       proxyBuyIxs = await this.getBuyAmmIxs(tokenMint, wallet, poolDetail);
     }
 
     return proxyBuyIxs;
-  }
-
-  async genBuyProxOKXIxs(tokenMint, wallet, poolDetail) {
-    const { ctx } = this;
-    const jipAcc = ctx.service.jito.getTipAcc();
-    const keypair = wallet.keypair;
-    const user = keypair.publicKey;
-    const { buyAmount, limit, price, fee } = wallet;
-
-    const wSolATA = getAssociatedTokenAddressSync(
-      WSOL_TOKEN_ACCOUNT,
-      user,
-      false
-    );
-    const tokenAta = getAssociatedTokenAddressSync(tokenMint, user, false);
-
-    // 3, createAccountWithSeed
-    const seed = new Date().getTime().toString();
-
-    const newAccount = await PublicKey.createWithSeed(
-      user,
-      seed,
-      TOKEN_PROGRAM_ID
-    );
-    const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
-      fromPubkey: user,
-      newAccountPubkey: newAccount,
-      basePubkey: user,
-      seed: seed,
-      lamports: 2039280,
-      space: 165,
-      programId: TOKEN_PROGRAM_ID,
-    });
-
-    // 4, initializeAccount
-    const initializeAccountIx = createInitializeAccountInstruction(
-      newAccount,
-      WSOL_TOKEN_ACCOUNT,
-      user,
-      TOKEN_PROGRAM_ID
-    );
-
-    const transferIx = SystemProgram.transfer({
-      fromPubkey: user,
-      toPubkey: newAccount,
-      lamports: buyAmount * LAMPORTS_PER_SOL,
-    });
-
-    const syncNativeIx = createSyncNativeInstruction(
-      newAccount,
-      TOKEN_PROGRAM_ID
-    );
-
-    const createIdempotentIx =
-      createAssociatedTokenAccountIdempotentInstruction(
-        user, // payer
-        tokenAta, // associated token account
-        user, // owner
-        tokenMint, // mint
-        TOKEN_PROGRAM_ID,
-        SystemProgram.programId
-      );
-
-    const proxyBuyIx = await okxSwap.createBuyInstruction({
-      tokenMint: tokenMint,
-      user: user,
-      buyAmount: buyAmount,
-      slippage: SLIPPAGE_BASIS_POINTS,
-      poolDetail: poolDetail,
-    });
-
-    return [proxyBuyIx];
   }
 }
 

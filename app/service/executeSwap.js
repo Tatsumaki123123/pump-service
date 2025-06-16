@@ -434,6 +434,15 @@ class ExecuteSwap extends Service {
       return;
     }
 
+    const sellData = await ctx.model.ExecuteToken.findOne({
+      eid: eid,
+      token: token,
+      status: "sell",
+    });
+    if (sellData) {
+      throw new Error("You had buyed this token");
+    }
+
     const otherData = await ctx.model.ExecuteToken.findOne({
       eid: { $ne: eid },
       token: token,
