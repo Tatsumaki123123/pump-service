@@ -126,7 +126,8 @@ class PumpAMM extends Service {
           const proxyBuyIxs = await this.genBuyProxyIxs(
             tokenMint,
             wallet,
-            poolDetail
+            poolDetail,
+            SLIPPAGE_BASIS_POINTS
           );
           volumeIxs = [
             setComputeUnitLimitIx,
@@ -387,7 +388,7 @@ class PumpAMM extends Service {
     }
   }
 
-  async getBuyAmmIxs(tokenMint, wallet, poolDetail) {
+  async getBuyAmmIxs(tokenMint, wallet, poolDetail, SLIPPAGE_BASIS_POINTS) {
     const keypair = wallet.keypair;
     const user = keypair.publicKey;
     const { buyAmount } = wallet;
@@ -454,7 +455,7 @@ class PumpAMM extends Service {
     return Ixs;
   }
 
-  async genBuyProxyIxs(tokenMint, wallet, poolDetail) {
+  async genBuyProxyIxs(tokenMint, wallet, poolDetail, SLIPPAGE_BASIS_POINTS) {
     const { ctx } = this;
 
     let proxyBuyIxs = [];
@@ -473,7 +474,12 @@ class PumpAMM extends Service {
       });
       proxyBuyIxs = [proxyBuyIx];
     } else {
-      proxyBuyIxs = await this.getBuyAmmIxs(tokenMint, wallet, poolDetail);
+      proxyBuyIxs = await this.getBuyAmmIxs(
+        tokenMint,
+        wallet,
+        poolDetail,
+        SLIPPAGE_BASIS_POINTS
+      );
     }
 
     return proxyBuyIxs;
