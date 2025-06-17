@@ -53,7 +53,7 @@ const TROGAN_FEE = 0.00036;
 
 const TRANSACTION_FEE = 5000;
 const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
-const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
+// const SLIPPAGE_BASIS_POINTS = 0.2; // 10% 滑点
 // const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
 
 const pSwap = new PumpSwapSDK();
@@ -93,6 +93,7 @@ class PumpAMM extends Service {
         const { buyAmount, limit, price, fee } = wallet;
         let volumeIxs = [];
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
+        const SLIPPAGE_BASIS_POINTS = buyAmount > 0.3 ? 0.02 : 0.2;
         if (wallet.isOkx) {
           const okxIxs = await okxSwap.getBuyInstructions(ctx, {
             user,

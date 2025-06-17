@@ -110,7 +110,6 @@ class OKXRouterSDK {
       const data = res?.data?.data;
       if (data && data.instructionLists) {
         const instructions = data.instructionLists;
-        console.log(instructions);
         return createTransaction(instructions);
       } else {
         throw new Error("Can not get OKX instruction");
