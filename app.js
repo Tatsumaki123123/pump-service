@@ -7,6 +7,8 @@ class AppBootHook {
     console.log("didReady");
     const { app } = this;
     const ctx = app.createAnonymousContext();
+
+    ctx.service.pumpMonitor.startMonitor();
   }
 
   async beforeClose() {

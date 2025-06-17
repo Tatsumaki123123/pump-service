@@ -36,8 +36,8 @@ class Debot extends Service {
           item;
         if (
           wallet_count >= walletCount &&
-          mkt_cap < 30000 &&
-          mkt_cap > 3500
+          mkt_cap > 20000 &&
+          mkt_cap < 50000
           //   percent5m === 0 &&
           //   buy_count === sell_count &&
           //   buy_count > 1

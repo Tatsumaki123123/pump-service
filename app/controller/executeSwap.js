@@ -150,7 +150,7 @@ class ExecuteSwap extends BaseController {
       } else {
         const res = await ctx.model.ExecuteToken.find({
           eid,
-          status: { $in: ["pending", "buy"] },
+          status: { $in: ["pending", "buy", "sell"] },
         }).sort({
           createTime: -1,
         });
