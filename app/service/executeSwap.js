@@ -318,6 +318,27 @@ class ExecuteSwap extends Service {
     }
   }
 
+  async sellTokenByWallet(tid, walletAddress) {
+    const { ctx } = this;
+    const tokenInfo = await ctx.model.ExecuteToken.findOne({ tid: tid });
+    if (!tokenInfo) {
+      throw new Error("Token  not checked");
+    }
+    const token = tokenInfo.token;
+    console.log(chalk.green(`Step 4: Selling ${token}, `));
+    const wallets = await this.getWalletsWithConfig(tokenInfo.line);
+    const wallet = wallets.find(
+      (item) => item.publicKey.toBase58() === walletAddress
+    );
+    if (wallet) {
+      const wallets = [wallet];
+      const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
+      return true;
+    } else {
+      throw new Error("There are not wallets to sell");
+    }
+  }
+
   async sellTokenArr(tid, types) {
     for (const type of types) {
       await this.sellToken(tid, type);
