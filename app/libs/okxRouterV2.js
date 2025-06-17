@@ -3,6 +3,7 @@ const {
   TransactionInstruction,
   SystemProgram,
   LAMPORTS_PER_SOL,
+  Transaction,
 } = require("@solana/web3.js");
 
 const crypto = require("crypto");
@@ -67,21 +68,41 @@ const CLIENT_CONFIG = {
 
 const OKX_BASE_URL = "https://web3.okx.com";
 
+async function createTransaction(instructionsData) {
+  const transactions = [];
+
+  for (const instr of instructionsData) {
+    const dataBuffer = Buffer.from(instr.data, "base64");
+
+    const keys = instr.accounts.map((account) => ({
+      pubkey: new PublicKey(account.pubkey),
+      isSigner: account.isSigner,
+      isWritable: account.isWritable,
+    }));
+
+    const instruction = new TransactionInstruction({
+      keys,
+      programId: new PublicKey(instr.programId),
+      data: dataBuffer,
+    });
+
+    transactions.push(instruction);
+  }
+
+  return transactions;
+}
+
 class OKXRouterSDK {
   async getBuyInstructions(ctx, params) {
-    const { user, tokenMint, buyAmount, slippage = 0.1, poolDetail } = params;
+    const { user, tokenMint, buyAmount, slippage = 0.1 } = params;
 
     try {
-      const buyTokenAmount = getBuyTokenAmountBuyPoolDetail(
-        buyAmount,
-        poolDetail
-      );
-      const rawAmount = (buyTokenAmount / BigInt(10 ** 6)).toString();
+      const fromTokenAddress = "11111111111111111111111111111111";
 
       const res = await this.getRouterInstruction(ctx, {
-        fromTokenAddress: "11111111111111111111111111111111",
+        fromTokenAddress: fromTokenAddress,
         toTokenAddress: tokenMint.toBase58(),
-        amount: rawAmount,
+        amount: buyAmount * LAMPORTS_PER_SOL,
         slippage,
         userWalletAddress: user.toBase58(),
       });
@@ -89,8 +110,8 @@ class OKXRouterSDK {
       const data = res?.data?.data;
       if (data && data.instructionLists) {
         const instructions = data.instructionLists;
-        console.log(chalk.green(instructions.length));
-        return instructions;
+        console.log(instructions);
+        return createTransaction(instructions);
       } else {
         throw new Error("Can not get OKX instruction");
       }
@@ -145,6 +166,28 @@ class OKXRouterSDK {
       "OK-ACCESS-PASSPHRASE": CLIENT_CONFIG.apiPassphrase,
       "OK-ACCESS-PROJECT": CLIENT_CONFIG.projectId,
     };
+  }
+
+  async getBuyTokenAmount(ctx, params) {
+    const { amount, fromTokenAddress, toTokenAddress } = params;
+    const method = "GET";
+    const requestPath = "/api/v5/dex/aggregator/quote";
+    const queryString = `?chainIndex=${SOLANA_CHAIN_ID}&amount=${amount}&fromTokenAddress=${fromTokenAddress}&toTokenAddress=${toTokenAddress}`;
+
+    const headers = this.getHeaders(method, requestPath, queryString);
+    const uri = `${OKX_BASE_URL}${requestPath}${queryString}`;
+    const res = await ctx.curl(uri, {
+      method: "GET",
+      dataType: "json",
+      headers: headers,
+    });
+    const data = res.data?.data;
+    if (data && data[0]) {
+      const tokenAmount = data[0].toTokenAmount;
+      return tokenAmount;
+    } else {
+      throw new Error("Can not get price from OKX dex");
+    }
   }
 }
 

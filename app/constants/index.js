@@ -22,4 +22,8 @@ constants.PUMP_AMM_PROGRAM_ID = new PublicKey(
   "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
 );
 
+constants.BLOCK_RAZOR_1 = new PublicKey(
+  "7ZKL8BAPfKKa6FNmds48QKFnckrcj4mkppRnsBAR2xVH"
+);
+
 module.exports = constants;

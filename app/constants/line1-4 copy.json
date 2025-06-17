@@ -1,6 +1,6 @@
 [
   {
-    "transferAmount": 3.5,
+    "transferAmount": 1.8,
     "buyAmount": [1.58],
     "limit": 212000,
     "price": 114481,
@@ -10,7 +10,7 @@
     "isOkx": true
   },
   {
-    "transferAmount": 0.8,
+    "transferAmount": 0.5,
     "buyAmount": [0.112],
     "limit": 136396,
     "price": 146632,
@@ -21,7 +21,7 @@
     "isTrogan": true
   },
   {
-    "transferAmount": 0.8,
+    "transferAmount": 0.5,
     "buyAmount": [0.113],
     "limit": 136396,
     "price": 146632,
@@ -32,7 +32,7 @@
     "isTrogan": true
   },
   {
-    "transferAmount": 0.3,
+    "transferAmount": 0.2,
     "buyAmount": [0.022],
     "limit": 150000,
     "price": 66667,
@@ -43,7 +43,7 @@
     "isTrogan": false
   },
   {
-    "transferAmount": 0.8,
+    "transferAmount": 0.5,
     "buyAmount": [0.1],
     "limit": 200000,
     "price": 50000,
@@ -54,7 +54,7 @@
     "isGmgn": true
   },
   {
-    "transferAmount": 0.8,
+    "transferAmount": 0.5,
     "buyAmount": [0.101],
     "limit": 136395,
     "price": 146633,
@@ -65,7 +65,7 @@
     "isTrogan": true
   },
   {
-    "transferAmount": 0.8,
+    "transferAmount": 0.5,
     "buyAmount": [0.101],
     "limit": 136395,
     "price": 146633,
@@ -76,7 +76,7 @@
     "isTrogan": true
   },
   {
-    "transferAmount": 0.8,
+    "transferAmount": 0.5,
     "buyAmount": [0.102],
     "limit": 136395,
     "price": 146633,

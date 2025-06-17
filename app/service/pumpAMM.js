@@ -29,7 +29,11 @@ const chalk = require("chalk");
 
 const { getPoolsWithPrices } = require("../libs/pool");
 
-const { connection, WSOL_TOKEN_ACCOUNT } = require("../constants");
+const {
+  connection,
+  WSOL_TOKEN_ACCOUNT,
+  BLOCK_RAZOR_1,
+} = require("../constants");
 const PumpSwapSDK = require("../libs/pumpSwap");
 const ProxyPumpSwapSDK = require("../libs/proxyPumpSwap");
 const OKXSwapSDK = require("../libs/okxRouterV2");
@@ -88,6 +92,7 @@ class PumpAMM extends Service {
         const user = keypair.publicKey;
         const { buyAmount, limit, price, fee } = wallet;
         let volumeIxs = [];
+        console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
         if (wallet.isOkx) {
           const okxIxs = await okxSwap.getBuyInstructions(ctx, {
             user,
@@ -96,10 +101,14 @@ class PumpAMM extends Service {
             slippage: SLIPPAGE_BASIS_POINTS,
             poolDetail,
           });
-          volumeIxs = okxIxs;
+          const tipIx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: BLOCK_RAZOR_1,
+            lamports: 0.0002 * LAMPORTS_PER_SOL,
+          });
+          volumeIxs = [...okxIxs, tipIx];
         } else {
           const jipAcc = ctx.service.jito.getTipAcc();
-          console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
 
           //  1: limit
           const setComputeUnitLimitIx =
