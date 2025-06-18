@@ -188,6 +188,8 @@ class OKXRouterSDK {
       throw new Error("Can not get price from OKX dex");
     }
   }
+
+  async buy(ctx, params) {}
 }
 
 module.exports = OKXRouterSDK;

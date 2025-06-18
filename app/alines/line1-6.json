@@ -1,0 +1,77 @@
+[
+  {
+    "transferAmount": 2.6,
+    "buyAmount": [1.21],
+    "limit": 212000,
+    "price": 120566,
+    "fee": 0.0002,
+    "firstBuy": true,
+    "secondBuy": false,
+    "multiBuy": false,
+    "isOkx": true
+  },
+  {
+    "transferAmount": 0.2,
+    "buyAmount": [0.001],
+    "limit": 150000,
+    "price": 66667,
+    "fee": 0.00001,
+    "firstBuy": true,
+    "secondBuy": false
+  },
+  {
+    "transferAmount": 0.8,
+    "buyAmount": [0.082],
+    "limit": 134746,
+    "price": 148428,
+    "fee": 0.0002,
+    "firstBuy": true,
+    "secondBuy": false,
+    "multiBuy": false,
+    "isTrogan": true
+  },
+  {
+    "transferAmount": 0.8,
+    "buyAmount": [0.082],
+    "limit": 131446,
+    "price": 152154,
+    "fee": 0.0002,
+    "firstBuy": true,
+    "secondBuy": false,
+    "multiBuy": false,
+    "isTrogan": true
+  },
+  {
+    "transferAmount": 0.8,
+    "buyAmount": [0.1],
+    "limit": 200000,
+    "price": 50000,
+    "fee": 0.0002,
+    "firstBuy": false,
+    "secondBuy": false,
+    "multiBuy": true,
+    "isGmgn": true
+  },
+  {
+    "transferAmount": 0.8,
+    "buyAmount": [0.1],
+    "limit": 131445,
+    "price": 152155,
+    "fee": 0.0002,
+    "firstBuy": false,
+    "secondBuy": false,
+    "multiBuy": true,
+    "isTrogan": true
+  },
+  {
+    "transferAmount": 0.8,
+    "buyAmount": [0.101],
+    "limit": 134745,
+    "price": 148429,
+    "fee": 0.0002,
+    "firstBuy": false,
+    "secondBuy": false,
+    "multiBuy": true,
+    "isTrogan": true
+  }
+]

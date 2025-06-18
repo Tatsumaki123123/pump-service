@@ -11,39 +11,6 @@
   },
   {
     "transferAmount": 0.5,
-    "buyAmount": [0.112],
-    "limit": 136396,
-    "price": 146632,
-    "fee": 0.00005,
-    "firstBuy": true,
-    "secondBuy": false,
-    "multiBuy": false,
-    "isTrogan": true
-  },
-  {
-    "transferAmount": 0.5,
-    "buyAmount": [0.113],
-    "limit": 136396,
-    "price": 146632,
-    "fee": 0.0002,
-    "firstBuy": true,
-    "secondBuy": false,
-    "multiBuy": false,
-    "isTrogan": true
-  },
-  {
-    "transferAmount": 0.2,
-    "buyAmount": [0.022],
-    "limit": 150000,
-    "price": 66667,
-    "fee": 0.00001,
-    "firstBuy": true,
-    "secondBuy": false,
-    "multiBuy": false,
-    "isTrogan": false
-  },
-  {
-    "transferAmount": 0.5,
     "buyAmount": [0.1],
     "limit": 200000,
     "price": 50000,

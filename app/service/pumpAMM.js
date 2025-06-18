@@ -1,5 +1,4 @@
 const { Service } = require("egg");
-const BN = require("bn.js");
 const {
   Connection,
   Keypair,
@@ -200,13 +199,13 @@ class PumpAMM extends Service {
       // for end
       console.log("buyTxns", buyTxns.length);
       if (buyTxns.length > 0) {
-        // for (const transferTx of buyTxns) {
-        //   const signature = await connection.sendTransaction(transferTx, {
-        //     skipPreflight: false,
-        //   });
-        //   await connection.confirmTransaction(signature, "processed");
-        // }
-        // return;
+        for (const transferTx of buyTxns) {
+          const signature = await connection.sendTransaction(transferTx, {
+            skipPreflight: false,
+          });
+          await connection.confirmTransaction(signature, "processed");
+        }
+        return;
         if (buyTxns.length === 1) {
           const transferTx = buyTxns[0];
           const signature = await connection.sendTransaction(transferTx, {

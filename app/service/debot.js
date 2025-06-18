@@ -35,9 +35,9 @@ class Debot extends Service {
         const { wallet_count, mkt_cap, percent5m, buy_count, sell_count } =
           item;
         if (
-          wallet_count >= walletCount &&
-          mkt_cap > 20000 &&
-          mkt_cap < 50000
+          wallet_count >= walletCount
+          // &&mkt_cap > 20000 &&
+          // mkt_cap < 300000
           //   percent5m === 0 &&
           //   buy_count === sell_count &&
           //   buy_count > 1
@@ -48,6 +48,8 @@ class Debot extends Service {
         }
       });
       return list;
+    } else {
+      throw new Error("get");
     }
   }
 
