@@ -10,7 +10,7 @@
     "isProxy": true
   },
   {
-    "transferAmount": 1,
+    "transferAmount": 1.5,
     "buyAmount": [0.402],
     "limit": 150000,
     "price": 666667,
@@ -20,7 +20,7 @@
     "multiBuy": false
   },
   {
-    "transferAmount": 1,
+    "transferAmount": 1.5,
     "buyAmount": [0.404],
     "limit": 131445,
     "price": 152155,
@@ -31,7 +31,7 @@
     "isTrogan": true
   },
   {
-    "transferAmount": 1,
+    "transferAmount": 1.5,
     "buyAmount": [0.408],
     "limit": 133095,
     "price": 150269,
@@ -42,7 +42,7 @@
     "isTrogan": true
   },
   {
-    "transferAmount": 1,
+    "transferAmount": 1.5,
     "buyAmount": [0.412],
     "limit": 136395,
     "price": 146633,

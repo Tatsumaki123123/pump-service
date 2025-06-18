@@ -1,5 +1,7 @@
 const bs58 = require("bs58");
 
+require("dotenv/config");
+
 const { Keypair, Connection, PublicKey } = require("@solana/web3.js");
 
 const { retrieveEnvVariable } = require("../utils/utils");
