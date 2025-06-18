@@ -556,9 +556,26 @@ class ExecuteSwap extends Service {
 
   async getLineBotTokenBalance(line, token) {
     const { ctx } = this;
-    const lineData = await ctx.model.ExecuteLine.findOne({ lineId: line });
-    if (lineData && lineData?.lineBots.length > 0) {
-      const { lineBots } = lineData;
+    const lineBots = [
+      {
+        address: "56S29mZ3wqvw8hATuUUFqKhGcSGYFASRRFNT38W8q7G3",
+        name: "L1秒进",
+      },
+      {
+        address: "FdDeJeoaZpUjABTcFF1NrByLeBuqgHQ454Ag7kKbPxW4",
+        name: "L1慢1-2",
+      },
+      {
+        address: "8qvNUZf5p4Q15WNc64xZ5cLrLZU1ZDecKVpSDBkU3vbz",
+        name: "L1最慢",
+      },
+      {
+        address: "8J5GUAf7hr3LTPHJSkwrKFDNJPtAXtLHhnNHq6XxTLrW",
+        name: "L1慢old",
+      },
+      { address: "A8QTd66meFihdau6Ex1fVGbXTzFkGkaNm7KfNCUGiArm", name: "反L1" },
+    ];
+    if (lineBots.length > 0) {
       let list = lineBots.map((item) => ({ ...item, tokenBalance: 0 }));
       let total = 0;
       const fun = async (lineBot) => {
