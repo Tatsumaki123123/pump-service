@@ -29,7 +29,7 @@ class Debot extends Service {
     }
     const data = res.data?.data;
 
-    if (data && data.length > 0) {
+    if (data) {
       const walletCount = groupSort.wallet_count || 1;
       const list = data.filter((item) => {
         const { wallet_count, mkt_cap, percent5m, buy_count, sell_count } =
@@ -49,7 +49,8 @@ class Debot extends Service {
       });
       return list;
     } else {
-      throw new Error("get");
+      console.log(res);
+      throw new Error(res.message);
     }
   }
 

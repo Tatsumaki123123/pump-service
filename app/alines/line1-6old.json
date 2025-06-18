@@ -22,7 +22,7 @@
   {
     "transferAmount": 0.8,
     "buyAmount": [0.082],
-    "limit": 134746,
+    "limit": 150000,
     "price": 148428,
     "fee": 0.0002,
     "firstBuy": true,
@@ -33,7 +33,7 @@
   {
     "transferAmount": 0.8,
     "buyAmount": [0.082],
-    "limit": 131446,
+    "limit": 150000,
     "price": 152154,
     "fee": 0.0002,
     "firstBuy": true,

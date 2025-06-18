@@ -1,8 +1,6 @@
 const { Service } = require("egg");
-require("dotenv").config();
 const chalk = require("chalk");
 const fs = require("fs");
-// const {} = require("../constants/executeData");
 
 const bs58 = require("bs58");
 const {

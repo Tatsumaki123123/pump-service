@@ -92,7 +92,8 @@ class PumpAMM extends Service {
         const { buyAmount, limit, price, fee } = wallet;
         let volumeIxs = [];
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
-        const SLIPPAGE_BASIS_POINTS = buyAmount > 0.3 ? 0.02 : 0.2;
+        // const SLIPPAGE_BASIS_POINTS = buyAmount > 0.3 ? 0.1 : 0.2;
+        const SLIPPAGE_BASIS_POINTS = 0.2;
         if (wallet.isOkx) {
           const okxIxs = await okxSwap.getBuyInstructions(ctx, {
             user,
@@ -199,13 +200,15 @@ class PumpAMM extends Service {
       // for end
       console.log("buyTxns", buyTxns.length);
       if (buyTxns.length > 0) {
-        for (const transferTx of buyTxns) {
-          const signature = await connection.sendTransaction(transferTx, {
-            skipPreflight: false,
-          });
-          await connection.confirmTransaction(signature, "processed");
-        }
-        return;
+        // for (let i = 0; i < buyTxns.length; i++) {
+        //   console.log("buy txn -", i);
+        //   const transferTx = buyTxns[i];
+        //   const signature = await connection.sendTransaction(transferTx, {
+        //     skipPreflight: false,
+        //   });
+        //   await connection.confirmTransaction(signature, "processed");
+        // }
+        // return;
         if (buyTxns.length === 1) {
           const transferTx = buyTxns[0];
           const signature = await connection.sendTransaction(transferTx, {
@@ -263,75 +266,88 @@ class PumpAMM extends Service {
 
         const { limit, price, fee } = wallet;
 
-        // 1, setComputeUnitLimitIx
-        const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
-          units: limit,
-        });
+        let volumeIxs = [];
+        if (wallet.isOkx) {
+          console.log(tokenAmount);
+          const ixs = await okxSwap.getSellInstructions(ctx, {
+            user,
+            tokenMint,
+            tokenAmount,
+          });
+          volumeIxs = [...ixs];
+        } else {
+          // 1, setComputeUnitLimitIx
+          const setComputeUnitLimitIx =
+            ComputeBudgetProgram.setComputeUnitLimit({
+              units: limit,
+            });
 
-        // 2,
-        const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
-          microLamports: price,
-        });
+          // 2,
+          const setComputeUnitPriceIx =
+            ComputeBudgetProgram.setComputeUnitPrice({
+              microLamports: price,
+            });
 
-        // 3, createAccountWithSeed
-        const seed = new Date().getTime().toString();
-        // const seed = "1749356034021";
+          // 3, createAccountWithSeed
+          const seed = new Date().getTime().toString();
+          // const seed = "1749356034021";
 
-        const newAccount = await PublicKey.createWithSeed(
-          user,
-          seed,
-          TOKEN_PROGRAM_ID
-        );
-        const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
-          fromPubkey: user,
-          newAccountPubkey: newAccount,
-          basePubkey: user,
-          seed: seed,
-          lamports: 2039280,
-          space: 165,
-          programId: TOKEN_PROGRAM_ID,
-        });
+          const newAccount = await PublicKey.createWithSeed(
+            user,
+            seed,
+            TOKEN_PROGRAM_ID
+          );
+          const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
+            fromPubkey: user,
+            newAccountPubkey: newAccount,
+            basePubkey: user,
+            seed: seed,
+            lamports: 2039280,
+            space: 165,
+            programId: TOKEN_PROGRAM_ID,
+          });
 
-        // 4, initializeAccount
-        const initializeAccountIx = createInitializeAccountInstruction(
-          newAccount,
-          WSOL_TOKEN_ACCOUNT,
-          user,
-          TOKEN_PROGRAM_ID
-        );
+          // 4, initializeAccount
+          const initializeAccountIx = createInitializeAccountInstruction(
+            newAccount,
+            WSOL_TOKEN_ACCOUNT,
+            user,
+            TOKEN_PROGRAM_ID
+          );
 
-        // 5, pump sell
-        const swapTx = await pSwap.createSellInstruction({
-          user,
-          tokenMint,
-          tokenAmount,
-          sellNewAccount: newAccount,
-          poolDetail: poolDetail,
-        });
+          // 5, pump sell
+          const swapTx = await pSwap.createSellInstruction({
+            user,
+            tokenMint,
+            tokenAmount,
+            sellNewAccount: newAccount,
+            poolDetail: poolDetail,
+          });
 
-        // 6. Token Program: closeAccount
-        const closeAccountIx = createCloseAccountInstruction(
-          newAccount,
-          user,
-          user
-        );
+          // 6. Token Program: closeAccount
+          const closeAccountIx = createCloseAccountInstruction(
+            newAccount,
+            user,
+            user
+          );
 
-        //7
-        const jitoTipIx = SystemProgram.transfer({
-          fromPubkey: keypair.publicKey,
-          toPubkey: jipAcc,
-          lamports: fee * LAMPORTS_PER_SOL,
-        });
+          //7
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: keypair.publicKey,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
 
-        const volumeIxs = [
-          setComputeUnitLimitIx,
-          setComputeUnitPriceIx,
-          createAccountWithSeedIx,
-          initializeAccountIx,
-          swapTx,
-          closeAccountIx,
-          jitoTipIx,
-        ];
+          volumeIxs = [
+            setComputeUnitLimitIx,
+            setComputeUnitPriceIx,
+            createAccountWithSeedIx,
+            initializeAccountIx,
+            swapTx,
+            closeAccountIx,
+            jitoTipIx,
+          ];
+        }
 
         try {
           const messageV0 = new TransactionMessage({

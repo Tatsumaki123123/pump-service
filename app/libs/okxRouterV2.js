@@ -120,6 +120,33 @@ class OKXRouterSDK {
     }
   }
 
+  async getSellInstructions(ctx, params) {
+    const { user, tokenMint, tokenAmount, slippage = 0.1 } = params;
+
+    try {
+      const fromTokenAddress = "11111111111111111111111111111111";
+
+      const res = await this.getRouterInstruction(ctx, {
+        fromTokenAddress: tokenMint.toBase58(),
+        toTokenAddress: fromTokenAddress,
+        amount: tokenAmount * 10 ** 6,
+        slippage,
+        userWalletAddress: user.toBase58(),
+      });
+
+      const data = res?.data?.data;
+      if (data && data.instructionLists) {
+        const instructions = data.instructionLists;
+        return createTransaction(instructions);
+      } else {
+        throw new Error("Can not get OKX instruction");
+      }
+      return;
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
   async getRouterInstruction(ctx, params) {
     const {
       amount,
