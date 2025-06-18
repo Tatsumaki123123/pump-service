@@ -24,6 +24,8 @@ const {
   createCloseAccountInstruction,
 } = require("@solana/spl-token");
 
+const { sleep } = require("./utils");
+
 async function getSPLBalance(
   connection,
   tokenMint,
@@ -69,7 +71,8 @@ async function closeAllTokenAccounts(connection, keypair) {
       console.log("no token account");
       return;
     }
-    const transaction = new Transaction();
+    let transaction = new Transaction();
+    let len = 0;
     for (const account of tokenAccounts.value) {
       const accountPubkey = account.pubkey;
       const accountInfo = await getAccount(connection, accountPubkey);
@@ -117,12 +120,31 @@ async function closeAllTokenAccounts(connection, keypair) {
         wallet.publicKey,
         wallet.publicKey
       );
-      transaction.add(ix);
+      volumeIxs.push(ix);
     }
-    const signature = await connection.sendTransaction(transaction, [wallet], {
-      skipPreflight: false,
-    });
-    await connection.confirmTransaction(signature, "confirmed");
+    const transactionArr = [];
+    console.log(chalk.green("Account need close :", volumeIxs.length));
+    for (let index = 0; index < volumeIxs.length; index++) {
+      const ix = volumeIxs[index];
+      transaction.add(ix);
+      if ((index + 1) % 10 === 0 || index + 1 === volumeIxs.length) {
+        transactionArr.push(transaction);
+        transaction = new Transaction();
+      }
+    }
+    for (let index = 0; index < transactionArr.length; index++) {
+      console.log(chalk.green("Close account: ", index, index + 1 + 10));
+      const transaction = transactionArr[index];
+      const signature = await connection.sendTransaction(
+        transaction,
+        [wallet],
+        {
+          skipPreflight: false,
+        }
+      );
+      await connection.confirmTransaction(signature, "confirmed");
+    }
+
     console.log("all token account closed");
     return true;
   } catch (error) {
@@ -168,6 +190,7 @@ async function transferAllSol(connection, from, to) {
       skipPreflight: false,
     });
     await connection.confirmTransaction(signature, "confirmed");
+    await sleep(3);
     console.log(chalk.green(`Transaction sent: ${signature}`));
   } catch (error) {
     throw new Error(`Failed to send transaction: ${error.message}`);

@@ -148,13 +148,14 @@ class ExecuteSwap extends BaseController {
         });
         this.success(res);
       } else {
+        const count = await ctx.model.ExecuteToken.count({ eid: eid });
         const res = await ctx.model.ExecuteToken.find({
           eid,
           status: { $in: ["pending", "buy"] },
         }).sort({
           createTime: -1,
         });
-        this.success(res);
+        this.success({ list: res, total: count });
       }
     } else {
       throw new Error("Params error");

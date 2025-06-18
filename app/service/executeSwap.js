@@ -459,7 +459,12 @@ class ExecuteSwap extends Service {
       status: "sell",
     });
     if (sellData) {
-      throw new Error("You had buyed this token");
+      await ctx.model.ExecuteToken.updateOne(
+        { tid: sellData.tid },
+        {
+          status: "buy",
+        }
+      );
     }
 
     const otherData = await ctx.model.ExecuteToken.findOne({

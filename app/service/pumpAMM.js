@@ -55,7 +55,7 @@ const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
 // const SLIPPAGE_BASIS_POINTS = 0.2; // 10% 滑点
 // const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
 
-const SLIPPAGE_BASIS_POINTS = 0.3;
+const SLIPPAGE_BASIS_POINTS = 0.4;
 
 const pSwap = new PumpSwapSDK();
 const proxyPumpSwap = new ProxyPumpSwapSDK();
@@ -180,26 +180,27 @@ class PumpAMM extends Service {
           tx.sign([keypair]);
 
           // 模拟交易
-          const simulationResult = await connection.simulateTransaction(tx, {
-            commitment: "confirmed",
-          });
-          if (simulationResult.value.err) {
-            console.error("simulation", simulationResult.value);
-            throw new Error(simulationResult.value);
-          }
+          // const simulationResult = await connection.simulateTransaction(tx, {
+          //   commitment: "confirmed",
+          // });
+          // if (simulationResult.value.err) {
+          //   console.error("simulation", simulationResult.value);
+          //   throw new Error(simulationResult.value);
+          // }
 
-          console.log(
-            chalk.green("simulation success", keypair.publicKey.toString())
-          );
+          // console.log(
+          //   chalk.green("simulation success", keypair.publicKey.toString())
+          // );
           buyTxns.push(tx);
         } catch (error) {
           console.error(error.message);
-          continue;
+          break;
         }
       }
 
       // for end
       console.log("buyTxns", buyTxns.length);
+      // return;
       if (buyTxns.length > 0) {
         // for (let i = 0; i < buyTxns.length; i++) {
         //   console.log("buy txn -", i);

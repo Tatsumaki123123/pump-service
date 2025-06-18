@@ -7,4 +7,8 @@ function retrieveEnvVariable(variableName) {
   return variable;
 }
 
-module.exports = { retrieveEnvVariable };
+function sleep(s) {
+  return new Promise((resolve) => setTimeout(resolve, s * 1000));
+}
+
+module.exports = { retrieveEnvVariable, sleep };
