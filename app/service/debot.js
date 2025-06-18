@@ -31,22 +31,28 @@ class Debot extends Service {
 
     if (data) {
       const walletCount = groupSort.wallet_count || 1;
-      const list = data.filter((item) => {
-        const { wallet_count, mkt_cap, percent5m, buy_count, sell_count } =
-          item;
-        if (
-          wallet_count >= walletCount &&
-          mkt_cap > 3000 &&
-          mkt_cap < 100000
-          //   percent5m === 0 &&
-          //   buy_count === sell_count &&
-          //   buy_count > 1
-        ) {
-          return true;
-        } else {
-          return false;
-        }
-      });
+      const list = data
+        .filter((item) => {
+          const { wallet_count, mkt_cap, percent5m, buy_count, sell_count } =
+            item;
+          if (
+            wallet_count >= walletCount &&
+            mkt_cap > 3000 &&
+            mkt_cap < 150000
+            //   percent5m === 0 &&
+            //   buy_count === sell_count &&
+            //   buy_count > 1
+          ) {
+            return true;
+          } else {
+            return false;
+          }
+        })
+        .map((item) => ({
+          ...item,
+          create_time: item.create_time * 1000,
+          latest_time: item.latest_time * 1000,
+        }));
       return list;
     } else {
       console.log(res);

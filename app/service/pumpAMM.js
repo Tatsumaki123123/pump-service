@@ -55,6 +55,8 @@ const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
 // const SLIPPAGE_BASIS_POINTS = 0.2; // 10% 滑点
 // const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
 
+const SLIPPAGE_BASIS_POINTS = 0.3;
+
 const pSwap = new PumpSwapSDK();
 const proxyPumpSwap = new ProxyPumpSwapSDK();
 const okxSwap = new OKXSwapSDK();
@@ -93,7 +95,6 @@ class PumpAMM extends Service {
         let volumeIxs = [];
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
         // const SLIPPAGE_BASIS_POINTS = buyAmount > 0.3 ? 0.1 : 0.2;
-        const SLIPPAGE_BASIS_POINTS = 0.2;
         if (wallet.isOkx) {
           const okxIxs = await okxSwap.getBuyInstructions(ctx, {
             user,
@@ -179,17 +180,17 @@ class PumpAMM extends Service {
           tx.sign([keypair]);
 
           // 模拟交易
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.error("simulation", simulationResult.value);
-          //   throw new Error(simulationResult.value);
-          // }
+          const simulationResult = await connection.simulateTransaction(tx, {
+            commitment: "confirmed",
+          });
+          if (simulationResult.value.err) {
+            console.error("simulation", simulationResult.value);
+            throw new Error(simulationResult.value);
+          }
 
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
+          console.log(
+            chalk.green("simulation success", keypair.publicKey.toString())
+          );
           buyTxns.push(tx);
         } catch (error) {
           console.error(error.message);

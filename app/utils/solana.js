@@ -7,6 +7,7 @@ const {
   SystemProgram,
   LAMPORTS_PER_SOL,
   Connection,
+  Transaction,
 } = require("@solana/web3.js");
 const chalk = require("chalk");
 const {
@@ -20,6 +21,7 @@ const {
   getMint,
   getMetadataPointerState,
   getTokenMetadata,
+  createCloseAccountInstruction,
 } = require("@solana/spl-token");
 
 async function getSPLBalance(
@@ -47,7 +49,6 @@ async function getSPLBalance(
 async function closeAllTokenAccounts(connection, keypair) {
   try {
     const wallet = keypair;
-    console.log(chalk.green("Close account:", wallet.publicKey.toBase58()));
 
     const tokenAccounts = await connection.getTokenAccountsByOwner(
       wallet.publicKey,
@@ -56,10 +57,19 @@ async function closeAllTokenAccounts(connection, keypair) {
       }
     );
 
+    console.log(
+      chalk.green(
+        "Close account:",
+        wallet.publicKey.toBase58(),
+        tokenAccounts.value.length
+      )
+    );
+    const volumeIxs = [];
     if (tokenAccounts.value.length === 0) {
       console.log("no token account");
       return;
     }
+    const transaction = new Transaction();
     for (const account of tokenAccounts.value) {
       const accountPubkey = account.pubkey;
       const accountInfo = await getAccount(connection, accountPubkey);
@@ -102,18 +112,17 @@ async function closeAllTokenAccounts(connection, keypair) {
       }
 
       // close token account
-      console.log(`cloase token account: ${accountPubkey.toBase58()}`);
-      const transaction = await closeAccount(
-        connection,
-        wallet,
+      const ix = await createCloseAccountInstruction(
         accountPubkey,
         wallet.publicKey,
         wallet.publicKey
       );
-
-      console.log(`Token account ${accountPubkey.toBase58()} closed`);
+      transaction.add(ix);
     }
-
+    const signature = await connection.sendTransaction(transaction, [wallet], {
+      skipPreflight: false,
+    });
+    await connection.confirmTransaction(signature, "confirmed");
     console.log("all token account closed");
     return true;
   } catch (error) {

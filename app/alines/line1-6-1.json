@@ -11,7 +11,7 @@
   },
   {
     "transferAmount": 1.5,
-    "buyAmount": [0.402],
+    "buyAmount": [0.802],
     "limit": 150000,
     "price": 666667,
     "fee": 0.00001,
@@ -22,7 +22,7 @@
   {
     "transferAmount": 1.5,
     "buyAmount": [0.404],
-    "limit": 131445,
+    "limit": 150000,
     "price": 152155,
     "fee": 0.00001,
     "firstBuy": true,
@@ -33,7 +33,7 @@
   {
     "transferAmount": 1.5,
     "buyAmount": [0.408],
-    "limit": 133095,
+    "limit": 150000,
     "price": 150269,
     "fee": 0.00001,
     "firstBuy": true,
@@ -42,9 +42,9 @@
     "isTrogan": true
   },
   {
-    "transferAmount": 1.5,
+    "transferAmount": 2.5,
     "buyAmount": [0.412],
-    "limit": 136395,
+    "limit": 150000,
     "price": 146633,
     "fee": 0.00001,
     "firstBuy": true,

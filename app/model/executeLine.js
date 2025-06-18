@@ -10,6 +10,7 @@ module.exports = (app) => {
     groupId: { type: Number },
     groupSort: { type: Object },
     autoStep: { type: Array },
+    sourceWeb: { type: String },
     lineBots: { type: Array },
   });
 

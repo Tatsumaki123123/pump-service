@@ -25,7 +25,7 @@ const getPoolsWithBaseMint = async (mintAddress) => {
     cnt = 0;
 
   while (is_err) {
-    if (cnt >= 20) break;
+    if (cnt >= 3) break;
     try {
       response = await connection.getProgramAccounts(PUMP_AMM_PROGRAM_ID, {
         filters: [
@@ -129,7 +129,7 @@ const getPriceAndLiquidity = async (pool) => {
   let is_err = true,
     cnt = 0;
   while (is_err) {
-    if (cnt >= 10) break;
+    if (cnt >= 3) break;
     try {
       wsolBalance = await connection.getTokenAccountBalance(wsolAddress);
       tokenBalance = await connection.getTokenAccountBalance(tokenAddress);
