@@ -9,6 +9,7 @@ class AppBootHook {
     const ctx = app.createAnonymousContext();
 
     // ctx.service.pumpMonitor.startMonitor();
+    await ctx.service.autoSwap.start(10000);
   }
 
   async beforeClose() {

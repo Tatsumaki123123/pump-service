@@ -202,6 +202,28 @@ class ExecuteSwap extends BaseController {
       throw new Error("params error");
     }
   }
+
+  async autoSwap() {
+    const { ctx } = this;
+    const { status, line } = ctx.request.body;
+    if (line) {
+      if (typeof status === "undefined") {
+        const data = await ctx.model.ExecuteLine.findOne({ lineId: line });
+        this.success(data.autoSwap);
+      } else {
+        await ctx.model.ExecuteLine.updateOne(
+          { lineId: line },
+          { autoSwap: status }
+        );
+        if (status) {
+          ctx.service.autoSwap.start();
+        }
+        this.success(status);
+      }
+    } else {
+      throw new Error("Params error");
+    }
+  }
 }
 
 module.exports = ExecuteSwap;

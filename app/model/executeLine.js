@@ -12,6 +12,8 @@ module.exports = (app) => {
     autoStep: { type: Array },
     sourceWeb: { type: String },
     lineBots: { type: Array },
+    tokenIndex: { type: Number },
+    autoSwap: { type: Boolean },
   });
 
   return mongoose.model("ExecuteLine", schema);

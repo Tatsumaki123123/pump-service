@@ -30,6 +30,7 @@ module.exports = (app) => {
     controller.executeSwap.getTokenAccounts
   );
   router.post("/v1/execute/deleteToken", controller.executeSwap.deleteToken);
+  router.post("/v1/execute/autoSwap", controller.executeSwap.autoSwap);
 
   router.post("/v1/executetoken/tokenList", controller.executeToken.tokenList);
   router.post(

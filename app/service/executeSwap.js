@@ -423,7 +423,7 @@ class ExecuteSwap extends Service {
     };
   }
 
-  async getWalletsWithBalance(line, token) {
+  async getWalletsWithBalance(line) {
     const { ctx } = this;
     const wallets = await this.getWalletsWithConfig(line);
 
