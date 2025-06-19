@@ -38,9 +38,6 @@ class AutoSwap extends Service {
     console.log(chalk.green("Wallet balance is Enough: ", isEnough));
     if (isEnough) {
       this.executeData = await ctx.service.executeSwap.getExecuteData(line);
-      this.tokenIndex = this.lineData.tokenIndex;
-      this.botBalance = 0;
-      this.walletBalance = 0;
       await this.startCycle();
     } else {
       console.log(chalk.green("-recycleSol"));
@@ -65,16 +62,20 @@ class AutoSwap extends Service {
   async startCycle() {
     console.log(chalk.green("Start Cycle----"));
     const { ctx } = this;
-
+    this.tokenIndex = Math.floor(Math.random() * tokenList.length);
+    const tokenData = tokenList[this.tokenIndex];
+    if (!tokenData) {
+      this.startCycle();
+      return;
+    }
+    console.log(chalk.green("Token:", tokenData.symbol, tokenData.token));
     // init
-    this.botBalance = 0;
-    this.walletBalance = 0;
 
     // 1. check and get token
-    const res1 = await this.checkToken();
+    const res1 = await this.checkToken(tokenData);
     console.log(chalk.green("Check token:", res1));
     if (!res1) {
-      await this.nextCycle();
+      await this.startCycle();
       return;
     }
 
@@ -87,20 +88,31 @@ class AutoSwap extends Service {
     }, 10);
     console.log(chalk.green("Buy token:", res2));
     if (!res2) {
+      await this.startCycle();
       return;
     }
 
     // 3. wait bot enter or 1 min
     const botBalance = await this.waitBotEnter();
     console.log(chalk.green("Bot  enter", botBalance));
-    if (botBalance === 0) {
+    if (botBalance) {
+      // 4. sell multi
+      console.log(chalk.green("Step 4: sell multi----"));
+
+      const res4 = await retryAsync(async () => {
+        return await ctx.service.executeSwap.sellToken(
+          this.tokenInfo.tid,
+          "multi"
+        );
+      }, 10);
+
+      // 5. wait bot enter 2 or 1min
+      console.log(chalk.green("Step 5: wait enter 2----"));
+      const botBalance2 = await this.waitBotEnter(botBalance);
+      console.log(chalk.green("Bot  enter 222", botBalance2));
+    } else {
       console.log(chalk.red("Bot not enter"));
-      return;
     }
-
-    // 4. sell multi
-
-    // 5. wait bot enter 2 or 1min
 
     // 6. sell all
     console.log(chalk.green("Step 6: sell all----"));
@@ -110,8 +122,8 @@ class AutoSwap extends Service {
     console.log(chalk.green("Sell all----", res6));
 
     // 7. close token accounts
-    sleep(10);
-    console.log(chalk.green("Step 6: closeAllAccounts----"));
+    sleep(20);
+    console.log(chalk.green("Step 7: closeAllAccounts----"));
     const res7 = await retryAsync(async () => {
       return await ctx.service.executeSwap.closeAllAccounts(this.line);
     }, 10);
@@ -119,38 +131,23 @@ class AutoSwap extends Service {
 
     // 7. end
     sleep(20);
-    await this.nextCycle();
-  }
-
-  async nextCycle() {
-    console.log(chalk.green("Next Cycle----"));
-    this.tokenIndex = this.tokenIndex + 1;
-    await this.ctx.model.ExecuteLine.updateOne(
-      { lineId: this.line },
-      { tokenIndex: this.tokenIndex }
-    );
     await this.start(this.line);
   }
 
-  async checkToken() {
+  async checkToken(tokenData) {
     console.log(chalk.green("Step 1----Check Token:"));
     const { ctx } = this;
     try {
-      if (typeof this.tokenIndex === "number") {
-        const tokenData = tokenList[this.tokenIndex];
-        console.log(chalk.green("Token:", tokenData.token));
-        const tokenInfo = await ctx.service.executeSwap.checkToken(
-          tokenData,
-          this.executeData.eid
-        );
-        if (tokenInfo) {
-          this.tokenInfo = tokenInfo;
-          return true;
-        } else {
-          throw new Error("Check token false");
-        }
+      const tokenInfo = await ctx.service.executeSwap.checkToken(
+        tokenData,
+        this.executeData.eid,
+        false
+      );
+      if (tokenInfo) {
+        this.tokenInfo = tokenInfo;
+        return true;
       } else {
-        throw new Error("Can not find token");
+        throw new Error("Check token false");
       }
     } catch (error) {
       this.tokenInfo = null;
@@ -158,10 +155,10 @@ class AutoSwap extends Service {
     }
   }
 
-  async waitBotEnter() {
+  async waitBotEnter(initAmount = 1000) {
     const { ctx } = this;
 
-    const maxSecond = 90;
+    const maxSecond = 60;
     let second = 0;
     let timer = null;
 
@@ -172,21 +169,25 @@ class AutoSwap extends Service {
       }
     }, 1000);
 
+    let balance = 0;
     const func = async () => {
       if (second >= maxSecond) {
         return 0;
       }
       await sleep(10);
-      const botBalance = await this.getBotTokenBalances();
+      balance = await this.getBotTokenBalances();
 
-      if (botBalance > 10000) {
+      if (balance > initAmount + 1000) {
         clearInterval(timer);
-        balance = botBalance;
+        if (initAmount > 1000) {
+          balance = initAmount + 1;
+        }
+        return;
       } else {
         await func();
       }
     };
-    const balance = await func();
+    await func();
     return balance;
   }
 
@@ -215,6 +216,13 @@ class AutoSwap extends Service {
     console.log(chalk.green("Check Wallet Balance"));
     const { ctx } = this;
     let isEnough = true;
+
+    const count = await ctx.model.ExecuteToken.count({
+      eid: this.executeData.eid,
+    });
+    if (count > 50) {
+      return false;
+    }
     const wallets = await ctx.service.executeSwap.getWalletsWithBalance(
       this.line
     );

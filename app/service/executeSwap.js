@@ -443,7 +443,7 @@ class ExecuteSwap extends Service {
     return data;
   }
 
-  async checkToken(tokenData, eid) {
+  async checkToken(tokenData, eid, multiBuy = true) {
     console.log(chalk.green("checkToken"));
     const { ctx } = this;
     const { token } = tokenData;
@@ -459,12 +459,16 @@ class ExecuteSwap extends Service {
       status: "sell",
     });
     if (sellData) {
-      await ctx.model.ExecuteToken.updateOne(
-        { tid: sellData.tid },
-        {
-          status: "buy",
-        }
-      );
+      if (multiBuy) {
+        await ctx.model.ExecuteToken.updateOne(
+          { tid: sellData.tid },
+          {
+            status: "buy",
+          }
+        );
+      } else {
+        throw new Error("You have buy this token");
+      }
     }
 
     const otherData = await ctx.model.ExecuteToken.findOne({

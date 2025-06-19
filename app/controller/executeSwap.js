@@ -216,7 +216,7 @@ class ExecuteSwap extends BaseController {
           { autoSwap: status }
         );
         if (status) {
-          ctx.service.autoSwap.start();
+          ctx.service.autoSwap.start(line);
         }
         this.success(status);
       }
