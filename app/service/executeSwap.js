@@ -348,14 +348,17 @@ class ExecuteSwap extends Service {
   /**
    * get keypair from db
    */
-  async getWallets(line) {
+  async getWallets(line, isAll = false) {
     const { ctx } = this;
     const executeData = await this.getExecuteData(line);
     if (executeData) {
-      const dbData = await ctx.model.ExecuteWallet.find({
+      let filter = {
         eid: executeData.eid,
-        isActive: true,
-      });
+      };
+      if (!isAll) {
+        filter = { ...filter, isActive: true };
+      }
+      const dbData = await ctx.model.ExecuteWallet.find(filter);
       if (dbData && dbData.length > 0) {
         const wallets = dbData.map((wallet, index) => ({
           address: wallet.address,
@@ -375,7 +378,8 @@ class ExecuteSwap extends Service {
     console.log(chalk.green("getWalletsWithConfig:", line, type));
     const wallets = await this.getWallets(line);
     const walletConfigs = await this.getWalletConfig(line);
-    const data = wallets.map((wallet, index) => {
+    const data = walletConfigs.map((config, index) => {
+      const wallet = wallets[index];
       const buyAmountArr = walletConfigs[index].buyAmount;
       const buyAmount =
         buyAmountArr[Math.floor(Math.random() * buyAmountArr.length)];
