@@ -1,40 +1,31 @@
 [
   {
+    "transferAmount": 1.5,
+    "buyAmount": [0.4],
+    "limit": 150000,
+    "price": 16000,
+    "fee": 0.00001,
+    "firstBuy": true,
+    "secondBuy": false,
+    "multiBuy": false,
+    "isTrogan": true
+  },
+  {
     "transferAmount": 0.2,
     "buyAmount": [0.01],
     "limit": 150000,
-    "price": 1000000,
+    "price": 15000,
     "fee": 0.00001,
     "firstBuy": true,
     "secondBuy": false,
-    "isProxy": true
-  },
-  {
-    "transferAmount": 2,
-    "buyAmount": [0.302],
-    "limit": 150000,
-    "price": 666667,
-    "fee": 0.00001,
-    "firstBuy": true,
-    "secondBuy": false,
-    "multiBuy": false
-  },
-  {
-    "transferAmount": 1.5,
-    "buyAmount": [0.304],
-    "limit": 150000,
-    "price": 152155,
-    "fee": 0.00001,
-    "firstBuy": true,
-    "thirdBuy": false,
     "multiBuy": false,
     "isTrogan": true
   },
   {
     "transferAmount": 1.5,
-    "buyAmount": [0.308],
+    "buyAmount": [0.6],
     "limit": 150000,
-    "price": 150269,
+    "price": 14000,
     "fee": 0.00001,
     "firstBuy": true,
     "secondBuy": false,
@@ -42,14 +33,14 @@
     "isTrogan": true
   },
   {
-    "transferAmount": 1.5,
-    "buyAmount": [0.312],
+    "transferAmount": 0.2,
+    "buyAmount": [0.01],
     "limit": 150000,
-    "price": 146633,
+    "price": 16000,
     "fee": 0.00001,
     "firstBuy": true,
     "secondBuy": false,
-    "multiBuy": true,
+    "multiBuy": false,
     "isTrogan": true
   }
 ]

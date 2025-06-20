@@ -6,6 +6,7 @@ module.exports = (app) => {
     address: { type: String, unique: true },
     privateKey: { type: String },
     eid: { type: Number },
+    isActive: { type: Boolean, default: true },
   });
 
   return mongoose.model("ExecuteWallet", WalletSchema);

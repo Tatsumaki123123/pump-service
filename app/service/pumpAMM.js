@@ -180,17 +180,17 @@ class PumpAMM extends Service {
           tx.sign([keypair]);
 
           // 模拟交易
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.error("simulation", simulationResult.value);
-          //   throw new Error(simulationResult.value);
-          // }
+          const simulationResult = await connection.simulateTransaction(tx, {
+            commitment: "confirmed",
+          });
+          if (simulationResult.value.err) {
+            console.error("simulation", simulationResult.value);
+            throw new Error(simulationResult.value);
+          }
 
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
+          console.log(
+            chalk.green("simulation success", keypair.publicKey.toString())
+          );
           buyTxns.push(tx);
         } catch (error) {
           console.error(error.message);

@@ -224,6 +224,18 @@ class ExecuteSwap extends BaseController {
       throw new Error("Params error");
     }
   }
+
+  async nextWallet() {
+    const { ctx } = this;
+    const { line } = ctx.request.body;
+
+    if (line) {
+      const res = await ctx.service.executeSwap.nextWallet(line);
+      this.success(res);
+    } else {
+      throw new Error("params");
+    }
+  }
 }
 
 module.exports = ExecuteSwap;

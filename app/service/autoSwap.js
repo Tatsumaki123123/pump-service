@@ -234,6 +234,10 @@ class AutoSwap extends Service {
     });
     return isEnough;
   }
+
+  /**
+   *
+   */
 }
 
 module.exports = AutoSwap;

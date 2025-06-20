@@ -26,6 +26,7 @@ const {
 } = require("../utils/solana");
 
 const { getPoolsWithPrices } = require("../libs/pool");
+const { sleep, retryAsync } = require("../utils/utils");
 
 const BOSS_MIN_AMOUNT = 2.8;
 
@@ -353,6 +354,7 @@ class ExecuteSwap extends Service {
     if (executeData) {
       const dbData = await ctx.model.ExecuteWallet.find({
         eid: executeData.eid,
+        isActive: true,
       });
       if (dbData && dbData.length > 0) {
         const wallets = dbData.map((wallet, index) => ({
@@ -539,6 +541,7 @@ class ExecuteSwap extends Service {
     if (wallets && wallets.length > 0) {
       for (const wallet of wallets) {
         await closeAllTokenAccounts(connection, wallet.keypair);
+        await sleep(1);
       }
       return true;
     } else {
@@ -582,7 +585,7 @@ class ExecuteSwap extends Service {
         address: "8J5GUAf7hr3LTPHJSkwrKFDNJPtAXtLHhnNHq6XxTLrW",
         name: "L1慢old",
       },
-      { address: "A8QTd66meFihdau6Ex1fVGbXTzFkGkaNm7KfNCUGiArm", name: "反L1" },
+      // { address: "A8QTd66meFihdau6Ex1fVGbXTzFkGkaNm7KfNCUGiArm", name: "反L1" },
     ];
     if (lineBots.length > 0) {
       let list = lineBots.map((item) => ({ ...item, tokenBalance: 0 }));
@@ -616,7 +619,7 @@ class ExecuteSwap extends Service {
     const { ctx } = this;
     if (eid && token) {
       const wallets = await ctx.model.ExecuteWallet.find(
-        { eid: eid },
+        { eid: eid, isActive: true },
         { address: 1 }
       );
       let list = [];
@@ -643,6 +646,45 @@ class ExecuteSwap extends Service {
     } else {
       throw new Error("getWalletTokenBalance error");
     }
+  }
+
+  async nextWallet(line) {
+    const { ctx } = this;
+    const wallets = await this.getWallets(line);
+    const executeData = await this.getExecuteData(line);
+    const oldAddress = [];
+    const newAddress = [];
+    const fun = async (wallet) => {
+      await closeAllTokenAccounts(connection, wallet.keypair);
+      await sleep(1);
+      const keypair = Keypair.generate();
+      const newWalletData = {
+        address: keypair.publicKey.toBase58(),
+        privateKey: bs58.encode(keypair.secretKey),
+        eid: executeData.eid,
+        active: false,
+      };
+      await ctx.model.ExecuteWallet.create(newWalletData);
+      await retryAsync(async () => {
+        await transferAllSol(connection, wallet.keypair, keypair.publicKey);
+      });
+      oldAddress.push(wallet.address);
+      newAddress.push(keypair.publicKey.toBase58());
+    };
+
+    for (const wallet of wallets) {
+      await fun(wallet);
+    }
+
+    await ctx.model.ExecuteWallet.updateMany(
+      { address: { $in: newAddress } },
+      { isActive: true }
+    );
+    await ctx.model.ExecuteWallet.updateMany(
+      { address: { $in: oldAddress } },
+      { isActive: false }
+    );
+    return true;
   }
 }
 
