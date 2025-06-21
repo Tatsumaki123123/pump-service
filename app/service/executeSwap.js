@@ -224,7 +224,7 @@ class ExecuteSwap extends Service {
   async recycleSol(line) {
     console.log(chalk.green("Ended：recycle"));
     const { ctx } = this;
-    const wallets = await this.getWallets(line);
+    const wallets = await this.getWallets(line, true);
     const executeData = await this.getExecuteData(line);
 
     if (wallets && executeData) {
@@ -496,20 +496,28 @@ class ExecuteSwap extends Service {
       throw new Error("Bot has to many token");
     }
 
-    const poolDetail = await getPoolsWithPrices(new PublicKey(token));
-
-    if (!poolDetail) {
-      throw new Error("Cannot find pool data");
-    }
-
     let symbol = tokenData.symbol;
     if (!symbol) {
       const metaData = await ctx.service.debot.getTokenInfo(token);
       symbol = metaData.symbol;
     }
 
-    const dev = poolDetail.poolData.coinCreator;
-    const pool = poolDetail.address;
+    let amm = tokenData.amm;
+    let dev = "";
+    let pool = "";
+    if (amm === "pumpfunamm") {
+      dev = "";
+      pool = tokenData.pool;
+    } else {
+      const poolDetail = await getPoolsWithPrices(new PublicKey(token));
+      if (!poolDetail) {
+        throw new Error("Cannot find pool data");
+      }
+      amm = "pumpfunamm";
+      dev = poolDetail.poolData.coinCreator;
+      pool = poolDetail.address;
+    }
+
     const tokenDb = await ctx.model.ExecuteToken.findOne({
       eid: eid,
       token: token,
@@ -522,6 +530,7 @@ class ExecuteSwap extends Service {
       token,
       dev,
       pool,
+      amm,
       createTime: new Date(),
       eid: executeData.eid,
       line: executeData.line,
@@ -572,7 +581,10 @@ class ExecuteSwap extends Service {
 
   async getLineBotTokenBalance(line, token) {
     const { ctx } = this;
-    const lineBots = [
+    const lineData = await ctx.model.ExecuteLine.findOne({
+      lineId: line,
+    }).lean();
+    const defaultBots = [
       {
         address: "56S29mZ3wqvw8hATuUUFqKhGcSGYFASRRFNT38W8q7G3",
         name: "L1秒进",
@@ -591,6 +603,7 @@ class ExecuteSwap extends Service {
       },
       // { address: "A8QTd66meFihdau6Ex1fVGbXTzFkGkaNm7KfNCUGiArm", name: "反L1" },
     ];
+    const { lineBots = defaultBots } = lineData;
     if (lineBots.length > 0) {
       let list = lineBots.map((item) => ({ ...item, tokenBalance: 0 }));
       let total = 0;
@@ -659,8 +672,8 @@ class ExecuteSwap extends Service {
     const oldAddress = [];
     const newAddress = [];
     const fun = async (wallet) => {
-      await closeAllTokenAccounts(connection, wallet.keypair);
-      await sleep(1);
+      // await closeAllTokenAccounts(connection, wallet.keypair);
+      // await sleep(1);
       const keypair = Keypair.generate();
       const newWalletData = {
         address: keypair.publicKey.toBase58(),
@@ -670,7 +683,12 @@ class ExecuteSwap extends Service {
       };
       await ctx.model.ExecuteWallet.create(newWalletData);
       await retryAsync(async () => {
-        await transferAllSol(connection, wallet.keypair, keypair.publicKey);
+        await transferAllSol(
+          connection,
+          wallet.keypair,
+          keypair.publicKey,
+          0.01
+        );
       });
       oldAddress.push(wallet.address);
       newAddress.push(keypair.publicKey.toBase58());

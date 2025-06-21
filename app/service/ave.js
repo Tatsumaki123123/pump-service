@@ -99,6 +99,7 @@ class Ave extends Service {
           symbol: symbol,
           mkt_cap: item.market_cap,
           create_time: item.created_at,
+          amm: item.amm,
           // dev:devData,
           usdPrice: item.current_price_usd,
           pool: item.pair,

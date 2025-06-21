@@ -151,7 +151,7 @@ async function closeAllTokenAccounts(connection, keypair) {
     throw new Error(error);
   }
 }
-async function transferAllSol(connection, from, to) {
+async function transferAllSol(connection, from, to, remain = 0) {
   const { blockhash } = await connection.getLatestBlockhash();
   const TRANSACTION_FEE = 5000;
   const balance = await connection.getBalance(from.publicKey);
@@ -159,7 +159,11 @@ async function transferAllSol(connection, from, to) {
   // const minRent = await connection.getMinimumBalanceForRentExemption(0);
   const minRent = 0;
 
-  if (balance <= minRent + TRANSACTION_FEE) {
+  const remainAmount = remain * LAMPORTS_PER_SOL;
+
+  const minAmount = minRent + TRANSACTION_FEE + remainAmount;
+
+  if (balance <= minAmount) {
     console.log(
       chalk.yellow(
         `Insufficient balance for ${from.publicKey.toBase58()}, skipping.`
@@ -171,7 +175,7 @@ async function transferAllSol(connection, from, to) {
   const ix = SystemProgram.transfer({
     fromPubkey: from.publicKey,
     toPubkey: to,
-    lamports: balance - minRent - TRANSACTION_FEE,
+    lamports: balance - minAmount,
   });
 
   const volumeIxs = [ix];

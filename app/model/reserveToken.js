@@ -8,15 +8,11 @@ module.exports = (app) => {
     symbol: { type: String },
     dev: { type: String },
     pool: { type: String },
-    amm: { type: String },
     createTime: { type: Date },
     income: { type: Number, default: 0 },
     eid: { type: Number },
     line: { type: Number },
-    status: { type: String }, // pending, buy, sell
-    buyStatus: { type: String, default: "" }, // pending, buy, sell
-    buyStartTime: { type: Date },
   });
 
-  return mongoose.model("ExecuteToken", schema);
+  return mongoose.model("ReserveToken", schema);
 };

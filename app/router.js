@@ -38,4 +38,5 @@ module.exports = (app) => {
     "/v1/executetoken/initTokenList",
     controller.executeToken.initTokenList
   );
+  router.post("/v1/executetoken/addToken", controller.executeToken.addToken);
 };
