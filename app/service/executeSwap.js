@@ -550,7 +550,7 @@ class ExecuteSwap extends Service {
 
   async closeAllAccounts(line) {
     const { ctx } = this;
-    const wallets = await this.getWallets(line);
+    const wallets = await this.getWallets(line, true);
     if (wallets && wallets.length > 0) {
       for (const wallet of wallets) {
         await closeAllTokenAccounts(connection, wallet.keypair);

@@ -31,14 +31,14 @@ class ExecuteToken extends BaseController {
   async addToken() {
     const { ctx } = this;
 
-    const { tokenInfo } = ctx.request.body;
+    const { tokenInfo, type = "good" } = ctx.request.body;
     if (tokenInfo) {
       const dbData = await ctx.model.ReserveToken.findOne({
         token: tokenInfo.token,
         line: tokenInfo.line,
       });
       if (!dbData) {
-        await ctx.model.ReserveToken.create(tokenInfo);
+        await ctx.model.ReserveToken.create({ ...tokenInfo, type: type });
         this.success(true);
       } else {
         throw new Error("You have add this token");

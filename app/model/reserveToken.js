@@ -12,6 +12,7 @@ module.exports = (app) => {
     income: { type: Number, default: 0 },
     eid: { type: Number },
     line: { type: Number },
+    type: { type: String, default: "good" },
   });
 
   return mongoose.model("ReserveToken", schema);
