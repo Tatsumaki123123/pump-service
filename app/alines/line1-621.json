@@ -1,6 +1,6 @@
 [
   {
-    "transferAmount": 2.5,
+    "transferAmount": 2,
     "buyAmount": [0.49],
     "limit": 150000,
     "price": 16000,
@@ -11,7 +11,7 @@
     "isTrogan": true
   },
   {
-    "transferAmount": 2.5,
+    "transferAmount": 3.5,
     "buyAmount": [0.59],
     "limit": 150000,
     "price": 15000,
@@ -22,8 +22,8 @@
     "isTrogan": true
   },
   {
-    "transferAmount": 7.5,
-    "buyAmount": [1.5],
+    "transferAmount": 7,
+    "buyAmount": [2],
     "limit": 150000,
     "price": 14000,
     "fee": 0.00001,
