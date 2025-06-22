@@ -377,7 +377,7 @@ class ExecuteSwap extends Service {
     }
   }
 
-  async getWalletsWithConfig(line, type) {
+  async getWalletsWithConfig(line, type = "all") {
     console.log(chalk.green("getWalletsWithConfig:", line, type));
     const wallets = await this.getWallets(line);
     const walletConfigs = await this.getWalletConfig(line);
@@ -394,7 +394,7 @@ class ExecuteSwap extends Service {
       };
     });
 
-    const newWallets = data.filter((wallet) => {
+    let newWallets = data.filter((wallet) => {
       if (type === "first") {
         return wallet.firstBuy === true;
       } else if (type === "second") {
@@ -407,7 +407,31 @@ class ExecuteSwap extends Service {
         return true;
       }
     });
-
+    if (type === "first" || type === "all") {
+      const lineData = await this.ctx.model.ExecuteLine.findOne({
+        lineId: line,
+      }).lean();
+      const { firstWallet } = lineData;
+      if (firstWallet) {
+        const keypair = Keypair.fromSecretKey(
+          bs58.decode(firstWallet.privateKey)
+        );
+        const firstWalletConfig = {
+          address: firstWallet.address,
+          publicKey: new PublicKey(firstWallet.address),
+          buyAmount: firstWallet.buyAmount,
+          buyAmountArr: [firstWallet.buyAmount],
+          keypair,
+          limit: 1000000,
+          price: 0,
+          fee: 0.00002,
+          isFirst: true,
+          firstBuy: true,
+          isProxy: true,
+        };
+        newWallets = [firstWalletConfig, ...newWallets];
+      }
+    }
     return newWallets;
   }
 

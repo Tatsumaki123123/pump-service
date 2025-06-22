@@ -240,6 +240,33 @@ class ExecuteSwap extends BaseController {
       throw new Error("params");
     }
   }
+
+  async updateLineData() {
+    const { ctx } = this;
+    const { data, line } = ctx.request.body;
+    if (!line) {
+      throw new Error("Params error");
+    }
+    if (data) {
+      try {
+        const parseData = JSON.parse(data);
+        await ctx.model.ExecuteLine.updateOne({ lineId: line }, parseData);
+        this.success(true);
+      } catch (error) {
+        throw new Error("Date format error");
+      }
+    } else {
+      const res = await ctx.model.ExecuteLine.findOne({ lineId: line }).lean();
+      const data = {
+        lineName: res.lineName,
+        groupSort: res.groupSort,
+        autoStep: res.autoStep,
+        walletConfig: res.walletConfig,
+        sourceWeb: res.sourceWeb,
+      };
+      this.success(JSON.stringify(data));
+    }
+  }
 }
 
 module.exports = ExecuteSwap;

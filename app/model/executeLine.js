@@ -14,6 +14,7 @@ module.exports = (app) => {
     lineBots: { type: Array },
     tokenIndex: { type: Number },
     autoSwap: { type: Boolean },
+    firstWallet: { type: Object },
   });
 
   return mongoose.model("ExecuteLine", schema);
