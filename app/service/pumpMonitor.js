@@ -107,7 +107,7 @@ class PumpMonitor extends Service {
         const volumeIxs = [];
         //  1: limit
         const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
-          units: 103077,
+          units: 150000,
         });
         volumeIxs.push(setComputeUnitLimitIx);
 
@@ -135,13 +135,6 @@ class PumpMonitor extends Service {
         }
 
         // 3 swap
-        console.log({
-          tokenMint,
-          user: wallet,
-          buyAmount,
-          slippage,
-          poolDetail,
-        });
         const swapIx = await pSwap.createBuyInstruction({
           tokenMint,
           user: wallet.publicKey,
@@ -201,7 +194,7 @@ class PumpMonitor extends Service {
       const volumeIxs = [];
       //  1: limit
       const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
-        units: 103077,
+        units: 150000,
       });
       volumeIxs.push(setComputeUnitLimitIx);
 
@@ -315,7 +308,8 @@ class PumpMonitor extends Service {
       //   parseData(
       //     "Pi83CqUD3CrvKlFoAAAAANBI5GjjAQAAGIP1WgAAAADQSORo4wEAAAposrYrAAAAp8gfNWa/AADUHNHoJQAAAG6fz14AAAAAFAAAAAAAAAATizAAAAAAAAUAAAAAAAAAxSIMAAAAAABbFJ9eAAAAANHOhl4AAAAAWCOngP4Gv00Dt0wTp8Urzq+cPQErsL8ReHuqn3yXxvV0igiERM/OwQmwHxzP/+S8iH99oLBzT+P0TFGM+WmiwdoAnDUU8T23wpm7LrgOmkynIoAhGndV635XXBhkSrVTlxpn8fIsm84U1Nz5mknYtkcfEfs5HVMkpcjl+EEcUR/Xqo+wYNgpG0xNR12v92LJa9wNrOs2wBLq0S7TqUhBYQHIIfOo8I/viNwxQkp2gK6MloFwTPHl9ciOJ5m3+YIh4IGT3tZtkerXWkSSsPeFqXymloN5l407JgGuquq3llAFAAAAAAAAAMUiDAAAAAAA"
       //   );
-      return;
+
+      console.log(chalk.green("Pump amm monitor start------"));
       this.subscriptionId = connection.onLogs(
         PUMP_AMM_PROGRAM_ID,
         async (log) => {
