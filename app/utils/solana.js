@@ -194,7 +194,7 @@ async function transferAllSol(connection, from, to, remain = 0) {
       skipPreflight: false,
     });
     await connection.confirmTransaction(signature, "confirmed");
-    await sleep(1);
+    // await sleep(1);
     console.log(chalk.green(`Transaction sent: ${signature}`));
   } catch (error) {
     throw new Error(`Failed to send transaction: ${error.message}`);

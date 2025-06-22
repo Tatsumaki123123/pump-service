@@ -29,13 +29,21 @@ class ExecuteToken extends Service {
         eid: executeData.eid,
         status: { $in: ["buy", "sell"] },
       }).lean();
+      const badTokens = await ctx.model.ReserveToken.find({
+        type: "bad",
+        line: line,
+      }).lean();
       const newList = [];
       allList.forEach((item) => {
         const existItem = buyTokens.find(
           (buyToken) =>
             buyToken.token.toLowerCase() === item.token.toLowerCase()
         );
-        if (!existItem) {
+        const badItem = badTokens.find(
+          (buyToken) =>
+            buyToken.token.toLowerCase() === item.token.toLowerCase()
+        );
+        if (!existItem && !badItem) {
           newList.push(item);
         }
       });

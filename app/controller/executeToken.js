@@ -39,10 +39,16 @@ class ExecuteToken extends BaseController {
       });
       if (!dbData) {
         await ctx.model.ReserveToken.create({ ...tokenInfo, type: type });
-        this.success(true);
       } else {
-        throw new Error("You have add this token");
+        await ctx.model.ReserveToken.updateOne(
+          {
+            token: tokenInfo.token,
+            line: tokenInfo.line,
+          },
+          { type: type }
+        );
       }
+      this.success(true);
     } else {
       throw new Error("Params error");
     }

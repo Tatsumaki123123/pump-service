@@ -369,4 +369,6 @@ module.exports = {
   getCoinCreatorVaultAtaPda,
   getBuyTokenAmount,
   getBuyTokenAmountBuyPoolDetail,
+  getPoolsWithBaseMint,
+  getPriceAndLiquidity,
 };

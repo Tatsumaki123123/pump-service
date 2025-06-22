@@ -145,8 +145,12 @@ class ExecuteSwap extends BaseController {
       if (tid) {
         const res = await ctx.model.ExecuteToken.findOne({
           tid,
-        });
-        this.success(res);
+        }).lean();
+        const reserveData = await ctx.model.ReserveToken.findOne({
+          token: res.token,
+          line: res.line,
+        }).lean();
+        this.success({ ...res, reserveType: reserveData?.type || "" });
       } else {
         const count = await ctx.model.ExecuteToken.count({ eid: eid });
         const res = await ctx.model.ExecuteToken.find({

@@ -27,37 +27,15 @@ const bs58 = require("bs58");
 const borsh = require("@coral-xyz/borsh");
 const chalk = require("chalk");
 
-const { PumpAmmSdk } = require("@pump-fun/pump-swap-sdk");
+const JUP_PROGRAM_V6 = new PublicKey(
+  "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+);
 
-const { connection, PUMP_AMM_PROGRAM_ID } = require("../constants/index");
-const {
-  getPoolsWithQuoteMint,
-  getPoolsWithPrices,
-  getPriceAndLiquidity,
-  getPoolsWithBaseMint,
-} = require("../libs/pool");
-const PumpSwapSDK = require("../libs/pumpSwap");
-
-const pSwap = new PumpSwapSDK();
-const pumpAmmSdk = new PumpAmmSdk(connection);
-
-class PumpMonitor extends Service {
+class JupAggregator extends Service {
   constructor(ctx) {
     super(ctx);
 
     this.subscriptionId = null;
-  }
-
-  async buyToken(poolAddress, quoteAmountIn) {
-    const { ctx } = this;
-    console.log(chalk.green("Buy", poolAddress));
-    const poolMint = new PublicKey(poolAddress);
-    const poolData = await pumpAmmSdk.fetchPool(poolMint);
-    const poolWithPrice = await getPriceAndLiquidity(poolDetail);
-    console.log(poolWithPrice);
-  }
-  async sellToken(token, wallet) {
-    const { ctx } = this;
   }
 
   async startMonitor() {
@@ -76,14 +54,13 @@ class PumpMonitor extends Service {
         let type = "";
         if (discriminator.equals(buyDiscriminator)) {
           type = "buy";
-        } else if (discriminator.equals(sellDiscriminator)) {
+        }
+        if (discriminator.equals(sellDiscriminator)) {
           type = "sell";
         }
-        const u64Schema = borsh.u64();
-        const timestamp = u64Schema.decode(buffer.slice(8, 8 + 8)).toString();
-
-        const quoteAmountIn = u64Schema
-          .decode(buffer.slice(64, 64 + 8))
+        const timestampSchema = borsh.u64();
+        const timestamp = timestampSchema
+          .decode(buffer.slice(8, 8 + 8))
           .toString();
         const offset1 = 120;
         const pool = buffer.slice(offset1, offset1 + 32);
@@ -93,27 +70,22 @@ class PumpMonitor extends Service {
         const userAddress = bs58.encode(user);
         const poolAddress = bs58.encode(pool);
         if (addresses.includes(userAddress)) {
-          if (type === "buy") {
-            await this.buyToken(poolAddress, quoteAmountIn);
-          } else {
-            await this.sellToken(poolAddress);
-          }
-          console.log(type, quoteAmountIn, userAddress, poolAddress);
+          console.log(type, userAddress, poolAddress);
           console.log(new Date(createdTime));
           console.log(chalk.red(new Date().toString()));
         }
         return;
       };
 
-      parseData(
-        "Z/RSHyz1d3cgklZoAAAAALiTz8jWAQAAmFg0TAAAAAAAAAAAAAAAAICT9uhPAAAAnL6/3oybAAAZiF/OGAAAAC7S+UsAAAAAFAAAAAAAAABP5iYAAAAAAAUAAAAAAAAAlLkJAAAAAAB9uCBMAAAAAKUrNEwAAAAAPMPB90daHMGpUc5HaNf9vEXQmuCDlxkT1tPzEjEjl4VsYYGxCnbU3esCbMTQfy/lFZQ1XQW6cnL2ld3lhvlhYxCOb+y5BiT/Sp4WZm/mHpN1E12lkgzjTQttLqM2Bb9b1CpJB/WStyoQLC5lHiPO2X3xCsF3pY2cJycKEffqL3JKwvjQ3Vy8l+MonBl8tQYqVPPZVrnOblEV+WVnqlyz5nfZFZVfiIBzHOtKdaDMlsF0+kCVxOHZlnrPxChFrmeu7DYkZrtIfKvXxD/CPHPn58ihXq+/pnyxOdKELxTCDX4FAAAAAAAAAJS5CQAAAAAA"
-      );
+      //   parseData(
+      //     "Z/RSHyz1d3cvLlFoAAAAAGDotnSXAAAAAF7QsgAAAAAAAAAAAAAAAPuPdesqAAAALOsqcftRAACY9PLaXgAAAMYBg7AAAAAAFAAAAAAAAADAX1oAAAAAAAUAAAAAAAAA8JcWAAAAAACGYd2wAAAAAGaRCrEAAAAAI4XeQ9cX+asW3R2xVHIKrdhY9l2mQsPGpvlAgRGSOw50igiERM/OwQmwHxzP/+S8iH99oLBzT+P0TFGM+WmiwWBnThG69mxgKzgsnE/eL/ii2yf59kVQmy8NnydqPxqmlxpn8fIsm84U1Nz5mknYtkcfEfs5HVMkpcjl+EEcUR/Xqo+wYNgpG0xNR12v92LJa9wNrOs2wBLq0S7TqUhBYQHIIfOo8I/viNwxQkp2gK6MloFwTPHl9ciOJ5m3+YIhuUEt5aKtS+RMiB8bBMnKUzbmTUDlQGL897Z1gHYaETsFAAAAAAAAAPCXFgAAAAAA"
+      //   );
       //   parseData(
       //     "Pi83CqUD3CrvKlFoAAAAANBI5GjjAQAAGIP1WgAAAADQSORo4wEAAAposrYrAAAAp8gfNWa/AADUHNHoJQAAAG6fz14AAAAAFAAAAAAAAAATizAAAAAAAAUAAAAAAAAAxSIMAAAAAABbFJ9eAAAAANHOhl4AAAAAWCOngP4Gv00Dt0wTp8Urzq+cPQErsL8ReHuqn3yXxvV0igiERM/OwQmwHxzP/+S8iH99oLBzT+P0TFGM+WmiwdoAnDUU8T23wpm7LrgOmkynIoAhGndV635XXBhkSrVTlxpn8fIsm84U1Nz5mknYtkcfEfs5HVMkpcjl+EEcUR/Xqo+wYNgpG0xNR12v92LJa9wNrOs2wBLq0S7TqUhBYQHIIfOo8I/viNwxQkp2gK6MloFwTPHl9ciOJ5m3+YIh4IGT3tZtkerXWkSSsPeFqXymloN5l407JgGuquq3llAFAAAAAAAAAMUiDAAAAAAA"
       //   );
-      return;
+      //   return;
       this.subscriptionId = connection.onLogs(
-        PUMP_AMM_PROGRAM_ID,
+        JUP_PROGRAM_V6,
         async (log) => {
           try {
             const { logs } = log;
@@ -152,4 +124,4 @@ class PumpMonitor extends Service {
   }
 }
 
-module.exports = PumpMonitor;
+module.exports = JupAggregator;

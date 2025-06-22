@@ -69,9 +69,10 @@ class Ave extends Service {
     const sort_order = "asc";
     const mcp_min = groupSort.mcp_min || 4000;
     const mcp_max = groupSort.mcp_max || 20000;
-    const create_min = Math.round(new Date().getTime() / 1000) - 7 * 24 * 3600;
+    const create_min = Math.round(new Date().getTime() / 1000) - 30 * 24 * 3600;
     const holder_min = 50;
-    const uri = `${AVE_API_URL}v1api/v4/tokens/treasure/list?chain=solana&sort=${sort_field}&sort_dir=${sort_order}&created_at_min=${create_min}&marketcap_min=${mcp_min}&marketcap_max=${mcp_max}&holder_min=${holder_min}&pageNO=1&pageSize=500&category=pump_out_new`;
+    const category = groupSort.category || "pump_out_new";
+    const uri = `${AVE_API_URL}v1api/v4/tokens/treasure/list?chain=solana&sort=${sort_field}&sort_dir=${sort_order}&created_at_min=${create_min}&marketcap_min=${mcp_min}&marketcap_max=${mcp_max}&holder_min=${holder_min}&pageNO=1&pageSize=500&category=${category}`;
 
     const X_AUTH = await this.getXAuth();
 

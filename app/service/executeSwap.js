@@ -240,9 +240,12 @@ class ExecuteSwap extends Service {
           new PublicKey(executeData.bossAddress)
         );
       };
-      const arr = wallets.map((wallet) => fun(wallet));
 
-      const res = await Promise.all(arr);
+      for (const wallet of wallets) {
+        await fun(wallet);
+      }
+
+      // const res = await Promise.all(arr);
       return true;
     } else {
       console.log(chalk.yellow("No wallet."));
@@ -590,10 +593,6 @@ class ExecuteSwap extends Service {
         name: "L1秒进",
       },
       {
-        address: "FdDeJeoaZpUjABTcFF1NrByLeBuqgHQ454Ag7kKbPxW4",
-        name: "L1慢1-2",
-      },
-      {
         address: "8qvNUZf5p4Q15WNc64xZ5cLrLZU1ZDecKVpSDBkU3vbz",
         name: "L1最慢",
       },
@@ -601,7 +600,6 @@ class ExecuteSwap extends Service {
         address: "8J5GUAf7hr3LTPHJSkwrKFDNJPtAXtLHhnNHq6XxTLrW",
         name: "L1慢old",
       },
-      // { address: "A8QTd66meFihdau6Ex1fVGbXTzFkGkaNm7KfNCUGiArm", name: "反L1" },
     ];
     const { lineBots = defaultBots } = lineData;
     if (lineBots.length > 0) {
