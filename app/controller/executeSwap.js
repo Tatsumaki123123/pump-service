@@ -259,10 +259,11 @@ class ExecuteSwap extends BaseController {
       const res = await ctx.model.ExecuteLine.findOne({ lineId: line }).lean();
       const data = {
         lineName: res.lineName,
+        walletConfig: res.walletConfig,
+        needFirstWallet: res.needFirstWallet,
+        sourceWeb: res.sourceWeb,
         groupSort: res.groupSort,
         autoStep: res.autoStep,
-        walletConfig: res.walletConfig,
-        sourceWeb: res.sourceWeb,
       };
       this.success(JSON.stringify(data));
     }

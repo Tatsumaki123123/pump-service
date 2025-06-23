@@ -15,6 +15,7 @@ module.exports = (app) => {
     tokenIndex: { type: Number },
     autoSwap: { type: Boolean },
     firstWallet: { type: Object },
+    needFirstWallet: { type: Boolean, default: false },
   });
 
   return mongoose.model("ExecuteLine", schema);

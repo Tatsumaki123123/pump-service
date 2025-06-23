@@ -274,7 +274,7 @@ class ExecuteSwap extends Service {
     const line = tokenInfo.line;
     console.log(chalk.green(`\nStep 3: Buying ${token}`));
 
-    const wallets = await this.getWalletsWithConfig(line, type);
+    const wallets = await this.getWalletsWithLineFirstWallet(line, type);
     if (wallets && wallets.length > 0 && token) {
       const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
 
@@ -305,7 +305,7 @@ class ExecuteSwap extends Service {
     const token = tokenInfo.token;
     const line = tokenInfo.line;
     console.log(chalk.green(`Step 4: Selling ${token}, ${type}`));
-    const wallets = await this.getWalletsWithConfig(line, type);
+    const wallets = await this.getWalletsWithLineFirstWallet(line, type);
     if (wallets && wallets.length > 0 && token) {
       const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
       if (type === "all") {
@@ -407,12 +407,18 @@ class ExecuteSwap extends Service {
         return true;
       }
     });
+
+    return newWallets;
+  }
+
+  async getWalletsWithLineFirstWallet(line, type = "all") {
+    let newWallets = await this.getWalletsWithConfig(line, type);
     if (type === "first" || type === "all") {
       const lineData = await this.ctx.model.ExecuteLine.findOne({
         lineId: line,
       }).lean();
-      const { firstWallet } = lineData;
-      if (firstWallet) {
+      const { firstWallet, needFirstWallet } = lineData;
+      if (firstWallet && needFirstWallet) {
         const keypair = Keypair.fromSecretKey(
           bs58.decode(firstWallet.privateKey)
         );
