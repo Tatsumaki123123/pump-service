@@ -482,7 +482,7 @@ class ExecuteSwap extends Service {
     return data;
   }
 
-  async checkToken(tokenData, eid, multiBuy = true) {
+  async checkToken(tokenData, eid, forceCheck = false) {
     console.log(chalk.green("checkToken"));
     const { ctx } = this;
     const { token } = tokenData;
@@ -498,35 +498,31 @@ class ExecuteSwap extends Service {
       status: "sell",
     });
     if (sellData) {
-      if (multiBuy) {
-        await ctx.model.ExecuteToken.updateOne(
-          { tid: sellData.tid },
-          {
-            status: "buy",
-          }
-        );
-      } else {
-        throw new Error("You have buy this token");
-      }
+      await ctx.model.ExecuteToken.updateOne(
+        { tid: sellData.tid },
+        {
+          status: "buy",
+        }
+      );
     }
-
-    const otherData = await ctx.model.ExecuteToken.findOne({
-      eid: { $ne: eid },
-      token: token,
-      status: "buy",
-    });
-    if (otherData) {
-      throw new Error("Other buy this token");
-    }
-
     const executeData = await ctx.model.ExecuteData.findOne({ eid: eid });
 
-    const lineBotAccounts = await this.getLineBotTokenBalance(
-      executeData.line,
-      token
-    );
-    if (lineBotAccounts.total > 1000) {
-      throw new Error("Bot has to many token");
+    if (!forceCheck) {
+      const otherData = await ctx.model.ExecuteToken.findOne({
+        eid: { $ne: eid },
+        token: token,
+        status: "buy",
+      });
+      if (otherData) {
+        throw new Error("Other buy this token");
+      }
+      const lineBotAccounts = await this.getLineBotTokenBalance(
+        executeData.line,
+        token
+      );
+      if (lineBotAccounts.total > 1000) {
+        throw new Error("Bot has to many token");
+      }
     }
 
     let symbol = tokenData.symbol;

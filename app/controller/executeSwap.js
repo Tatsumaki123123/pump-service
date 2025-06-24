@@ -104,9 +104,13 @@ class ExecuteSwap extends BaseController {
   async checkToken() {
     const { ctx } = this;
 
-    const { tokenData, eid } = ctx.request.body;
+    const { tokenData, eid, forceCheck = false } = ctx.request.body;
     if (tokenData && eid) {
-      const res = await ctx.service.executeSwap.checkToken(tokenData, eid);
+      const res = await ctx.service.executeSwap.checkToken(
+        tokenData,
+        eid,
+        forceCheck
+      );
       this.success(res);
     } else {
       throw new Error("Params error");
