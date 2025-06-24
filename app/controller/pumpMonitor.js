@@ -7,15 +7,10 @@ class PumpMonitor extends BaseController {
   async buyToken() {
     const { ctx } = this;
 
-    const { poolAddress, quoteAmountIn, baseAmountOut, monitorAddress } =
+    const { token, poolAddress, quoteAmountIn, baseAmountOut, monitorAddress } =
       ctx.request.body;
-    if (line) {
-      const res = await ctx.service.pumpAmmMonitor.buyToken({
-        poolAddress,
-        baseAmountOut,
-        quoteAmountIn,
-        monitorAddress,
-      });
+    if (token) {
+      const res = await ctx.service.pumpfun.buyToken(token);
       this.success(res);
     } else {
       throw new Error("Params error");
@@ -24,12 +19,9 @@ class PumpMonitor extends BaseController {
   async sellToken() {
     const { ctx } = this;
 
-    const { poolAddress, monitorAddress } = ctx.request.body;
-    if (poolAddress) {
-      const res = await ctx.service.pumpAmmMonitor.sellToken({
-        poolAddress,
-        monitorAddress,
-      });
+    const { token, poolAddress, monitorAddress } = ctx.request.body;
+    if (token) {
+      const res = await ctx.service.pumpfun.sellToken(token);
       this.success(res);
     } else {
       throw new Error("Params error");

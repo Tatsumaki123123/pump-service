@@ -10,6 +10,8 @@ const constants = {};
 
 const RPC_URL = retrieveEnvVariable("RPC_URL");
 constants.RPC_URL = RPC_URL;
+const WSS_RPC_URL = retrieveEnvVariable("WSS_RPC_URL");
+constants.WSS_RPC_URL = WSS_RPC_URL;
 constants.JITO_RPC = retrieveEnvVariable("JITO_RPC");
 
 constants.wsol = "So11111111111111111111111111111111111111112";
@@ -18,7 +20,10 @@ constants.WSOL_TOKEN_ACCOUNT = new PublicKey(
 );
 constants.usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-constants.connection = new Connection(RPC_URL, "confirmed");
+constants.connection = new Connection(RPC_URL, {
+  wsEndpoint: WSS_RPC_URL,
+  commitment: "confirmed",
+});
 
 constants.PUMP_AMM_PROGRAM_ID = new PublicKey(
   "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"

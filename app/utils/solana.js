@@ -299,6 +299,49 @@ async function getTokenMeta(connection, mintAddress) {
   }
 }
 
+async function sendV0Transaction(
+  connection,
+  user,
+  instructions,
+  lookupTableAccounts
+) {
+  // Get the latest blockhash and last valid block height
+  const { lastValidBlockHeight, blockhash } =
+    await connection.getLatestBlockhash({ commitment: "confirmed" });
+
+  const messageV0 = new TransactionMessage({
+    payerKey: user.publicKey,
+    recentBlockhash: blockhash,
+    instructions: instructions,
+  }).compileToV0Message(lookupTableAccounts ? lookupTableAccounts : undefined);
+
+  const transaction = new VersionedTransaction(messageV0);
+
+  transaction.sign([user]);
+  // const jitoConnection = new Connection(
+  //   "https://mainnet.block-engine.jito.wtf/api/v1/transactions",
+  //   "confirmed"
+  // )
+  // Send the transaction to the cluster
+
+  const txid = await connection.sendTransaction(transaction, {
+    skipPreflight: true,
+    maxRetries: 2,
+  });
+
+  await connection.confirmTransaction(
+    {
+      blockhash: blockhash,
+      lastValidBlockHeight: lastValidBlockHeight,
+      signature: txid,
+    },
+    "confirmed"
+  );
+
+  // Log the transaction URL on the Solana Explorer
+  console.log(`https://explorer.solana.com/tx/${txid}`);
+}
+
 module.exports = {
   getSPLBalance,
   closeAllTokenAccounts,
@@ -306,4 +349,5 @@ module.exports = {
   transferSol,
   isValidSolanaAddress,
   getTokenMeta,
+  sendV0Transaction,
 };

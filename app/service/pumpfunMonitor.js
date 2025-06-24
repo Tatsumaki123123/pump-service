@@ -25,21 +25,32 @@ const {
   createAssociatedTokenAccountInstruction,
   createTransferCheckedInstruction,
 } = require("@solana/spl-token");
+const { AnchorProvider, Wallet } = require("@coral-xyz/anchor");
 
 const bs58 = require("bs58");
 const borsh = require("@coral-xyz/borsh");
 const chalk = require("chalk");
+const { PumpFunSDK, GlobalAccount } = require("pumpdotfun-sdk");
 
-const { connection, WSOL_TOKEN_ACCOUNT } = require("../constants/index");
+const {
+  connection,
+  testWallet,
+  WSOL_TOKEN_ACCOUNT,
+} = require("../constants/index");
 
 const PUMP_FUN_ID = new PublicKey(
   "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 );
 
+const provider = new AnchorProvider(connection, testWallet, {
+  commitment: "finalized",
+});
+
+const pfSwap = new PumpFunSDK(provider);
+
 class PumpFunMonitor extends Service {
-  async handleCreateEvent(buffer) {
+  async handleParseCreate(buffer) {
     const { ctx } = this;
-    console.log("create");
     const tokenEventSchema = borsh.struct([
       borsh.str("name"),
       borsh.str("symbol"),
@@ -56,12 +67,16 @@ class PumpFunMonitor extends Service {
     ]);
 
     const event = tokenEventSchema.decode(buffer.slice(8));
+    await this.handleCreateEvent(event);
+  }
 
-    // const metadata = await ctx.curl(event.uri);
-    const metadata = {};
+  async handleCreateEvent(event) {
+    const { ctx } = this;
+    const metadataRes = await ctx.curl(event.uri, { dataType: "json" });
+    const metadata = metadataRes.data;
     const dbData = {
       token: event.mint.toBase58(),
-      dev: event.creator.toBase58(),
+      dev: "",
       pool: event.bondingCurve.toBase58(),
       name: event.name,
       symbol: event.symbol,
@@ -70,10 +85,16 @@ class PumpFunMonitor extends Service {
       updateTime: new Date(),
       metadata: metadata,
     };
-    await ctx.model.PumpToken.create(dbData);
     console.log(event.symbol);
     console.log(new Date(event.timestamp * 1000));
     console.log(new Date());
+    if (metadata.twitter && metadata.twitter.indexOf("communities") > -1) {
+      await ctx.service.pumpfun.buyToken(dbData.token);
+      setTimeout(async () => {
+        await ctx.service.pumpfun.sellToken(dbData.token);
+      }, 1000);
+      await ctx.model.PumpToken.create(dbData);
+    }
   }
 
   async handleBuyEvent(buffer) {}
@@ -90,7 +111,7 @@ class PumpFunMonitor extends Service {
           27, 114, 169, 77, 222, 235, 99, 118,
         ]);
         if (discriminator.equals(createDiscriminator)) {
-          await this.handleCreateEvent(buffer);
+          await this.handleParseCreate(buffer);
         }
 
         return;
@@ -98,7 +119,6 @@ class PumpFunMonitor extends Service {
       // parseData(
       //   "G3KpTd7rY3YdAAAATWFrZSBJc3JhaGVsbCBQYWxlc3RpbmUgQWdhaW4EAAAATUlQQWIAAABodHRwczovL3Vwd2FyZC1zcG9ydC1oZWFkZWQucXVpY2tub2RlLWlwZnMuY29tL2lwZnMvUW1WVDhiN0VkTktkWW9TOFIzUTVvN3lXeENVREJFc3Z1eWhKV0VXS1g3Sk1iVDsSWfuy6D0vmc107wrVa62iw0EYUD3f2HdwK5djhrWFtxG+c0PvMbENL79QVLOCFOxi58rZSsFLo6R3mDe39wvnMgqRlXlq36cbIVY/pESBX45XEkTxxLpbIXxMRVTeOucyCpGVeWrfpxshVj+kRIFfjlcSRPHEulshfExFVN46gwhZaAAAAAAAENhH488DAACsI/wGAAAAAHjF+1HRAgAAgMakfo0DAA=="
       // );
-      // return;
 
       console.log(chalk.green("Pump fun monitor start------"));
       this.subscriptionId = connection.onLogs(
