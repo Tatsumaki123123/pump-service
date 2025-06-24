@@ -595,17 +595,28 @@ class ExecuteSwap extends Service {
     }
   }
 
-  async withdraw(line) {
+  async withdraw(line, amount) {
     const { ctx } = this;
     const executeData = await this.getExecuteData(line);
     const lineData = await ctx.model.ExecuteLine.findOne({ lineId: line });
+    console.log(chalk.green("withdraw", amount));
     if (lineData.withdrawAddress) {
       const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
-      await transferAllSol(
-        connection,
-        boss,
-        new PublicKey(lineData.withdrawAddress)
-      );
+      if (amount) {
+        await transferSol(
+          connection,
+          boss,
+          [new PublicKey(lineData.withdrawAddress)],
+          [amount]
+        );
+      } else {
+        await transferAllSol(
+          connection,
+          boss,
+          new PublicKey(lineData.withdrawAddress)
+        );
+      }
+
       return true;
     } else {
       throw new Error("To address not exist");

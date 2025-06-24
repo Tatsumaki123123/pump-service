@@ -56,7 +56,7 @@ const addresses = ["8J5GUAf7hr3LTPHJSkwrKFDNJPtAXtLHhnNHq6XxTLrW"];
 const PRIVATE_KEY =
   "2rCKuqBiskXu8KPHiv9joWziemRfZiDMkzSyHzoWAphJ4MtfqbSsm5qdNoCcxZbFpu4xML5JFjH21qmZpbTnwnDQ";
 
-class PumpMonitor extends Service {
+class PumpAmmMonitor extends Service {
   constructor(ctx) {
     super(ctx);
     this.subscriptionId = null;
@@ -424,4 +424,4 @@ class PumpMonitor extends Service {
   }
 }
 
-module.exports = PumpMonitor;
+module.exports = PumpAmmMonitor;

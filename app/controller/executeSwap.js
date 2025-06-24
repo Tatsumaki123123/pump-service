@@ -128,9 +128,9 @@ class ExecuteSwap extends BaseController {
   async withdraw() {
     const { ctx } = this;
 
-    const { line } = ctx.request.body;
+    const { line, amount } = ctx.request.body;
     if (line) {
-      const res = await ctx.service.executeSwap.withdraw(line);
+      const res = await ctx.service.executeSwap.withdraw(line, amount);
       this.success(res);
     } else {
       throw new Error("Params error");

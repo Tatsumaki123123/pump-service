@@ -53,7 +53,7 @@ class PumpDotFun {
   }
 
   async getPoolData(tokenMint) {
-    const account = pfSwap.getBondingCurveAccount(tokenMint);
+    const account = await pfSwap.getBondingCurveAccount(tokenMint);
     console.log(account);
     return account;
   }
