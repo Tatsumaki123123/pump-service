@@ -27,11 +27,21 @@ const provider = new AnchorProvider(connection, provider_wallet, {
 
 const pfSwap = new PumpFunSDK(provider);
 
-const SLIPPAGE_BASIS_POINTS = 500n;
+const TIP_ACCOUNT = new PublicKey(
+  "6rYLG55Q9RpsPGvqdPNJs4z5WTxJVatMB8zV3WJhs5EK"
+);
+const SLIPPAGE_BASIS_POINTS = 5000n;
 
 class PumpFun extends Service {
+  constructor(ctx) {
+    super(ctx);
+    this.buyTimer = null;
+    this.canBuy = true;
+  }
   async buyToken(token, amount = 0.01) {
     try {
+      if (!this.canBuy) return false;
+      this.canBuy = false;
       console.log(chalk.green("Buy token", token));
       const buyTx = await pfSwap.buy(
         testWallet.publicKey,
@@ -41,15 +51,20 @@ class PumpFun extends Service {
         {
           unitLimit: 250000,
           unitPrice: 250000,
-        }
+        },
+        "processed"
       );
-
-      const res = await sendV0Transaction(
-        connection,
-        testWallet,
-        buyTx.instructions
-      );
-
+      // const tipIx = SystemProgram.transfer({
+      //   fromPubkey: testWallet.publicKey,
+      //   toPubkey: TIP_ACCOUNT,
+      //   lamports: 0.0001 * LAMPORTS_PER_SOL,
+      // });
+      // const volumeIxs = [tipIx, ...buyTx.instructions];
+      const volumeIxs = [...buyTx.instructions];
+      const res = await sendV0Transaction(connection, testWallet, volumeIxs);
+      setTimeout(() => {
+        this.canBuy = true;
+      }, 10 * 1000);
       return true;
     } catch (error) {
       console.error(error);
@@ -69,12 +84,13 @@ class PumpFun extends Service {
         let sellTx = await pfSwap.sell(
           testWallet.publicKey,
           tokenMint,
-          BigInt(currentSPLBalance * Math.pow(10, 6)),
+          BigInt(Math.trunc(currentSPLBalance * Math.pow(10, 6))),
           SLIPPAGE_BASIS_POINTS,
           {
             unitLimit: 250000,
             unitPrice: 250000,
-          }
+          },
+          "processed"
         );
         const res = await sendV0Transaction(
           connection,

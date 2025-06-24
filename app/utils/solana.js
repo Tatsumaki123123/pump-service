@@ -22,7 +22,11 @@ const {
   getMetadataPointerState,
   getTokenMetadata,
   createCloseAccountInstruction,
+  createSyncNativeInstruction,
+  createAssociatedTokenAccountInstruction,
 } = require("@solana/spl-token");
+
+const { WSOL_TOKEN_ACCOUNT } = require("../constants/index");
 
 const { sleep } = require("./utils");
 
@@ -335,11 +339,83 @@ async function sendV0Transaction(
       lastValidBlockHeight: lastValidBlockHeight,
       signature: txid,
     },
-    "confirmed"
+    "processed"
   );
 
   // Log the transaction URL on the Solana Explorer
-  console.log(`https://explorer.solana.com/tx/${txid}`);
+  console.log(`https://solscan.io/tx/${txid}`);
+}
+
+async function wrapSolToWSol(connection, wallet, amount = 0.1) {
+  console.log(chalk.green("wrapSolToWSol"));
+  const associatedTokenAddress = await getAssociatedTokenAddress(
+    WSOL_TOKEN_ACCOUNT,
+    wallet.publicKey
+  );
+
+  const accountInfo = await connection.getAccountInfo(associatedTokenAddress);
+  const transaction = new Transaction();
+
+  if (!accountInfo) {
+    transaction.add(
+      createAssociatedTokenAccountInstruction(
+        wallet.publicKey,
+        associatedTokenAddress,
+        wallet.publicKey,
+        WSOL_TOKEN_ACCOUNT
+      )
+    );
+  }
+
+  const amountToWrap = amount * LAMPORTS_PER_SOL;
+
+  transaction.add(
+    SystemProgram.transfer({
+      fromPubkey: wallet.publicKey,
+      toPubkey: associatedTokenAddress,
+      lamports: amountToWrap,
+    }),
+    createSyncNativeInstruction(associatedTokenAddress)
+  );
+
+  const signature = await connection.sendTransaction(transaction, [wallet]);
+  await connection.confirmTransaction(signature, "confirmed");
+
+  console.log(`成功将 0.1 SOL 转换为 WSOL！交易签名: ${signature}`);
+  console.log(`WSOL 存储在: ${associatedTokenAddress.toBase58()}`);
+}
+
+async function wsolToSol(connection, wallet) {
+  const associatedTokenAddress = await getAssociatedTokenAddress(
+    WSOL_TOKEN_ACCOUNT,
+    wallet.publicKey
+  );
+
+  // 5. 检查 ATA 是否存在并有余额
+  const accountInfo = await connection.getAccountInfo(associatedTokenAddress);
+  if (!accountInfo) {
+    throw new Error("WSOL ATA 不存在，请确认钱包中是否有 WSOL");
+  }
+
+  const balance = await connection.getTokenAccountBalance(
+    associatedTokenAddress
+  );
+  console.log(`当前 WSOL 余额: ${balance.value.uiAmount} WSOL`);
+
+  // 6. 创建交易并添加关闭 ATA 的指令
+  const transaction = new Transaction().add(
+    createCloseAccountInstruction(
+      associatedTokenAddress, // 要关闭的 WSOL ATA
+      wallet.publicKey, // 接收 SOL 的目标账户
+      wallet.publicKey // ATA 的所有者
+    )
+  );
+
+  // 7. 发送交易
+  const signature = await connection.sendTransaction(transaction, [wallet], {
+    skipPreflight: false, // 启用预检以捕获模拟错误
+  });
+  await connection.confirmTransaction(signature, "confirmed");
 }
 
 module.exports = {
@@ -350,4 +426,6 @@ module.exports = {
   isValidSolanaAddress,
   getTokenMeta,
   sendV0Transaction,
+  wrapSolToWSol,
+  wsolToSol,
 };

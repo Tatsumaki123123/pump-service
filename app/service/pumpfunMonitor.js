@@ -88,11 +88,17 @@ class PumpFunMonitor extends Service {
     console.log(event.symbol);
     console.log(new Date(event.timestamp * 1000));
     console.log(new Date());
-    if (metadata.twitter && metadata.twitter.indexOf("communities") > -1) {
-      await ctx.service.pumpfun.buyToken(dbData.token);
-      setTimeout(async () => {
-        await ctx.service.pumpfun.sellToken(dbData.token);
-      }, 1000);
+    if (
+      metadata &&
+      metadata.twitter &&
+      metadata.twitter.indexOf("communities") > -1
+    ) {
+      const res = await ctx.service.pumpfun.buyToken(dbData.token);
+      if (res) {
+        setTimeout(async () => {
+          await ctx.service.pumpfun.sellToken(dbData.token);
+        }, 1000);
+      }
       await ctx.model.PumpToken.create(dbData);
     }
   }
