@@ -28,4 +28,9 @@ constants.BLOCK_RAZOR_1 = new PublicKey(
   "7ZKL8BAPfKKa6FNmds48QKFnckrcj4mkppRnsBAR2xVH"
 );
 
+const PRIVATE_KEY =
+  "2rCKuqBiskXu8KPHiv9joWziemRfZiDMkzSyHzoWAphJ4MtfqbSsm5qdNoCcxZbFpu4xML5JFjH21qmZpbTnwnDQ";
+
+constants.testWallet = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
+
 module.exports = constants;

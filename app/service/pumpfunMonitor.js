@@ -36,27 +36,51 @@ const PUMP_FUN_ID = new PublicKey(
   "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 );
 
-class TokenEvent {
-  constructor(fields) {
-    this.name = fields.name;
-    this.symbol = fields.symbol;
-    this.uri = fields.uri;
-    this.mint = fields.mint;
-    this.bondingCurve = fields.bondingCurve;
-    this.user = fields.user;
-    this.creator = fields.creator;
-    this.timestamp = fields.timestamp;
-    this.virtualTokenReserves = fields.virtualTokenReserves;
-    this.virtualSolReserves = fields.virtualSolReserves;
-    this.realTokenReserves = fields.realTokenReserves;
-    this.tokenTotalSupply = fields.tokenTotalSupply;
-  }
-}
-
 class PumpFunMonitor extends Service {
-  async startNewMonitor() {
-    // await this.wrapSolToWSol(2);
-    // await this.wsolToSol();
+  async handleCreateEvent(buffer) {
+    const { ctx } = this;
+    console.log("create");
+    const tokenEventSchema = borsh.struct([
+      borsh.str("name"),
+      borsh.str("symbol"),
+      borsh.str("uri"),
+      borsh.publicKey("mint"),
+      borsh.publicKey("bondingCurve"),
+      borsh.publicKey("user"),
+      borsh.publicKey("creator"),
+      borsh.u64("timestamp"),
+      borsh.u64("virtualTokenReserves"),
+      borsh.u64("virtualSolReserves"),
+      borsh.u64("realTokenReserves"),
+      borsh.u64("tokenTotalSupply"),
+    ]);
+
+    const event = tokenEventSchema.decode(buffer.slice(8));
+
+    // const metadata = await ctx.curl(event.uri);
+    const metadata = {};
+    const dbData = {
+      token: event.mint.toBase58(),
+      dev: event.creator.toBase58(),
+      pool: event.bondingCurve.toBase58(),
+      name: event.name,
+      symbol: event.symbol,
+      uri: event.uri,
+      createTime: new Date(event.timestamp * 1000),
+      updateTime: new Date(),
+      metadata: metadata,
+    };
+    await ctx.model.PumpToken.create(dbData);
+    console.log(event.symbol);
+    console.log(new Date(event.timestamp * 1000));
+    console.log(new Date());
+  }
+
+  async handleBuyEvent(buffer) {}
+
+  async handleSellEvent(buffer) {}
+
+  async startMonitor() {
     const { ctx } = this;
     try {
       const parseData = async (base64Data, signature) => {
@@ -66,35 +90,17 @@ class PumpFunMonitor extends Service {
           27, 114, 169, 77, 222, 235, 99, 118,
         ]);
         if (discriminator.equals(createDiscriminator)) {
-          console.log("create");
-          const tokenEventSchema = borsh.struct([
-            borsh.str("name"), // 变长字符串
-            borsh.str("symbol"),
-            borsh.str("uri"),
-            borsh.publicKey("mint"), // 32 字节公钥
-            borsh.publicKey("bondingCurve"),
-            borsh.publicKey("user"),
-            borsh.publicKey("creator"),
-            borsh.u64("timestamp"), // 64 位无符号整数
-            borsh.u64("virtualTokenReserves"),
-            borsh.u64("virtualSolReserves"),
-            borsh.u64("realTokenReserves"),
-            borsh.u64("tokenTotalSupply"),
-          ]);
-
-          const event = tokenEventSchema.decode(buffer.slice(8));
-
-          console.log(event.symbol, new Date(event.timestamp));
+          await this.handleCreateEvent(buffer);
         }
 
         return;
       };
-      parseData(
-        "G3KpTd7rY3YdAAAATWFrZSBJc3JhaGVsbCBQYWxlc3RpbmUgQWdhaW4EAAAATUlQQWIAAABodHRwczovL3Vwd2FyZC1zcG9ydC1oZWFkZWQucXVpY2tub2RlLWlwZnMuY29tL2lwZnMvUW1WVDhiN0VkTktkWW9TOFIzUTVvN3lXeENVREJFc3Z1eWhKV0VXS1g3Sk1iVDsSWfuy6D0vmc107wrVa62iw0EYUD3f2HdwK5djhrWFtxG+c0PvMbENL79QVLOCFOxi58rZSsFLo6R3mDe39wvnMgqRlXlq36cbIVY/pESBX45XEkTxxLpbIXxMRVTeOucyCpGVeWrfpxshVj+kRIFfjlcSRPHEulshfExFVN46gwhZaAAAAAAAENhH488DAACsI/wGAAAAAHjF+1HRAgAAgMakfo0DAA=="
-      );
+      // parseData(
+      //   "G3KpTd7rY3YdAAAATWFrZSBJc3JhaGVsbCBQYWxlc3RpbmUgQWdhaW4EAAAATUlQQWIAAABodHRwczovL3Vwd2FyZC1zcG9ydC1oZWFkZWQucXVpY2tub2RlLWlwZnMuY29tL2lwZnMvUW1WVDhiN0VkTktkWW9TOFIzUTVvN3lXeENVREJFc3Z1eWhKV0VXS1g3Sk1iVDsSWfuy6D0vmc107wrVa62iw0EYUD3f2HdwK5djhrWFtxG+c0PvMbENL79QVLOCFOxi58rZSsFLo6R3mDe39wvnMgqRlXlq36cbIVY/pESBX45XEkTxxLpbIXxMRVTeOucyCpGVeWrfpxshVj+kRIFfjlcSRPHEulshfExFVN46gwhZaAAAAAAAENhH488DAACsI/wGAAAAAHjF+1HRAgAAgMakfo0DAA=="
+      // );
+      // return;
 
-      console.log(chalk.green("Pump amm monitor start------"));
-      return;
+      console.log(chalk.green("Pump fun monitor start------"));
       this.subscriptionId = connection.onLogs(
         PUMP_FUN_ID,
         async (log) => {
@@ -108,7 +114,7 @@ class PumpFunMonitor extends Service {
               const dataLog = logs.find((item) => item.indexOf(logPrefix) > -1);
               if (dataLog) {
                 const base64Data = dataLog.slice(logPrefix.length).trim();
-                this.parseData(base64Data, log.signature);
+                parseData(base64Data, log.signature);
               }
             }
           } catch (error) {
@@ -118,15 +124,15 @@ class PumpFunMonitor extends Service {
         "processed"
       );
 
-      console.log("pump monitor started");
+      console.log("pump fun monitor started");
     } catch (error) {}
   }
 
-  async stopMonitorAMM() {
+  async stopMonitor() {
     if (this.subscriptionId !== null) {
       await connection.removeProgramAccountChangeListener(this.subscriptionId);
       this.subscriptionId = null;
-      console.log("Believe monitor stopped");
+      console.log("pump fun monitor stopped");
     }
   }
 }

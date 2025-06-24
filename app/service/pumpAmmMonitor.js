@@ -53,14 +53,12 @@ const pumpAmmSdk = new PumpAmmSdk(connection);
 
 const addresses = ["8J5GUAf7hr3LTPHJSkwrKFDNJPtAXtLHhnNHq6XxTLrW"];
 
-const PRIVATE_KEY =
-  "2rCKuqBiskXu8KPHiv9joWziemRfZiDMkzSyHzoWAphJ4MtfqbSsm5qdNoCcxZbFpu4xML5JFjH21qmZpbTnwnDQ";
-
 class PumpAmmMonitor extends Service {
   constructor(ctx) {
     super(ctx);
     this.subscriptionId = null;
-    this.user = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
+    // this.user = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
+    this.user = null;
   }
 
   async buyToken({

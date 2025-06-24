@@ -10,7 +10,7 @@ class PumpMonitor extends BaseController {
     const { poolAddress, quoteAmountIn, baseAmountOut, monitorAddress } =
       ctx.request.body;
     if (line) {
-      const res = await ctx.service.pumpMonitor.buyToken({
+      const res = await ctx.service.pumpAmmMonitor.buyToken({
         poolAddress,
         baseAmountOut,
         quoteAmountIn,
@@ -26,7 +26,7 @@ class PumpMonitor extends BaseController {
 
     const { poolAddress, monitorAddress } = ctx.request.body;
     if (poolAddress) {
-      const res = await ctx.service.pumpMonitor.sellToken({
+      const res = await ctx.service.pumpAmmMonitor.sellToken({
         poolAddress,
         monitorAddress,
       });
