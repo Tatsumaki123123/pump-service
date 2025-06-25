@@ -25,10 +25,13 @@ const {
   getTokenMeta,
 } = require("../utils/solana");
 
-const { getPoolsWithPrices } = require("../libs/pool");
+const { getPoolsWithPrices, getPoolsWithBaseMint } = require("../libs/pool");
 const { sleep, retryAsync } = require("../utils/utils");
 
 const BOSS_MIN_AMOUNT = 2.8;
+
+const PUMP_AMM_NAME = "pumpfunamm";
+const PUMP_FUN_NAME = "pump";
 
 class ExecuteSwap extends Service {
   constructor(props) {
@@ -276,7 +279,13 @@ class ExecuteSwap extends Service {
 
     const wallets = await this.getWalletsWithLineFirstWallet(line, type);
     if (wallets && wallets.length > 0 && token) {
-      const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
+      if (tokenInfo.amm === PUMP_AMM_NAME) {
+        await ctx.service.pumpAMM.batchBuyToken(token, wallets);
+      } else if (tokenInfo.amm === PUMP_FUN_NAME) {
+        await ctx.service.pumpfun.batchBuyToken(token, wallets);
+      } else {
+        throw new Error("Not pump token");
+      }
 
       await ctx.model.ExecuteToken.updateOne(
         { tid: tokenInfo.tid },
@@ -307,7 +316,13 @@ class ExecuteSwap extends Service {
     console.log(chalk.green(`Step 4: Selling ${token}, ${type}`));
     const wallets = await this.getWalletsWithLineFirstWallet(line, type);
     if (wallets && wallets.length > 0 && token) {
-      const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
+      if (tokenInfo.amm === PUMP_AMM_NAME) {
+        await ctx.service.pumpAMM.batchSellToken(token, wallets);
+      } else if (tokenInfo.amm === PUMP_FUN_NAME) {
+        await ctx.service.pumpfun.batchSellToken(token, wallets);
+      } else {
+        throw new Error("Not pump token");
+      }
       if (type === "all") {
         await ctx.model.ExecuteToken.updateOne(
           { tid: tokenInfo.tid },
@@ -534,17 +549,33 @@ class ExecuteSwap extends Service {
     let amm = tokenData.amm;
     let dev = "";
     let pool = "";
-    if (amm === "pumpfunamm") {
+    if (amm === PUMP_AMM_NAME) {
+      dev = "";
+      pool = tokenData.pool;
+    } else if (amm === PUMP_FUN_NAME) {
       dev = "";
       pool = tokenData.pool;
     } else {
-      const poolDetail = await getPoolsWithPrices(new PublicKey(token));
-      if (!poolDetail) {
-        throw new Error("Cannot find pool data");
+      let poolDetail;
+      try {
+        poolDetail = await getPoolsWithPrices(new PublicKey(token));
+      } catch (error) {
+        console.error(error);
       }
-      amm = "pumpfunamm";
-      dev = poolDetail.poolData.coinCreator;
-      pool = poolDetail.address;
+      if (poolDetail) {
+        amm = PUMP_AMM_NAME;
+        dev = poolDetail.poolData.coinCreator;
+        pool = poolDetail.address;
+      } else {
+        poolDetail = await ctx.service.pumpfun.getPoolDetail(token);
+        if (poolDetail) {
+          amm = PUMP_FUN_NAME;
+          dev = poolDetail.dev;
+          pool = "";
+        } else {
+          throw new Error("Cannot find pool data");
+        }
+      }
     }
 
     const tokenDb = await ctx.model.ExecuteToken.findOne({
