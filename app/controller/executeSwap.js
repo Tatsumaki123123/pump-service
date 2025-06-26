@@ -268,6 +268,7 @@ class ExecuteSwap extends BaseController {
         sourceWeb: res.sourceWeb,
         groupSort: res.groupSort,
         autoStep: res.autoStep,
+        lineBots: res.lineBots,
       };
       this.success(JSON.stringify(data));
     }
