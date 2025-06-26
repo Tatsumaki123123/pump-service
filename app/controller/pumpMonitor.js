@@ -35,6 +35,14 @@ class PumpMonitor extends BaseController {
       throw new Error("Params error");
     }
   }
+
+  async webhook() {
+    const { ctx } = this;
+
+    const { data } = ctx.request.body;
+    console.log(ctx.request.body);
+    this.success(JSON.stringify(data));
+  }
 }
 
 module.exports = PumpMonitor;

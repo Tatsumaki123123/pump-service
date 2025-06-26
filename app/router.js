@@ -46,4 +46,5 @@ module.exports = (app) => {
 
   router.post("/v1/pumpmonitor/buyToken", controller.pumpMonitor.buyToken);
   router.post("/v1/pumpmonitor/sellToken", controller.pumpMonitor.sellToken);
+  router.post("/v1/pumpmonitor/webhook", controller.pumpMonitor.webhook);
 };

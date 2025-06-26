@@ -10,8 +10,8 @@ module.exports = (appInfo) => {
   const config = (exports = {});
   config.mongoose = {
     client: {
-      url: "mongodb://pumpservice:88DH3BHKKWiy23Hm@162.0.224.219:27017/pumpservice",
-      // url: "mongodb://127.0.0.1:27017/pumpservice",
+      // url: "mongodb://pumpservice:88DH3BHKKWiy23Hm@162.0.224.219:27017/pumpservice",
+      url: "mongodb://127.0.0.1:27017/pumpservice",
 
       options: { directConnection: true, retryWrites: true, w: "majority" },
       // mongoose global plugins, expected a function or an array of function and options

@@ -1,3 +1,4 @@
+"use strict";
 const { Service } = require("egg");
 const {
   Connection,
@@ -25,12 +26,24 @@ const {
   createAssociatedTokenAccountInstruction,
   createTransferCheckedInstruction,
 } = require("@solana/spl-token");
-const { AnchorProvider, Wallet } = require("@coral-xyz/anchor");
+const {
+  createSolanaRpcSubscriptions,
+  RpcSubscriptions,
+  SolanaRpcSubscriptionsApi,
+  address,
+  Address,
+} = require("@solana/kit");
 
 const bs58 = require("bs58");
 const borsh = require("@coral-xyz/borsh");
 const chalk = require("chalk");
-const { PumpFunSDK, GlobalAccount } = require("pumpdotfun-sdk");
+
+const {
+  default: Client,
+  CommitmentLevel,
+} = require("@triton-one/yellowstone-grpc");
+
+const GRPC_ENDPOINT = "https://solana-yellowstone-grpc.publicnode.com:443";
 
 const {
   connection,
@@ -38,15 +51,19 @@ const {
   WSOL_TOKEN_ACCOUNT,
 } = require("../constants/index");
 
-const PUMP_FUN_ID = new PublicKey(
-  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
-);
+const PUMP_FUN_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+const PUMP_FUN_MINT_AUTHORITY = "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM";
+const CREATE_IX_DISCRIMINATOR = Buffer.from([
+  27, 114, 169, 77, 222, 235, 99, 118,
+]);
 
-const provider = new AnchorProvider(connection, testWallet, {
-  commitment: "finalized",
-});
+const COMMITMENT = CommitmentLevel.CONFIRMED;
 
-const pfSwap = new PumpFunSDK(provider);
+const FILTER_CONFIG = {
+  programIds: [PUMP_FUN_PROGRAM_ID],
+  requiredAccounts: [PUMP_FUN_PROGRAM_ID, PUMP_FUN_MINT_AUTHORITY],
+  instructionDiscriminators: [CREATE_IX_DISCRIMINATOR],
+};
 
 class PumpFunMonitor extends Service {
   async handleParseCreate(buffer) {
@@ -108,15 +125,16 @@ class PumpFunMonitor extends Service {
   async handleSellEvent(buffer) {}
 
   async startMonitor() {
+    await this.startGrpcMonitor();
+  }
+
+  async startLogMonitor() {
     const { ctx } = this;
     try {
       const parseData = async (base64Data, signature) => {
         const buffer = Buffer.from(base64Data, "base64");
         const discriminator = buffer.slice(0, 8);
-        const createDiscriminator = Buffer.from([
-          27, 114, 169, 77, 222, 235, 99, 118,
-        ]);
-        if (discriminator.equals(createDiscriminator)) {
+        if (discriminator.equals(CREATE_IX_DISCRIMINATOR)) {
           await this.handleParseCreate(buffer);
         }
 
@@ -128,7 +146,7 @@ class PumpFunMonitor extends Service {
 
       console.log(chalk.green("Pump fun monitor start------"));
       this.subscriptionId = connection.onLogs(
-        PUMP_FUN_ID,
+        new PublicKey(PUMP_FUN_PROGRAM_ID),
         async (log) => {
           try {
             const { logs } = log;
@@ -154,6 +172,58 @@ class PumpFunMonitor extends Service {
     } catch (error) {}
   }
 
+  async startGrpcMonitor() {
+    console.log(chalk.green("\n startGrpcMonitor"));
+    const yellowClient = new Client(GRPC_ENDPOINT);
+    const stream = await yellowClient.subscribe();
+    const request = createSubscribeRequest();
+    const handleStreamEvents = (stream) => {
+      return new Promise((resolve, reject) => {
+        stream.on("data", this.handleData);
+        stream.on("error", (error) => {
+          console.error("Stream error:", error);
+          reject(error);
+          stream.end();
+        });
+        stream.on("end", () => {
+          console.log("Stream ended");
+          resolve();
+        });
+        stream.on("close", () => {
+          console.log("Stream closed");
+          resolve();
+        });
+      });
+    };
+    try {
+      await sendSubscribeRequest(stream, request);
+      console.log(
+        "Geyser connection established - watching new Pump.fun mints. \n"
+      );
+      await handleStreamEvents(stream);
+    } catch (error) {
+      console.error("Error in subscription process:", error);
+      stream.end();
+    }
+  }
+
+  async handleData(data) {
+    const transaction = data.transaction?.transaction;
+    const message = transaction?.transaction?.message;
+
+    if (!transaction || !message) {
+      return;
+    }
+
+    const matchingInstruction = message.instructions.find(
+      matchesInstructionDiscriminator
+    );
+    if (!matchingInstruction) {
+      return;
+    }
+    console.log(JSON.stringify(data));
+  }
+
   async stopMonitor() {
     if (this.subscriptionId !== null) {
       await connection.removeProgramAccountChangeListener(this.subscriptionId);
@@ -161,6 +231,48 @@ class PumpFunMonitor extends Service {
       console.log("pump fun monitor stopped");
     }
   }
+}
+// Helper functions
+function createSubscribeRequest() {
+  return {
+    accounts: {},
+    slots: {},
+    transactions: {
+      pumpFun: {
+        accountInclude: [],
+        accountExclude: [],
+        accountRequired: FILTER_CONFIG.requiredAccounts,
+      },
+    },
+    transactionsStatus: {},
+    entry: {},
+    blocks: {},
+    blocksMeta: {},
+    commitment: COMMITMENT,
+    accountsDataSlice: [],
+    ping: undefined,
+  };
+}
+
+function sendSubscribeRequest(stream, request) {
+  return new Promise((resolve, reject) => {
+    stream.write(request, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+function matchesInstructionDiscriminator(ix) {
+  return (
+    ix?.data &&
+    FILTER_CONFIG.instructionDiscriminators.some((discriminator) =>
+      Buffer.from(discriminator).equals(ix.data.slice(0, 8))
+    )
+  );
 }
 
 module.exports = PumpFunMonitor;
