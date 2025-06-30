@@ -7,9 +7,17 @@ class ExecuteToken extends BaseController {
   async tokenList() {
     const { ctx } = this;
 
-    const { line } = ctx.request.body;
+    const { line, listType = "default" } = ctx.request.body;
     if (line) {
-      const res = await ctx.service.executeToken.getTokenList(line);
+      let res;
+      if (listType !== "default") {
+        res = await ctx.model.ReserveToken.find({
+          line: line,
+          type: listType,
+        });
+      } else {
+        res = await ctx.service.executeToken.getTokenList(line);
+      }
       this.success(res);
     } else {
       throw new Error("Params error");
@@ -49,6 +57,21 @@ class ExecuteToken extends BaseController {
         );
       }
       this.success(true);
+    } else {
+      throw new Error("Params error");
+    }
+  }
+
+  async reserveToken() {
+    const { ctx } = this;
+
+    const { line, type } = ctx.request.body;
+    if (line) {
+      const res = await ctx.model.ReserveToken.find({
+        line: line,
+        type: type || "good",
+      });
+      this.success(res);
     } else {
       throw new Error("Params error");
     }

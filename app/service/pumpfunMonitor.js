@@ -53,11 +53,12 @@ const {
 
 const PUMP_FUN_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 const PUMP_FUN_MINT_AUTHORITY = "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM";
-const CREATE_IX_DISCRIMINATOR = Buffer.from([
+const CREATE_EVENT_IX_DISCRIMINATOR = Buffer.from([
   27, 114, 169, 77, 222, 235, 99, 118,
 ]);
+const CREATE_IX_DISCRIMINATOR = Buffer.from([24, 30, 200, 40, 5, 28, 7, 119]);
 
-const COMMITMENT = CommitmentLevel.CONFIRMED;
+const COMMITMENT = CommitmentLevel.PROCESSED;
 
 const FILTER_CONFIG = {
   programIds: [PUMP_FUN_PROGRAM_ID],
@@ -88,9 +89,11 @@ class PumpFunMonitor extends Service {
   }
 
   async handleCreateEvent(event) {
+    console.log(chalk.green("handleCreateEvent"));
     const { ctx } = this;
-    const metadataRes = await ctx.curl(event.uri, { dataType: "json" });
-    const metadata = metadataRes.data;
+    // const metadataRes = await ctx.curl(event.uri, { dataType: "json" });
+    // const metadata = metadataRes.data;
+    const metadata = {};
     const dbData = {
       token: event.mint.toBase58(),
       dev: "",
@@ -102,9 +105,11 @@ class PumpFunMonitor extends Service {
       updateTime: new Date(),
       metadata: metadata,
     };
-    console.log(event.symbol);
-    console.log(new Date(event.timestamp * 1000));
-    console.log(new Date());
+    console.log(dbData);
+    console.log(dbData.createTime);
+    console.log(dbData.updateTime);
+    console.log(dbData.updateTime.getTime() - dbData.createTime.getTime());
+    return;
     if (
       metadata &&
       metadata.twitter &&
@@ -131,36 +136,12 @@ class PumpFunMonitor extends Service {
   async startLogMonitor() {
     const { ctx } = this;
     try {
-      const parseData = async (base64Data, signature) => {
-        const buffer = Buffer.from(base64Data, "base64");
-        const discriminator = buffer.slice(0, 8);
-        if (discriminator.equals(CREATE_IX_DISCRIMINATOR)) {
-          await this.handleParseCreate(buffer);
-        }
-
-        return;
-      };
-      // parseData(
-      //   "G3KpTd7rY3YdAAAATWFrZSBJc3JhaGVsbCBQYWxlc3RpbmUgQWdhaW4EAAAATUlQQWIAAABodHRwczovL3Vwd2FyZC1zcG9ydC1oZWFkZWQucXVpY2tub2RlLWlwZnMuY29tL2lwZnMvUW1WVDhiN0VkTktkWW9TOFIzUTVvN3lXeENVREJFc3Z1eWhKV0VXS1g3Sk1iVDsSWfuy6D0vmc107wrVa62iw0EYUD3f2HdwK5djhrWFtxG+c0PvMbENL79QVLOCFOxi58rZSsFLo6R3mDe39wvnMgqRlXlq36cbIVY/pESBX45XEkTxxLpbIXxMRVTeOucyCpGVeWrfpxshVj+kRIFfjlcSRPHEulshfExFVN46gwhZaAAAAAAAENhH488DAACsI/wGAAAAAHjF+1HRAgAAgMakfo0DAA=="
-      // );
-
       console.log(chalk.green("Pump fun monitor start------"));
       this.subscriptionId = connection.onLogs(
         new PublicKey(PUMP_FUN_PROGRAM_ID),
         async (log) => {
           try {
             const { logs } = log;
-            const buyLog = logs.find(
-              (item) => item === "Program log: Instruction: Create"
-            );
-            if (buyLog) {
-              const logPrefix = "Program data: ";
-              const dataLog = logs.find((item) => item.indexOf(logPrefix) > -1);
-              if (dataLog) {
-                const base64Data = dataLog.slice(logPrefix.length).trim();
-                parseData(base64Data, log.signature);
-              }
-            }
           } catch (error) {
             console.error("error", error);
           }
@@ -179,7 +160,7 @@ class PumpFunMonitor extends Service {
     const request = createSubscribeRequest();
     const handleStreamEvents = (stream) => {
       return new Promise((resolve, reject) => {
-        stream.on("data", this.handleData);
+        stream.on("data", (data) => this.handleData(data));
         stream.on("error", (error) => {
           console.error("Stream error:", error);
           reject(error);
@@ -207,21 +188,53 @@ class PumpFunMonitor extends Service {
     }
   }
 
+  async parseLogMessage(logs) {
+    const parseData = async (base64Data) => {
+      const buffer = Buffer.from(base64Data, "base64");
+      const discriminator = buffer.slice(0, 8);
+      if (discriminator.equals(CREATE_EVENT_IX_DISCRIMINATOR)) {
+        await this.handleParseCreate(buffer);
+      }
+
+      return;
+    };
+    // parseData(
+    //   "G3KpTd7rY3YdAAAATWFrZSBJc3JhaGVsbCBQYWxlc3RpbmUgQWdhaW4EAAAATUlQQWIAAABodHRwczovL3Vwd2FyZC1zcG9ydC1oZWFkZWQucXVpY2tub2RlLWlwZnMuY29tL2lwZnMvUW1WVDhiN0VkTktkWW9TOFIzUTVvN3lXeENVREJFc3Z1eWhKV0VXS1g3Sk1iVDsSWfuy6D0vmc107wrVa62iw0EYUD3f2HdwK5djhrWFtxG+c0PvMbENL79QVLOCFOxi58rZSsFLo6R3mDe39wvnMgqRlXlq36cbIVY/pESBX45XEkTxxLpbIXxMRVTeOucyCpGVeWrfpxshVj+kRIFfjlcSRPHEulshfExFVN46gwhZaAAAAAAAENhH488DAACsI/wGAAAAAHjF+1HRAgAAgMakfo0DAA=="
+    // );
+    const buyLog = logs.find(
+      (item) => item === "Program log: Instruction: Create"
+    );
+    if (buyLog) {
+      const logPrefix = "Program data: ";
+      const dataLog = logs.find((item) => item.indexOf(logPrefix) > -1);
+      if (dataLog) {
+        const base64Data = dataLog.slice(logPrefix.length).trim();
+        parseData(base64Data);
+      }
+    }
+  }
+
   async handleData(data) {
     const transaction = data.transaction?.transaction;
     const message = transaction?.transaction?.message;
+    const logs = transaction?.meta?.logMessages;
 
-    if (!transaction || !message) {
+    if (!transaction || !message || !logs) {
       return;
     }
 
-    const matchingInstruction = message.instructions.find(
-      matchesInstructionDiscriminator
-    );
-    if (!matchingInstruction) {
-      return;
-    }
-    console.log(JSON.stringify(data));
+    this.parseLogMessage(logs);
+
+    // const createInstruction = message.instructions.find(
+    //   (ix) => ix?.data && CREATE_IX_DISCRIMINATOR.equals(ix.data.slice(0, 8))
+    // );
+    // if (!createInstruction) {
+    //   return;
+    // }
+    // const accountKeys = message.accountKeys;
+    // console.log(createInstruction);
+
+    // await this.handleParseCreate(createInstruction.data);
   }
 
   async stopMonitor() {
@@ -264,15 +277,6 @@ function sendSubscribeRequest(stream, request) {
       }
     });
   });
-}
-
-function matchesInstructionDiscriminator(ix) {
-  return (
-    ix?.data &&
-    FILTER_CONFIG.instructionDiscriminators.some((discriminator) =>
-      Buffer.from(discriminator).equals(ix.data.slice(0, 8))
-    )
-  );
 }
 
 module.exports = PumpFunMonitor;

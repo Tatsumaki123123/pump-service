@@ -4,6 +4,7 @@ module.exports = (app) => {
 
   const schema = new Schema({
     tid: { type: Number },
+    amm: { type: String },
     token: { type: String },
     symbol: { type: String },
     dev: { type: String },

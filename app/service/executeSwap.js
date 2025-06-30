@@ -335,6 +335,27 @@ class ExecuteSwap extends Service {
     }
   }
 
+  async buyTokenByWallet(tid, walletAddress) {
+    const { ctx } = this;
+    const tokenInfo = await ctx.model.ExecuteToken.findOne({ tid: tid });
+    if (!tokenInfo) {
+      throw new Error("Token  not checked");
+    }
+    const token = tokenInfo.token;
+    console.log(chalk.green(`Step 3: Buy ${token}, `));
+    const wallets = await this.getWalletsWithConfig(tokenInfo.line);
+    const wallet = wallets.find(
+      (item) => item.publicKey.toBase58() === walletAddress
+    );
+    if (wallet) {
+      const wallets = [wallet];
+      const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
+      return true;
+    } else {
+      throw new Error("There are not wallets to sell");
+    }
+  }
+
   async sellTokenByWallet(tid, walletAddress) {
     const { ctx } = this;
     const tokenInfo = await ctx.model.ExecuteToken.findOne({ tid: tid });
@@ -482,13 +503,17 @@ class ExecuteSwap extends Service {
     const wallets = await this.getWalletsWithConfig(line);
 
     const getWalletBalance = async (wallet) => {
-      const balance = await connection.getBalance(wallet.publicKey);
+      if (wallet.publicKey) {
+        const balance = await connection.getBalance(wallet.publicKey);
 
-      const { privateKey, keypair, ...other } = wallet;
-      return {
-        balance: balance / LAMPORTS_PER_SOL,
-        ...other,
-      };
+        const { privateKey, keypair, ...other } = wallet;
+        return {
+          balance: balance / LAMPORTS_PER_SOL,
+          ...other,
+        };
+      } else {
+        throw new Error("Cannot find wallets");
+      }
     };
 
     const arr = wallets.map((wallet) => getWalletBalance(wallet));

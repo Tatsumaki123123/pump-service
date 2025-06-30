@@ -14,7 +14,7 @@ const TROGAN_FEES_VAULT = new PublicKey(
 );
 
 const discriminator = new Uint8Array([212, 6, 30, 174, 147, 23, 236, 55]);
-const createTroProxyInstruction = (payer, jipAcc, amount = 0.00036) => {
+const createTroProxyInstruction = (payer, jipAcc, amount = 0.0001) => {
   const accounts = [
     {
       pubkey: payer, // Account #1

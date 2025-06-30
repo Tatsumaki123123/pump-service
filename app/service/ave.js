@@ -65,8 +65,8 @@ class Ave extends Service {
 
   async getList(groupSort) {
     const { ctx } = this;
-    const sort_field = "created_at";
-    const sort_order = "asc";
+    const sort_field = groupSort.sort_field || "created_at";
+    const sort_order = groupSort.sort_order || "asc";
     const mcp_min = groupSort.mcp_min || 4000;
     const mcp_max = groupSort.mcp_max || 20000;
     const create_min = Math.round(new Date().getTime() / 1000) - 30 * 24 * 3600;
