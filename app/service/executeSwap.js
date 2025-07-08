@@ -471,7 +471,11 @@ class ExecuteSwap extends Service {
           firstBuy: true,
           isProxy: true,
         };
-        newWallets = [firstWalletConfig, ...newWallets];
+        if (firstWallet.position === "after") {
+          newWallets = [...newWallets, firstWalletConfig];
+        } else {
+          newWallets = [firstWalletConfig, ...newWallets];
+        }
       }
     }
     return newWallets;

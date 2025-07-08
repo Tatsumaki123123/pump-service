@@ -405,11 +405,7 @@ class PumpAMM extends Service {
     }
   }
 
-  async getBuyAmmIxs(tokenMint, wallet, poolDetail, SLIPPAGE_BASIS_POINTS) {
-    const keypair = wallet.keypair;
-    const user = keypair.publicKey;
-    const { buyAmount } = wallet;
-
+  async getBuyAmmIxs(tokenMint, user, buyAmount, poolDetail, slippage) {
     // 1
     const wSolATA = getAssociatedTokenAddressSync(
       WSOL_TOKEN_ACCOUNT,
@@ -438,9 +434,7 @@ class PumpAMM extends Service {
     const transferLamportsWSOLIx = SystemProgram.transfer({
       fromPubkey: user,
       toPubkey: wSolATA,
-      lamports: Math.trunc(
-        buyAmount * (1 + SLIPPAGE_BASIS_POINTS) * LAMPORTS_PER_SOL
-      ),
+      lamports: Math.trunc(buyAmount * (1 + slippage) * LAMPORTS_PER_SOL),
       // lamports:
       //   Math.trunc(buyAmount * LAMPORTS_PER_SOL) +
       //   ATA_RENT * 2 +
@@ -454,7 +448,7 @@ class PumpAMM extends Service {
       tokenMint: tokenMint,
       user: user,
       buyAmount: buyAmount,
-      slippage: SLIPPAGE_BASIS_POINTS,
+      slippage: slippage,
       poolDetail: poolDetail,
     });
 
@@ -477,11 +471,11 @@ class PumpAMM extends Service {
 
     let proxyBuyIxs = [];
 
+    const keypair = wallet.keypair;
+    const user = keypair.publicKey;
+    console.log(chalk.green("Proxy buy:", user.toBase58()));
+    const { buyAmount } = wallet;
     if (wallet.isProxyBuy) {
-      const keypair = wallet.keypair;
-      const user = keypair.publicKey;
-      console.log(chalk.green("Proxy buy:", user.toBase58()));
-      const { buyAmount } = wallet;
       const proxyBuyIx = await proxyPumpSwap.createBuyInstruction({
         tokenMint: tokenMint,
         user: user,
@@ -493,7 +487,8 @@ class PumpAMM extends Service {
     } else {
       proxyBuyIxs = await this.getBuyAmmIxs(
         tokenMint,
-        wallet,
+        user,
+        buyAmount,
         poolDetail,
         SLIPPAGE_BASIS_POINTS
       );

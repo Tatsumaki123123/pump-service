@@ -12,15 +12,25 @@ const {
   Transaction,
 } = require("@solana/web3.js");
 const {
+  TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
+  getAccount,
+  createInitializeAccountInstruction,
+  createCloseAccountInstruction,
 } = require("@solana/spl-token");
+
+const {
+  default: Client,
+  CommitmentLevel,
+} = require("@triton-one/yellowstone-grpc");
 
 const bs58 = require("bs58");
 const borsh = require("@coral-xyz/borsh");
 const chalk = require("chalk");
+const { BN } = require("@coral-xyz/anchor");
 
-const { PumpAmmSdk } = require("../libs/pumpfun");
+const { PumpAmmSdk } = require("../libs/pumpfun/sdk/pumpAmm");
 
 const {
   connection,
@@ -28,8 +38,9 @@ const {
   WSOL_TOKEN_ACCOUNT,
   testWallet,
 } = require("../constants/index");
+const { GRPC_ENDPOINT, GRPC_TOKEN } = require("../constants");
 
-const { getSPLBalance } = require("../utils/solana");
+const { sendV0Transaction, getSPLBalance } = require("../utils/solana");
 
 const {
   getPoolsWithQuoteMint,
@@ -41,8 +52,6 @@ const PumpSwapSDK = require("../libs/pumpSwap");
 
 const pSwap = new PumpSwapSDK();
 const pumpAmmSdk = new PumpAmmSdk(connection);
-
-const addresses = ["8J5GUAf7hr3LTPHJSkwrKFDNJPtAXtLHhnNHq6XxTLrW"];
 
 const BUY_IX_DISCRIMINATOR = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]);
 const SELL_IX_DISCRIMINATOR = Buffer.from([
@@ -67,19 +76,15 @@ class PumpAmmMonitor extends Service {
   constructor(ctx) {
     super(ctx);
     this.subscriptionId = null;
-    // this.user = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
-    this.user = null;
+    this.poolAddresses = [];
+    this.getPoolsTimer = null;
   }
 
-  async buyToken({
-    poolAddress,
-    quoteAmountIn,
-    baseAmountOut,
-    monitorAddress,
-  }) {
+  async buyToken({ poolAddress, solAmount, tokenAmount }) {
     const { ctx } = this;
-    const wallet = this.user;
+    console.log(chalk.green("Buy, ", poolAddress, solAmount));
     try {
+      const wallet = testWallet;
       const poolMint = new PublicKey(poolAddress);
       const poolData = await pumpAmmSdk.fetchPool(poolMint);
       const pool_detail = {
@@ -91,61 +96,37 @@ class PumpAmmMonitor extends Service {
 
       const tokenMint = poolData.baseMint;
       // const buyAmount = Math.floor(quoteAmountIn / 10) / LAMPORTS_PER_SOL;
-      const buyAmount = 0.1;
+      const buyAmount = 0.01;
       const slippage = 0.2;
 
       console.log(chalk.green("Buy", buyAmount, tokenMint.toBase58()));
-      const dbData = await ctx.model.MonitorToken.findOne({
-        token: tokenMint.toBase58(),
-        monitorAddress: monitorAddress,
-      });
-      if (!dbData) {
-        await ctx.model.MonitorToken.create({
-          token: tokenMint.toBase58(),
-          monitorAddress: monitorAddress,
-          buyAmount: buyAmount,
-          createTime: new Date(),
-        });
-      }
 
-      const { blockhash } = await connection.getLatestBlockhash();
-      const volumeIxs = [];
+      const { blockhash } = await connection.getLatestBlockhash("processed");
+
       //  1: limit
       const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
-        units: 150000,
+        units: 250000,
       });
-      volumeIxs.push(setComputeUnitLimitIx);
 
       //  2: price
       const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
-        microLamports: 970148,
+        microLamports: 16000,
       });
-      volumeIxs.push(setComputeUnitPriceIx);
-
-      const userBaseTokenAccount = await getAssociatedTokenAddress(
-        tokenMint,
-        wallet.publicKey
-      );
-      const accountInfo = await connection.getAccountInfo(userBaseTokenAccount);
-      if (!accountInfo) {
-        const createTokenAccountTx = createAssociatedTokenAccountInstruction(
-          wallet.publicKey,
-          userBaseTokenAccount,
-          wallet.publicKey,
-          tokenMint
-        );
-        volumeIxs.push(createTokenAccountTx);
-      }
 
       // 3 swap
-      const swapIx = await pSwap.createBuyInstruction({
+      const swapIx = await ctx.service.pumpAMM.getBuyAmmIxs(
         tokenMint,
-        user: wallet.publicKey,
+        wallet.publicKey,
         buyAmount,
-        slippage,
         poolDetail,
-      });
-      volumeIxs.push(swapIx);
+        slippage
+      );
+      const volumeIxs = [
+        setComputeUnitLimitIx,
+        setComputeUnitPriceIx,
+        ...swapIx,
+      ];
+
       const messageV0 = new TransactionMessage({
         payerKey: wallet.publicKey,
         recentBlockhash: blockhash,
@@ -155,21 +136,18 @@ class PumpAmmMonitor extends Service {
       const tx = new VersionedTransaction(messageV0);
       tx.sign([wallet]);
 
-      const signature = await connection.sendTransaction(tx, {
-        skipPreflight: false,
-      });
+      const signature = await connection.sendTransaction(tx);
       await connection.confirmTransaction(signature, "processed");
-      console.log(
-        chalk.green(`Success: Buy ${tokenMint.toBase58()} ${buyAmount}sol`)
-      );
+      console.log(chalk.green(`Success: Buy ${poolAddress} ${buyAmount}sol`));
     } catch (error) {
       console.error(error);
     }
   }
   async sellToken({ poolAddress, monitorAddress }) {
     const { ctx } = this;
-    const wallet = this.user;
+    const wallet = testWallet;
     try {
+      const user = wallet.publicKey;
       const poolMint = new PublicKey(poolAddress);
       const poolData = await pumpAmmSdk.fetchPool(poolMint);
       const pool_detail = {
@@ -180,53 +158,73 @@ class PumpAmmMonitor extends Service {
       const poolDetail = await getPriceAndLiquidity(pool_detail);
 
       const tokenMint = poolData.baseMint;
-      const dbData = await ctx.model.MonitorToken.findOne({
-        token: tokenMint.toBase58(),
-        monitorAddress: monitorAddress,
-      });
-      if (!dbData) {
-        throw new Error("Your do not buy this token:", tokenMint.toBase58());
-      }
       console.log(chalk.yellow("Sell", tokenMint.toBase58()));
+
+      const tokenAmount = await getSPLBalance(connection, tokenMint, user);
+      if (tokenAmount === 0) {
+        throw new Error("No amount");
+      }
 
       const { blockhash } = await connection.getLatestBlockhash();
 
-      const volumeIxs = [];
+      let volumeIxs = [];
       //  1: limit
       const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
         units: 150000,
       });
-      volumeIxs.push(setComputeUnitLimitIx);
 
       //  2: price
       const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
         microLamports: 970148,
       });
-      volumeIxs.push(setComputeUnitPriceIx);
 
-      const tokenAmount = await getSPLBalance(
-        connection,
-        tokenMint,
-        wallet.publicKey
+      // 3, createAccountWithSeed
+      const seed = new Date().getTime().toString();
+
+      const newAccount = await PublicKey.createWithSeed(
+        user,
+        seed,
+        TOKEN_PROGRAM_ID
       );
-      if (tokenAmount === 0) {
-        throw new Error("No amount");
-      }
+      const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
+        fromPubkey: user,
+        newAccountPubkey: newAccount,
+        basePubkey: user,
+        seed: seed,
+        lamports: 2039280,
+        space: 165,
+        programId: TOKEN_PROGRAM_ID,
+      });
 
-      const sellNewAccount = await getAssociatedTokenAddress(
+      // 4, initializeAccount
+      const initializeAccountIx = createInitializeAccountInstruction(
+        newAccount,
         WSOL_TOKEN_ACCOUNT,
-        wallet.publicKey
+        user,
+        TOKEN_PROGRAM_ID
       );
+
       const swapTx = await pSwap.createSellInstruction({
         tokenMint,
         user: wallet.publicKey,
         tokenAmount,
-        sellNewAccount,
+        sellNewAccount: newAccount,
         poolDetail,
       });
 
-      volumeIxs.push(swapTx);
-
+      const closeAccountIx = createCloseAccountInstruction(
+        newAccount,
+        user,
+        user
+      );
+      volumeIxs = [
+        setComputeUnitLimitIx,
+        setComputeUnitPriceIx,
+        createAccountWithSeedIx,
+        initializeAccountIx,
+        swapTx,
+        closeAccountIx,
+      ];
       const messageV0 = new TransactionMessage({
         payerKey: wallet.publicKey,
         recentBlockhash: blockhash,
@@ -246,20 +244,52 @@ class PumpAmmMonitor extends Service {
     }
   }
 
-  async start() {
-    await this.startGrpcMonitor();
+  async handleTransaction(data) {
+    const { ctx } = this;
+    const {
+      type,
+      poolAddress,
+      tokenAmount,
+      solAmount,
+      diffTime,
+      monitorAddress: userAddress,
+    } = data;
+    const findPool = this.poolAddresses.find(
+      (address) => address.toLowerCase() === poolAddress.toLowerCase()
+    );
+    if (!findPool) return;
+    if (type === "sell") {
+      if (solAmount >= 5) {
+        await this.buyToken(data);
+      }
+    }
+    if (type === "buy") {
+      if (solAmount >= 3) {
+        await this.sellToken(data);
+      }
+    }
+  }
+
+  async startMonitor() {
+    this.startGrpcMonitor();
+
+    this.getPoolsTimer && clearInterval(this.getPoolsTimer);
+    await this.getPoolAddresses();
+    setInterval(async () => {
+      await this.getPoolAddresses();
+    }, 60 * 60 * 1000);
   }
 
   async startGrpcMonitor() {
     const { ctx } = this;
-    console.log(chalk.green("\n startGrpcMonitor"));
+    console.log(chalk.green("\n Pump AMM startGrpcMonitor"));
     const yellowClient = new Client(GRPC_ENDPOINT, GRPC_TOKEN);
     const stream = await yellowClient.subscribe();
 
     const request = createSubscribeRequest();
     const handleStreamEvents = (stream) => {
       return new Promise((resolve, reject) => {
-        stream.on("data", (data) => this.handleData(data));
+        stream.on("data", (data) => this.handleMonitorData(data));
         stream.on("error", (error) => {
           console.error("Stream error:", error);
           reject(error);
@@ -287,19 +317,18 @@ class PumpAmmMonitor extends Service {
     }
   }
 
-  async handleData(data) {
-    const transaction = data.transaction?.transaction;
-    const message = transaction?.transaction?.message;
-    const logs = transaction?.meta?.logMessages;
+  async handleMonitorData(data) {
+    const tx = data.transaction?.transaction;
+    const message = tx?.transaction?.message;
+    const logs = tx?.meta?.logMessages;
 
-    if (!transaction || !message || !logs) {
+    if (!tx || !message || !logs) {
       return;
     }
-
     this.parseLogMessage(logs);
   }
 
-  async parseLogMessage(logs) {
+  async parseLogMessage(logs, transaction) {
     const parseData = async (base64Data) => {
       const buffer = Buffer.from(base64Data, "base64");
       const discriminator = buffer.slice(0, 8);
@@ -313,27 +342,54 @@ class PumpAmmMonitor extends Service {
         type = "buy";
       } else if (discriminator.equals(sellDiscriminator)) {
         type = "sell";
+      } else {
+        return;
       }
+      // console.log(chalk.yellowBright("----handleMonitorData-----"));
       const u64Schema = borsh.u64();
-      const timestamp = u64Schema.decode(buffer.slice(8, 8 + 8)).toString();
-      const baseAmountOut = u64Schema
-        .decode(buffer.slice(16, 16 + 8))
-        .toString();
-      const quoteAmountIn = u64Schema
-        .decode(buffer.slice(64, 64 + 8))
-        .toString();
+      const timestamp = u64Schema.decode(buffer.slice(8, 8 + 8));
+      const baseAmount = u64Schema.decode(buffer.slice(16, 16 + 8)).toNumber();
+      const quoteAmount = u64Schema.decode(buffer.slice(64, 64 + 8)).toNumber();
       const offset1 = 120;
-      const pool = buffer.slice(offset1, offset1 + 32);
+      const poolAddress = bs58.encode(buffer.slice(offset1, offset1 + 32));
       const offset2 = 152;
-      const user = buffer.slice(offset2, offset2 + 32);
-      const createdTime = parseInt(timestamp) * 1000;
-      const userAddress = bs58.encode(user);
-      const poolAddress = bs58.encode(pool);
+      const userAddress = bs58.encode(buffer.slice(offset2, offset2 + 32));
+      // const offset3 = 184;
+      // const userBaseTokenAccount = bs58.encode(
+      //   buffer.slice(offset3, offset3 + 32)
+      // );
+      const offset4 = 312;
+      const coinCreator = bs58.encode(buffer.slice(offset4, offset4 + 32));
 
-      console.log({
+      const createdTime = new Date(parseInt(timestamp) * 1000);
+      const updateTime = new Date();
+      const diffTime = updateTime.getTime() - createdTime.getTime();
+
+      let baseMint = "";
+      // try {
+      //   const tokenAccount = await getAccount(
+      //     connection,
+      //     new PublicKey(userBaseTokenAccount)
+      //   );
+      //   baseMint = tokenAccount.mint.toBase58();
+      // } catch (error) {}
+
+      let solAmount = quoteAmount;
+      let tokenAmount = baseAmount;
+      if (
+        coinCreator === "11111111111111111111111111111111" ||
+        solAmount > tokenAmount
+      ) {
+        return;
+      }
+      this.handleTransaction({
+        type,
         poolAddress,
-        quoteAmountIn,
-        baseAmountOut,
+        solAmount: solAmount / LAMPORTS_PER_SOL,
+        tokenAmount,
+        createdTime,
+        diffTime,
+        coinCreator,
         monitorAddress: userAddress,
       });
       return;
@@ -354,6 +410,37 @@ class PumpAmmMonitor extends Service {
         parseData(base64Data);
       }
     }
+  }
+
+  async getPoolAddresses(isFetch = true) {
+    const { ctx } = this;
+    if (isFetch) {
+      const list = await ctx.service.ave.getMonitorPumpList();
+      for (const item of list) {
+        const dbData = await ctx.model.MonitorPumpToken.findOne({
+          pool: item.pool,
+        });
+        if (!dbData) {
+          await ctx.model.MonitorPumpToken.create({
+            amm: item.amm,
+            token: item.token,
+            symbol: item.symbol,
+            dev: item.dev,
+            pool: item.pool,
+            createTime: item.createTime,
+          });
+        }
+      }
+    }
+
+    const dbList = await ctx.model.MonitorPumpToken.find({
+      amm: "pumpfunamm",
+    }).lean();
+    if (dbList && dbList.length > 0) {
+      this.poolAddresses = dbList.map((item) => item.pool);
+      console.log(this.poolAddresses);
+    }
+    return this.poolAddresses;
   }
 }
 

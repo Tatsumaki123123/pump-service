@@ -19,12 +19,14 @@ const {
 } = require("jito-ts/dist/sdk/block-engine/searcher");
 const { Bundle } = require("jito-ts/dist/sdk/block-engine/types");
 
+const { connection } = require("../constants");
+
 const JITO_RPC =
   process.env.JITO_RPC || "https://mainnet.block-engine.jito.wtf";
 
-const jitoClient = searcherClient(
-  "https://little-practical-lake.solana-mainnet.quiknode.pro/748dd52b1227a0602d41ef4ac30d2b4a01f39dc3/"
-);
+// const jitoClient = searcherClient(
+//   "https://little-practical-lake.solana-mainnet.quiknode.pro/748dd52b1227a0602d41ef4ac30d2b4a01f39dc3/"
+// );
 
 const tipAccounts = [
   "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
@@ -41,6 +43,21 @@ const quickNodeConnection = new Connection(
   "https://little-practical-lake.solana-mainnet.quiknode.pro/748dd52b1227a0602d41ef4ac30d2b4a01f39dc3/",
   "confirmed"
 );
+
+const SLOT_API_KEY = "";
+const slot0Connection = new Connection(
+  `https://ny.0slot.trade?api-key=${SLOT_API_KEY}`,
+  "confirmed"
+);
+
+const SLOT_TIP_ACCOUNTS = [
+  "TpdxgNJBWZRL8UXF5mrEsyWxDWx9HQexA9P1eTWQ42p",
+  "7y4whZmw388w1ggjToDLSBLv47drw5SUXcLk6jtmwixd",
+  "4HiwLEP2Bzqj3hM2ENxJuzhcPCdsafwiet3oGkMkuQY4",
+  "J9BMEWFbCBEjtQ1fG5Lo9kouX1HfrKQxeUxetwXrifBw",
+  "FCjUJZ1qozm1e8romw216qyfQMaaWKxWsuySnumVCCNe",
+  "8mR3wB1nh4D6J9RUCugxUpc6ya8w38LPxZ3ZjcBhgzws",
+];
 
 function serializeTransaction(transaction) {
   const serialized = transaction.serialize();
@@ -88,6 +105,34 @@ class Jito extends Service {
   getTipAcc() {
     const index = Math.floor(Math.random() * tipAccounts.length);
     return new PublicKey(tipAccounts[index]);
+  }
+
+  get0slotTipAcc() {
+    const index = Math.floor(Math.random() * SLOT_TIP_ACCOUNTS.length);
+    return new PublicKey(SLOT_TIP_ACCOUNTS[index]);
+  }
+
+  async send0SlotTransaction(ixs, wallet, tipAmount = 0.001) {
+    const tipReceiver = get0slotTipAcc();
+    const tipTransferIx = SystemProgram.transfer({
+      fromPubkey: wallet.publicKey, // Sender's public key.
+      toPubkey: tipReceiver, // Tip receiver's public key.
+      lamports: tipAmount * LAMPORTS_PER_SOL, // Amount to transfer as a tip (0.001 SOL in this case).
+    });
+    const volumeIxs = [...ixs, tipTransferIx];
+    const messageV0 = new TransactionMessage({
+      payerKey: wallet.publicKey,
+      recentBlockhash: blockhash,
+      instructions: volumeIxs,
+    }).compileToV0Message();
+
+    const tx = new VersionedTransaction(messageV0);
+    tx.sign([wallet]);
+
+    const signature = await slot0Connection.sendTransaction(tx);
+    await slot0Connection.confirmTransaction(signature, "processed");
+    console.log(chalk.green("0Slot transaction signature:", signature));
+    return true;
   }
 }
 

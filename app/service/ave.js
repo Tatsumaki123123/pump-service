@@ -2,6 +2,38 @@ const { Service } = require("egg");
 
 const AVE_API_URL = "https://api.avegac.com/";
 
+function aveTokenToDB(item) {
+  const {
+    target_token,
+    token0_address,
+    token0_symbol,
+    token1_address,
+    token1_symbol,
+  } = item;
+  const symbol =
+    target_token === token0_address ? token0_symbol : token1_symbol;
+  return {
+    token: item.target_token,
+    symbol: symbol,
+    mkt_cap: item.market_cap,
+    create_time: item.created_at,
+    amm: item.amm,
+    // dev:devData,
+    usdPrice: item.current_price_usd,
+    pool: item.pair,
+    volume_u_5m: item.volume_u_15m,
+    volume_u_1h: item.volume_u_1h,
+    wallet_count: item.makers_15m,
+    transaction_count: item.tx_15m_count,
+    buy_count: item.buys_tx_15m_count,
+    sell_count: item.sells_tx_15m_count,
+    percent5m: item.price_change_15m,
+    percent1h: item.price_change_1h,
+    latest_time: item.last_trade_at,
+    holders: item.holders,
+  };
+}
+
 class Ave extends Service {
   async getXAuth() {
     const appData = await this.ctx.model.AppData.findOne();
@@ -87,39 +119,38 @@ class Ave extends Service {
     const data = res.data?.data?.data;
     if (data) {
       console.log(data.length);
-      return data.map((item) => {
-        const {
-          target_token,
-          token0_address,
-          token0_symbol,
-          token1_address,
-          token1_symbol,
-        } = item;
-        const symbol =
-          target_token === token0_address ? token0_symbol : token1_symbol;
-        return {
-          token: item.target_token,
-          symbol: symbol,
-          mkt_cap: item.market_cap,
-          create_time: item.created_at,
-          amm: item.amm,
-          // dev:devData,
-          usdPrice: item.current_price_usd,
-          pool: item.pair,
-          volume_u_5m: item.volume_u_15m,
-          volume_u_1h: item.volume_u_1h,
-          wallet_count: item.makers_15m,
-          transaction_count: item.tx_15m_count,
-          buy_count: item.buys_tx_15m_count,
-          sell_count: item.sells_tx_15m_count,
-          percent5m: item.price_change_15m,
-          percent1h: item.price_change_1h,
-          latest_time: item.last_trade_at,
-          holders: item.holders,
-        };
-      });
+      return data.map((item) => aveTokenToDB(item));
     }
     return data;
+  }
+
+  async getMonitorPumpList() {
+    const { ctx } = this;
+    const sort_field = "created_at";
+    const sort_order = "asc";
+    const mcp_min = 500000;
+    const mcp_max = 10000000;
+    const create_day = 30;
+    const create_min =
+      Math.round(new Date().getTime() / 1000) - create_day * 24 * 3600;
+    const holder_min = 50;
+    const category = "pump_out_hot";
+    const uri = `${AVE_API_URL}v1api/v4/tokens/treasure/list?chain=solana&sort=${sort_field}&sort_dir=${sort_order}&created_at_min=${create_min}&marketcap_min=${mcp_min}&marketcap_max=${mcp_max}&holder_min=${holder_min}&pageNO=1&pageSize=500&category=${category}`;
+
+    const X_AUTH = await this.getXAuth();
+
+    const res = await ctx.curl(uri, {
+      dataType: "json",
+      headers: {
+        "x-auth": X_AUTH,
+      },
+    });
+    const data = res.data?.data?.data;
+    if (data) {
+      console.log(data.length);
+      return data.map((item) => aveTokenToDB(item));
+    }
+    return [];
   }
 }
 module.exports = Ave;
