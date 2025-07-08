@@ -24,4 +24,3 @@ function withdrawInternal(lpAmount, slippage, baseReserve, quoteReserve, totalLp
         minQuote,
     };
 }
-//# sourceMappingURL=withdraw.js.map

@@ -2246,4 +2246,3 @@ export type PumpFun = {
         }
     ];
 };
-//# sourceMappingURL=pump-fun.d.ts.map

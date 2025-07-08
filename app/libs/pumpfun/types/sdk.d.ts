@@ -90,4 +90,3 @@ export interface Pool {
     poolBaseTokenAccount: PublicKey;
     poolQuoteTokenAccount: PublicKey;
 }
-//# sourceMappingURL=sdk.d.ts.map

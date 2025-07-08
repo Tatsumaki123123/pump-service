@@ -8,6 +8,7 @@ const {
   wrapSolToWSol,
   closeAllTokenAccounts,
 } = require("../utils/solana");
+const { PublicKey } = require("@solana/web3.js");
 
 class PumpMonitor extends BaseController {
   async buyToken() {
@@ -17,8 +18,17 @@ class PumpMonitor extends BaseController {
       ctx.request.body;
     if (token) {
       // await wsolToSol(connection, testWallet);
-      await closeAllTokenAccounts(connection, testWallet);
+      // await closeAllTokenAccounts(connection, testWallet);
       // const res = await ctx.service.pumpfun.buyToken(token);
+
+      const tokenData = {
+        mint: new PublicKey("5YEooHantgYDeQ1FTJ59q5aVSrpXYCR5fs7UQoyKpump"),
+        bondingCurve: new PublicKey(
+          "75cZxpqQ7PmQxhHkYebtcWbsnCqnmFfdSsvNMXuXg7G"
+        ),
+        creator: new PublicKey("qtMHp2K9eFYP8FwKqfBAujagtTUzLNjeajtjTuuSrVQ"),
+      };
+      const res = await ctx.service.pumpfun.quickBuyToken(tokenData);
       this.success(true);
     } else {
       throw new Error("Params error");

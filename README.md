@@ -1,6 +1,15 @@
 # pump-service
 
+https://mainnet.helius-rpc.com/?api-key=8a4cbdb4-5eb7-4c51-bdbb-1cf240d50b18
 
+RPC_URL=https://mainnet.helius-rpc.com/?api-key=8a4cbdb4-5eb7-4c51-bdbb-1cf240d50b18
+WSS_RPC_URL=wss://mainnet.helius-rpc.com/?api-key=8a4cbdb4-5eb7-4c51-bdbb-1cf240d50b18
+
+RPC_URL=https://little-practical-lake.solana-mainnet.quiknode.pro/748dd52b1227a0602d41ef4ac30d2b4a01f39dc3/
+WSS_RPC_URL=wss://little-practical-lake.solana-mainnet.quiknode.pro/748dd52b1227a0602d41ef4ac30d2b4a01f39dc3/
+
+RPC_URL=https://edge.erpc.global?api-key=e8782e9b-dc7c-4bd4-b931-012e4f8f0dde
+WSS_RPC_URL=wss://edge.erpc.global?api-key=e8782e9b-dc7c-4bd4-b931-012e4f8f0dde
 
 ## QuickStart
 

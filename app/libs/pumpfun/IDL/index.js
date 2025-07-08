@@ -8,4 +8,3 @@ var pump_fun_json_1 = require("./pump-fun.json");
 Object.defineProperty(exports, "IDL", { enumerable: true, get: function () { return __importDefault(pump_fun_json_1).default; } });
 var pumpswap_json_1 = require("./pumpswap.json");
 Object.defineProperty(exports, "IDL_SWAP", { enumerable: true, get: function () { return __importDefault(pumpswap_json_1).default; } });
-//# sourceMappingURL=index.js.map

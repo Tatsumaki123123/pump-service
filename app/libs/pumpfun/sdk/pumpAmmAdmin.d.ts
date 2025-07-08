@@ -17,4 +17,3 @@ export declare class PumpAmmAdminSdk {
     updateAdmin(admin: PublicKey, newAdmin: PublicKey): Promise<TransactionInstruction>;
     updateFeeConfig(lpFeeBasisPoints: BN, protocolFeeBasisPoints: BN, protocolFeeRecipients: PublicKey[], admin: PublicKey): Promise<TransactionInstruction>;
 }
-//# sourceMappingURL=pumpAmmAdmin.d.ts.map

@@ -11,4 +11,3 @@ export declare function lpMintAta(lpMint: PublicKey, owner: PublicKey): PublicKe
 export declare function pumpPoolAuthorityPda(mint: PublicKey, pumpProgramId?: PublicKey): [PublicKey, number];
 export declare function canonicalPumpPoolPda(mint: PublicKey, programId?: PublicKey, pumpProgramId?: PublicKey): [PublicKey, number];
 export declare function pumpAmmEventAuthorityPda(programId?: PublicKey): [PublicKey, number];
-//# sourceMappingURL=pda.d.ts.map

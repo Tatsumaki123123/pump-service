@@ -47,4 +47,3 @@ function toSetParamsEvent(event) {
         feeBasisPoints: BigInt(event.feeBasisPoints),
     };
 }
-//# sourceMappingURL=events.js.map

@@ -1992,4 +1992,3 @@ export type PumpAmm = {
         }
     ];
 };
-//# sourceMappingURL=pump_amm.d.ts.map

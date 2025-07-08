@@ -119,4 +119,3 @@ class PumpSwapSDK {
     }
 }
 exports.PumpSwapSDK = PumpSwapSDK;
-//# sourceMappingURL=pumpswap.js.map

@@ -9,4 +9,3 @@ export declare function returnTx(tx: Transaction, priorityFees?: PriorityFee): P
 export declare function sendTx(connection: Connection, tx: Transaction, payer: PublicKey, signers: Keypair[], priorityFees?: PriorityFee, commitment?: Commitment, finality?: Finality): Promise<TransactionResult>;
 export declare const buildVersionedTx: (connection: Connection, payer: PublicKey, tx: Transaction, commitment?: Commitment) => Promise<VersionedTransaction>;
 export declare const getTxDetails: (connection: Connection, sig: string, commitment?: Commitment, finality?: Finality) => Promise<VersionedTransactionResponse | null>;
-//# sourceMappingURL=util.d.ts.map

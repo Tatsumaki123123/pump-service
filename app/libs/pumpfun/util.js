@@ -103,4 +103,3 @@ const getTxDetails = async (connection, sig, commitment = exports.DEFAULT_COMMIT
     });
 };
 exports.getTxDetails = getTxDetails;
-//# sourceMappingURL=util.js.map

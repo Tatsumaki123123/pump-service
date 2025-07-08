@@ -21,6 +21,7 @@ export declare class PumpFunSDK {
     getBuyInstructionsBySolAmount(buyer: PublicKey, mint: PublicKey, buyAmountSol: bigint, slippageBasisPoints?: bigint, commitment?: Commitment, bondingCurveAccount?: BondingCurveAccount | null): Promise<Transaction>;
     getBuyInstructions(buyer: PublicKey, mint: PublicKey, feeRecipient: PublicKey, amount: bigint, solAmount: bigint, bondingCurveCreator: PublicKey, commitment?: Commitment): Promise<Transaction>;
     getBuyInstructions2(buyer: PublicKey, mint: PublicKey, feeRecipient: PublicKey, amount: bigint, solAmount: bigint, commitment?: Commitment): Promise<Transaction>;
+    getQuickBuyInstructions(buyer: PublicKey, mint: PublicKey, bondingCurveCreator: PublicKey, solAmount: bigint, slippageBasisPoints: bigint, priorityFees: PriorityFee, commitment?: Commitment): Promise<Transaction>;
     getSellInstructionsByTokenAmount(seller: PublicKey, mint: PublicKey, sellTokenAmount: bigint, slippageBasisPoints?: bigint, commitment?: Commitment): Promise<Transaction>;
     getSellInstructions(seller: PublicKey, mint: PublicKey, feeRecipient: PublicKey, amount: bigint, minSolOutput: bigint): Promise<Transaction>;
     getBondingCurveAccount(mint: PublicKey, commitment?: Commitment): Promise<BondingCurveAccount | null>;
@@ -31,4 +32,3 @@ export declare class PumpFunSDK {
     addEventListener<T extends PumpFunEventType>(eventType: T, callback: (event: PumpFunEventHandlers[T], slot: number, signature: string) => void): number;
     removeEventListener(eventId: number): void;
 }
-//# sourceMappingURL=pumpfun.d.ts.map

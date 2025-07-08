@@ -58,4 +58,3 @@ class AMM {
     }
 }
 exports.AMM = AMM;
-//# sourceMappingURL=amm.js.map

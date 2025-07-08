@@ -152,7 +152,6 @@ class PumpFunSDK {
   ) {
     if (!bondingCurveAccount) {
       bondingCurveAccount = await this.getBondingCurveAccount(mint, commitment);
-      console.log(bondingCurveAccount);
     }
     if (!bondingCurveAccount) {
       throw new Error(`Bonding curve account not found: ${mint.toBase58()}`);
@@ -276,6 +275,63 @@ class PumpFunSDK {
         .transaction()
     );
     return transaction;
+  }
+  async getQuickBuyInstructions(
+    buyer,
+    mint,
+    bondingCurveCreator,
+    solAmount,
+    slippageBasisPoints,
+    priorityFees,
+    commitment = util_1.DEFAULT_COMMITMENT
+  ) {
+    const feeRecipient = new web3_js_1.PublicKey(
+      "AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY"
+    );
+    const amount = solAmount * 35000n;
+    const associatedUser = await (0, spl_token_1.getAssociatedTokenAddress)(
+      mint,
+      buyer,
+      false
+    );
+    let buyAmountWithSlippage = (0, util_1.calculateWithSlippageBuy)(
+      solAmount,
+      slippageBasisPoints
+    );
+    let transaction = new web3_js_1.Transaction();
+    try {
+      await (0, spl_token_1.getAccount)(
+        this.connection,
+        associatedUser,
+        commitment
+      );
+    } catch (e) {
+      transaction.add(
+        (0, spl_token_1.createAssociatedTokenAccountInstruction)(
+          buyer,
+          associatedUser,
+          buyer,
+          mint
+        )
+      );
+    }
+    transaction.add(
+      await this.program.methods
+        .buy(
+          new bn_js_1.BN(amount.toString()),
+          new bn_js_1.BN(buyAmountWithSlippage.toString())
+        )
+        .accountsPartial({
+          feeRecipient: feeRecipient,
+          mint: mint,
+          associatedUser: associatedUser,
+          user: buyer,
+          creatorVault: this.getCreatorVaultPDA(bondingCurveCreator),
+        })
+        .transaction()
+    );
+    let buyResults = await (0, util_1.returnTx)(transaction, priorityFees);
+    return buyResults;
   }
   //sell
   async getSellInstructionsByTokenAmount(
@@ -455,4 +511,3 @@ class PumpFunSDK {
   }
 }
 exports.PumpFunSDK = PumpFunSDK;
-//# sourceMappingURL=pumpfun.js.map

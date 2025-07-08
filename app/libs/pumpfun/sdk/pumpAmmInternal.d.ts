@@ -75,4 +75,3 @@ export declare class PumpAmmInternalSdk {
     private swapAccounts;
     private getMintTokenPrograms;
 }
-//# sourceMappingURL=pumpAmmInternal.d.ts.map

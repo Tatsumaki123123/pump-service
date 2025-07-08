@@ -92,4 +92,3 @@ class PumpAmmSdk {
     }
 }
 exports.PumpAmmSdk = PumpAmmSdk;
-//# sourceMappingURL=pumpAmm.js.map

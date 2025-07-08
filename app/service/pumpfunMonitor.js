@@ -1,38 +1,6 @@
 "use strict";
 const { Service } = require("egg");
-const {
-  Connection,
-  Keypair,
-  VersionedTransaction,
-  LAMPORTS_PER_SOL,
-  PublicKey,
-  ComputeBudgetProgram,
-  SystemProgram,
-  TransactionMessage,
-  TransactionInstruction,
-  Transaction,
-} = require("@solana/web3.js");
-const {
-  getAssociatedTokenAddressSync,
-  createAssociatedTokenAccountIdempotentInstruction,
-  createSyncNativeInstruction,
-  createCloseAccountInstruction,
-  getAssociatedTokenAddress,
-  TOKEN_PROGRAM_ID,
-  TOKEN_2022_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  createInitializeAccount3Instruction,
-  createInitializeAccountInstruction,
-  createAssociatedTokenAccountInstruction,
-  createTransferCheckedInstruction,
-} = require("@solana/spl-token");
-const {
-  createSolanaRpcSubscriptions,
-  RpcSubscriptions,
-  SolanaRpcSubscriptionsApi,
-  address,
-  Address,
-} = require("@solana/kit");
+const { LAMPORTS_PER_SOL, PublicKey } = require("@solana/web3.js");
 
 const bs58 = require("bs58");
 const borsh = require("@coral-xyz/borsh");
@@ -43,7 +11,9 @@ const {
   CommitmentLevel,
 } = require("@triton-one/yellowstone-grpc");
 
-const GRPC_ENDPOINT = "https://solana-yellowstone-grpc.publicnode.com:443";
+// const GRPC_ENDPOINT = "https://solana-yellowstone-grpc.publicnode.com:443";
+
+const { GRPC_ENDPOINT, GRPC_TOKEN } = require("../constants");
 
 const {
   connection,
@@ -91,37 +61,44 @@ class PumpFunMonitor extends Service {
   async handleCreateEvent(event) {
     console.log(chalk.green("handleCreateEvent"));
     const { ctx } = this;
-    // const metadataRes = await ctx.curl(event.uri, { dataType: "json" });
-    // const metadata = metadataRes.data;
-    const metadata = {};
+    const metadataRes = await ctx.curl(event.uri, { dataType: "json" });
+    const metadata = metadataRes.data;
+    // const metadata = {};
+    const createTime = new Date(event.timestamp * 1000);
+    const updateTime = new Date();
     const dbData = {
       token: event.mint.toBase58(),
       dev: "",
       pool: event.bondingCurve.toBase58(),
+      creator: event.creator.toBase58(),
       name: event.name,
       symbol: event.symbol,
       uri: event.uri,
-      createTime: new Date(event.timestamp * 1000),
-      updateTime: new Date(),
+      createTime: createTime,
+      updateTime: updateTime,
       metadata: metadata,
     };
-    console.log(dbData);
-    console.log(dbData.createTime);
-    console.log(dbData.updateTime);
-    console.log(dbData.updateTime.getTime() - dbData.createTime.getTime());
-    return;
+    const diffTime = updateTime.getTime() - createTime.getTime();
+    console.log(chalk.yellow("diffTime", diffTime));
     if (
       metadata &&
       metadata.twitter &&
-      metadata.twitter.indexOf("communities") > -1
+      metadata.twitter.indexOf("communities") > -1 &&
+      diffTime < 1500
     ) {
-      const res = await ctx.service.pumpfun.buyToken(dbData.token);
+      const quickBuyData = {
+        mint: event.mint,
+        bondingCurve: event.bondingCurve,
+        creator: event.creator,
+      };
+      console.log("event", quickBuyData);
+      const res = await ctx.service.pumpfun.quickBuyToken(quickBuyData);
       if (res) {
         setTimeout(async () => {
           await ctx.service.pumpfun.sellToken(dbData.token);
-        }, 1000);
+        }, 3000);
+        await ctx.model.PumpToken.create(dbData);
       }
-      await ctx.model.PumpToken.create(dbData);
     }
   }
 
@@ -155,7 +132,7 @@ class PumpFunMonitor extends Service {
 
   async startGrpcMonitor() {
     console.log(chalk.green("\n startGrpcMonitor"));
-    const yellowClient = new Client(GRPC_ENDPOINT);
+    const yellowClient = new Client(GRPC_ENDPOINT, GRPC_TOKEN);
     const stream = await yellowClient.subscribe();
     const request = createSubscribeRequest();
     const handleStreamEvents = (stream) => {
@@ -255,6 +232,7 @@ function createSubscribeRequest() {
         accountInclude: [],
         accountExclude: [],
         accountRequired: FILTER_CONFIG.requiredAccounts,
+        instructionDiscriminators: FILTER_CONFIG.instructionDiscriminators,
       },
     },
     transactionsStatus: {},

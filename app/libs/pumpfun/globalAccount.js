@@ -50,4 +50,3 @@ class GlobalAccount {
     }
 }
 exports.GlobalAccount = GlobalAccount;
-//# sourceMappingURL=globalAccount.js.map

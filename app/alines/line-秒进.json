@@ -1,0 +1,25 @@
+[
+  {
+    "transferAmount": 2,
+    "buyAmount": [0.9],
+    "limit": 250000,
+    "price": 16000,
+    "fee": 0.00001,
+    "firstBuy": true,
+    "secondBuy": false,
+    "multiBuy": false,
+    "thirdBuy": false,
+    "isOkx": true
+  },
+  {
+    "transferAmount": 8,
+    "buyAmount": [2.5],
+    "limit": 200000,
+    "price": 15500,
+    "fee": 0.00001,
+    "firstBuy": true,
+    "secondBuy": false,
+    "multiBuy": false,
+    "isTrogan": true
+  }
+]

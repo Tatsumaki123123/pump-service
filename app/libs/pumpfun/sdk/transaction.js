@@ -29,4 +29,3 @@ async function sendAndConfirmTransaction(connection, payerKey, instructions, sig
     });
     return [transaction, result.value.err];
 }
-//# sourceMappingURL=transaction.js.map

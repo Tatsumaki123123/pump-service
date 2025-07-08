@@ -40,10 +40,13 @@ class PumpFun extends Service {
     this.canBuy = true;
   }
   async buyToken(token, amount = 0.01) {
+    const { ctx } = this;
     try {
-      if (!this.canBuy) return false;
-      this.canBuy = false;
-      console.log(chalk.green("Buy token", token));
+      // if (!this.canBuy) return false;
+      // this.canBuy = false;
+      console.log(
+        chalk.green("Buy token", token, testWallet.publicKey.toBase58())
+      );
       const buyTx = await pfSwap.buy(
         testWallet.publicKey,
         new PublicKey(token),
@@ -55,22 +58,74 @@ class PumpFun extends Service {
         },
         "processed"
       );
-      // const tipIx = SystemProgram.transfer({
-      //   fromPubkey: testWallet.publicKey,
-      //   toPubkey: TIP_ACCOUNT,
-      //   lamports: 0.0001 * LAMPORTS_PER_SOL,
-      // });
-      // const volumeIxs = [tipIx, ...buyTx.instructions];
-      const volumeIxs = [...buyTx.instructions];
-      const res = await sendV0Transaction(connection, testWallet, volumeIxs);
-      setTimeout(() => {
-        this.canBuy = true;
-      }, 10 * 1000);
+      return;
+      const tipIx = SystemProgram.transfer({
+        fromPubkey: testWallet.publicKey,
+        toPubkey: new PublicKey("ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49"),
+        lamports: 0.0001 * LAMPORTS_PER_SOL,
+      });
+      const volumeIxs = [tipIx, ...buyTx.instructions];
+      // const volumeIxs = [...buyTx.instructions];
+      const bundleResult = await ctx.service.jito.sendBundle([volumeIxs]);
+      console.log(bundleResult);
+
+      // const res = await sendV0Transaction(connection, testWallet, volumeIxs);
+      // setTimeout(() => {
+      //   this.canBuy = true;
+      // }, 10 * 1000);
       return true;
     } catch (error) {
       console.error(error);
     }
   }
+
+  async quickBuyToken(tokenData, amount = 0.01) {
+    const { ctx } = this;
+    const { mint, creator } = tokenData;
+    const buyTx = await pfSwap.getQuickBuyInstructions(
+      testWallet.publicKey,
+      mint,
+      creator,
+      BigInt(amount * LAMPORTS_PER_SOL),
+      SLIPPAGE_BASIS_POINTS,
+      {
+        unitLimit: 250000,
+        unitPrice: 250000,
+      },
+      "processed"
+    );
+    //  const tipIx = SystemProgram.transfer({
+    //     fromPubkey: testWallet.publicKey,
+    //     toPubkey: new PublicKey("ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49"),
+    //     lamports: 0.0001 * LAMPORTS_PER_SOL,
+    //   });
+    //   const volumeIxs = [tipIx, ...buyTx.instructions];
+    // const volumeIxs = [...buyTx.instructions];
+
+    const tipIx = SystemProgram.transfer({
+      fromPubkey: testWallet.publicKey,
+      toPubkey: new PublicKey("ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49"),
+      lamports: 0.0001 * LAMPORTS_PER_SOL,
+    });
+    const volumeIxs = [tipIx, ...buyTx.instructions];
+
+    const { blockhash } = await connection.getLatestBlockhash();
+    const messageV0 = new TransactionMessage({
+      payerKey: testWallet.publicKey,
+      recentBlockhash: blockhash,
+      instructions: volumeIxs,
+    }).compileToV0Message();
+
+    const tx = new VersionedTransaction(messageV0);
+    tx.sign([testWallet]);
+    // const volumeIxs = [...buyTx.instructions];
+    const bundleResult = await ctx.service.jito.sendBundle([tx]);
+    console.log(bundleResult);
+
+    // const res = await sendV0Transaction(connection, testWallet, volumeIxs);
+    return true;
+  }
+
   async sellToken(token, amount) {
     try {
       const { ctx } = this;

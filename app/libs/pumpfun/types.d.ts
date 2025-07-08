@@ -69,4 +69,3 @@ export type TransactionResult = {
     results?: VersionedTransactionResponse;
     success: boolean;
 };
-//# sourceMappingURL=types.d.ts.map

@@ -2,4 +2,3 @@ import { Blockhash, Connection, PublicKey, Signer, TransactionError, Transaction
 export declare function transactionFromInstructions(payerKey: PublicKey, instructions: TransactionInstruction[], recentBlockhash: Blockhash, signers: Signer[]): VersionedTransaction;
 export declare function getSignature(transaction: VersionedTransaction): string;
 export declare function sendAndConfirmTransaction(connection: Connection, payerKey: PublicKey, instructions: TransactionInstruction[], signers: Signer[]): Promise<[VersionedTransaction, TransactionError | null]>;
-//# sourceMappingURL=transaction.d.ts.map

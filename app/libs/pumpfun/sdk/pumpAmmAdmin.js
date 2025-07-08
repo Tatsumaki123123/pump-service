@@ -54,4 +54,3 @@ class PumpAmmAdminSdk {
     }
 }
 exports.PumpAmmAdminSdk = PumpAmmAdminSdk;
-//# sourceMappingURL=pumpAmmAdmin.js.map

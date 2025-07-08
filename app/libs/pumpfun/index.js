@@ -23,4 +23,3 @@ __exportStar(require("./events"), exports);
 __exportStar(require("./globalAccount"), exports);
 __exportStar(require("./bondingCurveAccount"), exports);
 __exportStar(require("./amm"), exports);
-//# sourceMappingURL=index.js.map

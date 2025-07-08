@@ -12,4 +12,3 @@ baseReserve: BN, // Current reserve of base tokens in the pool
 quoteReserve: BN, // Current reserve of quote tokens in the pool
 lpFeeBps: BN, // LP fee in basis points (e.g., 30 => 0.30%)
 protocolFeeBps: BN): SellQuoteInputResult;
-//# sourceMappingURL=sell.d.ts.map

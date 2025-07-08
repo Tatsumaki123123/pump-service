@@ -2404,4 +2404,3 @@ export type PumpSwap = {
         }
     ];
 };
-//# sourceMappingURL=pumpswap.d.ts.map

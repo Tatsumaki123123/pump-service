@@ -28,4 +28,3 @@ protocolFeeBps: BN): BuyBaseInputResult;
 export declare function buyQuoteInputInternal(quote: BN, slippage: number, // 1 => 1%
 baseReserve: BN, quoteReserve: BN, lpFeeBps: BN, // LP fee in basis points (BN)
 protocolFeeBps: BN): BuyQuoteInputResult;
-//# sourceMappingURL=buy.d.ts.map

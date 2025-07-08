@@ -5,4 +5,3 @@ import { PumpAmm } from "../types/pump_amm";
 export declare function ceilDiv(a: BN, b: BN): BN;
 export declare function fee(amount: BN, basisPoints: BN): BN;
 export declare function getPumpAmmProgram(connection: Connection, programId?: string): Program<PumpAmm>;
-//# sourceMappingURL=util.d.ts.map

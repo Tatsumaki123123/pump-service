@@ -354,4 +354,3 @@ class PumpAmmInternalSdk {
     }
 }
 exports.PumpAmmInternalSdk = PumpAmmInternalSdk;
-//# sourceMappingURL=pumpAmmInternal.js.map

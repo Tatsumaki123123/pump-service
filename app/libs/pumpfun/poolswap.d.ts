@@ -66,4 +66,3 @@ export declare class PumpSwapPool {
     }>;
 }
 export {};
-//# sourceMappingURL=poolswap.d.ts.map

@@ -24,4 +24,3 @@ function getPumpAmmProgram(connection, programId = pda_1.PUMP_AMM_PROGRAM_ID) {
     pumpAmmIdlAddressOverride.address = programId;
     return new anchor_1.Program(pumpAmmIdlAddressOverride, new anchor_1.AnchorProvider(connection, null, {}));
 }
-//# sourceMappingURL=util.js.map

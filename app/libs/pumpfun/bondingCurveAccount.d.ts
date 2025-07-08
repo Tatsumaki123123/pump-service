@@ -20,4 +20,3 @@ export declare class BondingCurveAccount {
     getBuyPrices(amounts: bigint[]): bigint[];
     getSellPrices(amounts: bigint[], feeBasisPoints: bigint): bigint[];
 }
-//# sourceMappingURL=bondingCurveAccount.d.ts.map

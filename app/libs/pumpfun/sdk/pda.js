@@ -38,4 +38,3 @@ function canonicalPumpPoolPda(mint, programId = exports.PUMP_AMM_PROGRAM_ID_PUBK
 function pumpAmmEventAuthorityPda(programId = exports.PUMP_AMM_PROGRAM_ID_PUBKEY) {
     return web3_js_1.PublicKey.findProgramAddressSync([Buffer.from("__event_authority")], programId);
 }
-//# sourceMappingURL=pda.js.map

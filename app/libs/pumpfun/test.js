@@ -152,4 +152,3 @@ const init = async () => {
     }
 };
 init();
-//# sourceMappingURL=test.js.map

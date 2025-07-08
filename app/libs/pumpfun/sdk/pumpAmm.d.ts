@@ -39,4 +39,3 @@ export declare class PumpAmmSdk {
     swapAutocompleteBaseFromQuote(pool: PublicKey, quote: BN, slippage: number, direction: Direction): Promise<BN>;
     extendAccount(account: PublicKey, user: PublicKey): Promise<TransactionInstruction>;
 }
-//# sourceMappingURL=pumpAmm.d.ts.map

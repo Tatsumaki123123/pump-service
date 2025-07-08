@@ -21,4 +21,3 @@ export declare class PumpSwapSDK {
     createSellInstruction(poolId: PublicKey, user: PublicKey, mint: PublicKey, baseAmountIn: bigint, // Use bigint for u64
     minQuoteAmountOut: bigint, closeTokenAccount?: boolean, commitment?: Commitment): Promise<Transaction>;
 }
-//# sourceMappingURL=pumpswap.d.ts.map

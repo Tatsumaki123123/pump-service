@@ -22,4 +22,3 @@ export declare class AMM {
     applySell(token_amount: bigint): SellResult;
     getSellPrice(tokens: bigint): bigint;
 }
-//# sourceMappingURL=amm.d.ts.map

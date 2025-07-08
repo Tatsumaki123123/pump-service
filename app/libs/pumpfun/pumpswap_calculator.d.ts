@@ -5,4 +5,3 @@ protocolFeeBps: BN): {
     maxQuote: BN;
     baseAmountOut: BN;
 };
-//# sourceMappingURL=pumpswap_calculator.d.ts.map
