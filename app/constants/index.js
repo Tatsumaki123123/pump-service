@@ -38,7 +38,8 @@ const PRIVATE_KEY =
 
 constants.testWallet = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 
-constants.GRPC_ENDPOINT = "https://grpc-ny-1.erpc.global";
+constants.GRPC_ENDPOINT = "https://grpc-fra-1.erpc.global";
+// constants.GRPC_ENDPOINT = "https://grpc-ny-1.erpc.global";
 constants.GRPC_TOKEN = "e8782e9b-dc7c-4bd4-b931-012e4f8f0dde";
 
 module.exports = constants;

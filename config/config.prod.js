@@ -12,7 +12,7 @@ module.exports = (appInfo) => {
   };
 
   config.logger = {
-    dir: "/www/wwwroot/202504/four/manager/logs",
+    dir: "/www/wwwroot/pump-service/logs",
   };
 
   return {

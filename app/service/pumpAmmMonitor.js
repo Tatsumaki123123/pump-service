@@ -248,16 +248,21 @@ class PumpAmmMonitor extends Service {
     const { ctx } = this;
     const {
       type,
+      createdTime,
       poolAddress,
       tokenAmount,
       solAmount,
       diffTime,
       monitorAddress: userAddress,
     } = data;
-    const findPool = this.poolAddresses.find(
-      (address) => address.toLowerCase() === poolAddress.toLowerCase()
-    );
-    if (!findPool) return;
+    // if (solAmount >= 3) {
+    console.log(chalk.green(diffTime, createdTime));
+    // }
+    return;
+    // const findPool = this.poolAddresses.find(
+    //   (address) => address.toLowerCase() === poolAddress.toLowerCase()
+    // );
+    // if (!findPool) return;
     if (type === "sell") {
       if (solAmount >= 5) {
         await this.buyToken(data);
@@ -273,11 +278,11 @@ class PumpAmmMonitor extends Service {
   async startMonitor() {
     this.startGrpcMonitor();
 
-    this.getPoolsTimer && clearInterval(this.getPoolsTimer);
-    await this.getPoolAddresses();
-    setInterval(async () => {
-      await this.getPoolAddresses();
-    }, 60 * 60 * 1000);
+    // this.getPoolsTimer && clearInterval(this.getPoolsTimer);
+    // await this.getPoolAddresses();
+    // setInterval(async () => {
+    //   await this.getPoolAddresses();
+    // }, 60 * 60 * 1000);
   }
 
   async startGrpcMonitor() {

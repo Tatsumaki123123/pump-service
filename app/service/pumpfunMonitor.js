@@ -80,6 +80,7 @@ class PumpFunMonitor extends Service {
     };
     const diffTime = updateTime.getTime() - createTime.getTime();
     console.log(chalk.yellow("diffTime", diffTime));
+    return;
     if (
       metadata &&
       metadata.twitter &&
