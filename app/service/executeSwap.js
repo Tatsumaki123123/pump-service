@@ -324,6 +324,7 @@ class ExecuteSwap extends Service {
     const wallets = await this.getWalletsWithLineFirstWallet(line, type);
     if (wallets && wallets.length > 0 && token) {
       if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
+        await ctx.service.raydiumCpmm.batchSellToken(token, wallets);
       } else if (tokenInfo.amm === PUMP_AMM_NAME) {
         await ctx.service.pumpAMM.batchSellToken(token, wallets);
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
