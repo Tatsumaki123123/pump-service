@@ -9,6 +9,7 @@
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
     "@okx-dex/okx-dex-sdk": "^1.0.13",
+    "@raydium-io/raydium-sdk-v2": "^0.2.0-alpha",
     "@solana/kit": "^2.1.1",
     "@solana/spl-token": "^0.4.6",
     "@solana/web3.js": "^1.91.7",

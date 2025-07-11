@@ -15,6 +15,7 @@ const {
 } = require("@solana/web3.js");
 
 const { connection } = require("../constants");
+const { initSdk } = require("../constants/raydium");
 
 const {
   getSPLBalance,
@@ -27,11 +28,14 @@ const {
 
 const { getPoolsWithPrices, getPoolsWithBaseMint } = require("../libs/pool");
 const { sleep, retryAsync } = require("../utils/utils");
+const { getRaydiumCpmmPoolId } = require("../utils/raydium");
 
 const BOSS_MIN_AMOUNT = 2.8;
 
 const PUMP_AMM_NAME = "pumpfunamm";
 const PUMP_FUN_NAME = "pump";
+
+const RAYDIUM_CPMM_NAME = "raydiumcpmm";
 
 class ExecuteSwap extends Service {
   constructor(props) {
@@ -276,10 +280,13 @@ class ExecuteSwap extends Service {
     const token = tokenInfo.token;
     const line = tokenInfo.line;
     console.log(chalk.green(`\nStep 3: Buying ${token}`));
+    console.log(tokenInfo);
 
     const wallets = await this.getWalletsWithLineFirstWallet(line, type);
     if (wallets && wallets.length > 0 && token) {
-      if (tokenInfo.amm === PUMP_AMM_NAME) {
+      if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
+        await ctx.service.raydiumCpmm.batchBuyToken(token, wallets);
+      } else if (tokenInfo.amm === PUMP_AMM_NAME) {
         await ctx.service.pumpAMM.batchBuyToken(token, wallets);
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
         await ctx.service.pumpfun.batchBuyToken(token, wallets);
@@ -316,7 +323,8 @@ class ExecuteSwap extends Service {
     console.log(chalk.green(`Step 4: Selling ${token}, ${type}`));
     const wallets = await this.getWalletsWithLineFirstWallet(line, type);
     if (wallets && wallets.length > 0 && token) {
-      if (tokenInfo.amm === PUMP_AMM_NAME) {
+      if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
+      } else if (tokenInfo.amm === PUMP_AMM_NAME) {
         await ctx.service.pumpAMM.batchSellToken(token, wallets);
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
         await ctx.service.pumpfun.batchSellToken(token, wallets);
@@ -349,7 +357,15 @@ class ExecuteSwap extends Service {
     );
     if (wallet) {
       const wallets = [wallet];
-      const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
+      if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
+        const res = await ctx.service.raydiumCpmm.batchBuyToken(token, wallets);
+      } else if (tokenInfo.amm === PUMP_AMM_NAME) {
+        const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
+      } else if (tokenInfo.amm === PUMP_FUN_NAME) {
+        const res = await ctx.service.pumpfun.batchBuyToken(token, wallets);
+      } else {
+        throw new Error("Not amm");
+      }
       return true;
     } else {
       throw new Error("There are not wallets to sell");
@@ -584,25 +600,35 @@ class ExecuteSwap extends Service {
     } else if (amm === PUMP_FUN_NAME) {
       dev = "";
       pool = tokenData.pool;
+    } else if (amm === RAYDIUM_CPMM_NAME) {
+      dev = "";
+      pool = tokenData.pool;
     } else {
-      let poolDetail;
-      try {
-        poolDetail = await getPoolsWithPrices(new PublicKey(token));
-      } catch (error) {
-        console.error(error);
-      }
-      if (poolDetail) {
-        amm = PUMP_AMM_NAME;
-        dev = poolDetail.poolData.coinCreator;
-        pool = poolDetail.address;
+      const poolId = await getRaydiumCpmmPoolId(new PublicKey(token));
+      if (poolId) {
+        pool = poolId.toBase58();
+        dev = "";
+        amm = RAYDIUM_CPMM_NAME;
       } else {
-        poolDetail = await ctx.service.pumpfun.getPoolDetail(token);
+        let poolDetail;
+        try {
+          poolDetail = await getPoolsWithPrices(new PublicKey(token));
+        } catch (error) {
+          console.error(error);
+        }
         if (poolDetail) {
-          amm = PUMP_FUN_NAME;
-          dev = poolDetail.dev;
-          pool = "";
+          amm = PUMP_AMM_NAME;
+          dev = poolDetail.poolData.coinCreator;
+          pool = poolDetail.address;
         } else {
-          throw new Error("Cannot find pool data");
+          poolDetail = await ctx.service.pumpfun.getPoolDetail(token);
+          if (poolDetail) {
+            amm = PUMP_FUN_NAME;
+            dev = poolDetail.dev;
+            pool = "";
+          } else {
+            throw new Error("Cannot find pool data");
+          }
         }
       }
     }

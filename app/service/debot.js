@@ -48,11 +48,21 @@ class Debot extends Service {
             return false;
           }
         })
-        .map((item) => ({
-          ...item,
-          create_time: item.create_time * 1000,
-          latest_time: item.latest_time * 1000,
-        }));
+        .map((item) => {
+          const { tags = [] } = item;
+          let amm;
+          if (tags.includes("raydium_launchlab")) {
+            amm = "raydiumcpmm";
+          } else if (tags.includes("pump")) {
+            amm = "pumpamm";
+          }
+          return {
+            ...item,
+            amm,
+            create_time: item.create_time * 1000,
+            latest_time: item.latest_time * 1000,
+          };
+        });
       return list;
     } else {
       console.log(res);

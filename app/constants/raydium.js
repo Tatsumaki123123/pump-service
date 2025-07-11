@@ -7,4 +7,10 @@ module.exports = {
   RAYDIUM_LAUNCHPAD_AUTHORITY_ID: new PublicKey(
     "WLHv2UAZm6z4KyaaELi5pjdbJh6RESMva1Rnn8pJVVh"
   ),
+  RAYDIUM_CPMM_PROGRAM_ID: new PublicKey(
+    "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
+  ),
+  RAYDIUM_CPMM_CONFIG_ID: new PublicKey(
+    "D4FPEruKEHrG5TenZ2mpDGEfu1iUvTiqBxvpU8HLBvC2"
+  ),
 };
