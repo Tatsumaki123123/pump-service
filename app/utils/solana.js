@@ -391,29 +391,26 @@ async function wsolToSol(connection, wallet) {
     wallet.publicKey
   );
 
-  // 5. 检查 ATA 是否存在并有余额
   const accountInfo = await connection.getAccountInfo(associatedTokenAddress);
   if (!accountInfo) {
-    throw new Error("WSOL ATA 不存在，请确认钱包中是否有 WSOL");
+    throw new Error("WSOL ATA not exist");
   }
 
   const balance = await connection.getTokenAccountBalance(
     associatedTokenAddress
   );
-  console.log(`当前 WSOL 余额: ${balance.value.uiAmount} WSOL`);
+  console.log(` WSOL balance: ${balance.value.uiAmount} WSOL`);
 
-  // 6. 创建交易并添加关闭 ATA 的指令
   const transaction = new Transaction().add(
     createCloseAccountInstruction(
-      associatedTokenAddress, // 要关闭的 WSOL ATA
-      wallet.publicKey, // 接收 SOL 的目标账户
-      wallet.publicKey // ATA 的所有者
+      associatedTokenAddress,
+      wallet.publicKey,
+      wallet.publicKey
     )
   );
 
-  // 7. 发送交易
   const signature = await connection.sendTransaction(transaction, [wallet], {
-    skipPreflight: false, // 启用预检以捕获模拟错误
+    skipPreflight: false,
   });
   await connection.confirmTransaction(signature, "confirmed");
 }

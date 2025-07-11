@@ -11,6 +11,10 @@ WSS_RPC_URL=wss://little-practical-lake.solana-mainnet.quiknode.pro/748dd52b1227
 RPC_URL=https://edge.erpc.global?api-key=e8782e9b-dc7c-4bd4-b931-012e4f8f0dde
 WSS_RPC_URL=wss://edge.erpc.global?api-key=e8782e9b-dc7c-4bd4-b931-012e4f8f0dde
 
+```bash
+time curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'
+```
+
 ## QuickStart
 
 <!-- add docs here for user -->

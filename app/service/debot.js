@@ -12,8 +12,8 @@ class Debot extends Service {
     let sort_field = "latest_time";
     let sort_order = "desc";
     if (groupSort) {
-      // sort_field = groupSort.sort_field;
-      // sort_order = groupSort.sort_order;
+      sort_field = groupSort.sort_field;
+      sort_order = groupSort.sort_order;
     }
     const uri = `${BASE_URL}wallet/group/hot_token?group_id=${groupId}&page_index=1&page_size=200&sort_field=${sort_field}&sort_order=${sort_order}&duration=24H`;
     const res = await ctx.curl(uri, {
