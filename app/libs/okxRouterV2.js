@@ -16,9 +16,6 @@ const {
   NATIVE_MINT,
 } = require("@solana/spl-token");
 
-const { OKXDexClient } = require("@okx-dex/okx-dex-sdk");
-const { SolanaAgentKit, KeypairWallet } = require("solana-agent-kit");
-
 const borsh = require("@coral-xyz/borsh");
 
 const {
