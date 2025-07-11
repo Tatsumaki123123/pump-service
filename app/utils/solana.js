@@ -46,6 +46,22 @@ async function getSPLBalance(
   return 0;
 }
 
+async function getSPLBalanceAmount(
+  connection,
+  tokenMint,
+  owner,
+  allowOffCurve = false
+) {
+  try {
+    let ata = getAssociatedTokenAddressSync(tokenMint, owner, allowOffCurve);
+    const balance = await connection.getTokenAccountBalance(ata, "confirmed");
+    return balance.value.amount || 0;
+  } catch (e) {
+    console.error(e.message);
+  }
+  return 0;
+}
+
 /**
  * to addr: CX5QxTvRJJnLBQT8ppFhRW5jscuTUBqeTKGeLcRaFcEd
  * @param {*} connection
@@ -417,6 +433,7 @@ async function wsolToSol(connection, wallet) {
 
 module.exports = {
   getSPLBalance,
+  getSPLBalanceAmount,
   closeAllTokenAccounts,
   transferAllSol,
   transferSol,

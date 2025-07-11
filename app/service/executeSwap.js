@@ -386,7 +386,18 @@ class ExecuteSwap extends Service {
     );
     if (wallet) {
       const wallets = [wallet];
-      const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
+      if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
+        const res = await ctx.service.raydiumCpmm.batchSellToken(
+          token,
+          wallets
+        );
+      } else if (tokenInfo.amm === PUMP_AMM_NAME) {
+        const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
+      } else if (tokenInfo.amm === PUMP_FUN_NAME) {
+        const res = await ctx.service.pumpfun.batchSellToken(token, wallets);
+      } else {
+        throw new Error("Not amm");
+      }
       return true;
     } else {
       throw new Error("There are not wallets to sell");

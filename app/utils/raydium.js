@@ -2,6 +2,7 @@ const {
   Raydium,
   getCpmmPdaPoolId,
   CurveCalculator,
+  TxVersion,
 } = require("@raydium-io/raydium-sdk-v2");
 const { LAMPORTS_PER_SOL } = require("@solana/web3.js");
 const BN = require("bn.js");
@@ -12,6 +13,7 @@ const {
 const { NATIVE_MINT } = require("@solana/spl-token");
 
 const { testWallet, connection } = require("../constants");
+const { getSPLBalanceAmount } = require("./solana");
 
 let raydium;
 const initSdk = async (params) => {
@@ -28,24 +30,29 @@ async function getRaydiumCpmmPoolId(tokenMint) {
   const poolId = await getCpmmPdaPoolId(
     RAYDIUM_CPMM_PROGRAM_ID,
     RAYDIUM_CPMM_CONFIG_ID,
-    tokenMint,
-    NATIVE_MINT
+    NATIVE_MINT,
+    tokenMint
   );
   return poolId.publicKey;
 }
 
 async function getSwapInstructions(params) {
-  const { tokenMint, type = "buy", amount, slippage = 0.01 } = params;
+  const {
+    tokenMint,
+    user,
+    type = "buy",
+    inputAmount,
+    slippage = 0.01,
+    computeBudgetConfig,
+  } = params;
   const raydium = await initSdk();
   const poolId = await getRaydiumCpmmPoolId(tokenMint);
-  const inputAmount = new BN(amount * LAMPORTS_PER_SOL);
   const data = await raydium.cpmm.getPoolInfoFromRpc(poolId);
   const poolInfo = data.poolInfo;
   const poolKeys = data.poolKeys;
   const rpcData = data.rpcData;
-  console.log(poolInfo);
 
-  const baseIn = type === "buy" ? false : true;
+  const baseIn = type === "buy" ? true : false;
 
   const swapResult = CurveCalculator.swap(
     inputAmount,
@@ -54,6 +61,7 @@ async function getSwapInstructions(params) {
     rpcData.configInfo.tradeFeeRate
   );
 
+  raydium.setOwner(user);
   const { execute, builder } = await raydium.cpmm.swap({
     poolInfo,
     poolKeys,
@@ -61,6 +69,8 @@ async function getSwapInstructions(params) {
     swapResult,
     slippage,
     baseIn,
+    computeBudgetConfig: computeBudgetConfig,
+    txVersion: TxVersion.V0,
   });
 
   return builder.allInstructions;
