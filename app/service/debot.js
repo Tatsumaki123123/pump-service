@@ -50,11 +50,9 @@ class Debot extends Service {
         })
         .map((item) => {
           const { tags = [] } = item;
-          let amm;
-          if (tags.includes("raydium_launchlab")) {
+          let amm = "pumpamm";
+          if (tags && tags.includes("raydium_launchlab")) {
             amm = "raydiumcpmm";
-          } else if (tags.includes("pump")) {
-            amm = "pumpamm";
           }
           return {
             ...item,
