@@ -15,10 +15,13 @@ const {
 const { AnchorProvider, Wallet } = require("@coral-xyz/anchor");
 const BN = require("bn.js");
 const chalk = require("chalk");
-const { connection } = require("../constants/");
+const { connection, BLOCK_RAZOR_1 } = require("../constants/");
 const { getSwapInstructions } = require("../utils/raydium");
 const { getSPLBalanceAmount, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
+const OKXSwapSDK = require("../libs/okxRouterV2");
+
+const okxSwap = new OKXSwapSDK();
 
 const GMGN_FEES_VAULT = new PublicKey(
   "BB5dnY55FXS1e1NXqZDwCzgdYJdMCj3B92PU6Q5Fb6DT"
@@ -41,55 +44,64 @@ class RaydiumCpmm extends Service {
         const user = keypair.publicKey;
         const { buyAmount, limit, price, fee } = wallet;
 
-        const transaction = new Transaction();
         let volumeIxs = [];
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
 
-        const computeBudgetConfig = {
-          units: limit,
-          microLamports: price,
-        };
-        const buyIxs = await getSwapInstructions({
-          tokenMint,
-          type: "buy",
-          inputAmount: new BN(buyAmount * LAMPORTS_PER_SOL),
-          slippage: SLIPPAGE_BASIS_POINTS,
-          computeBudgetConfig,
-          user: user,
-        });
-        // transaction.add(...buyIxs);
-        volumeIxs = [...buyIxs];
-
-        const jipAcc = ctx.service.jito.getTipAcc();
-        if (wallet.isGmgn) {
-          const gmgnTipTx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: GMGN_FEES_VAULT,
-            lamports: GMGN_FEE * LAMPORTS_PER_SOL,
+        if (wallet.isOkx) {
+          const okxIxs = await okxSwap.getBuyInstructions(ctx, {
+            user,
+            tokenMint,
+            buyAmount: buyAmount,
+            slippage: SLIPPAGE_BASIS_POINTS,
           });
-          volumeIxs.push(gmgnTipTx);
-        }
-        if (wallet.isTrogan) {
-          const troganTipIx = createTroProxyInstruction(user, jipAcc);
-
-          volumeIxs.push(troganTipIx);
+          volumeIxs = [...okxIxs];
         } else {
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
+          const computeBudgetConfig = {
+            units: limit,
+            microLamports: price,
+          };
+          const buyIxs = await getSwapInstructions({
+            tokenMint,
+            type: "buy",
+            amount: buyAmount * LAMPORTS_PER_SOL,
+            slippage: SLIPPAGE_BASIS_POINTS,
+            computeBudgetConfig,
+            user: user,
           });
-          volumeIxs.push(jitoTipIx);
-          existJitoIx = true;
-        }
+          // transaction.add(...buyIxs);
+          volumeIxs = [...buyIxs];
 
-        if (existJitoIx === false && i !== 0 && i === wallets.length - 1) {
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(jitoTipIx);
+          const jipAcc = ctx.service.jito.getTipAcc();
+          if (wallet.isGmgn) {
+            const gmgnTipTx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: GMGN_FEES_VAULT,
+              lamports: GMGN_FEE * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(gmgnTipTx);
+          }
+          if (wallet.isTrogan) {
+            const troganTipIx = createTroProxyInstruction(user, jipAcc);
+
+            volumeIxs.push(troganTipIx);
+          } else {
+            const jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: fee * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(jitoTipIx);
+            existJitoIx = true;
+          }
+
+          if (existJitoIx === false && i !== 0 && i === wallets.length - 1) {
+            const jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: fee * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(jitoTipIx);
+          }
         }
 
         try {
@@ -103,20 +115,20 @@ class RaydiumCpmm extends Service {
           tx.sign([keypair]);
 
           // 模拟交易
-          //   const simulationResult = await connection.simulateTransaction(tx, {
-          //     commitment: "confirmed",
-          //   });
-          //   if (simulationResult.value.err) {
-          //     console.error("simulation", simulationResult.value);
-          //     throw new Error(simulationResult.value);
-          //   }
+          const simulationResult = await connection.simulateTransaction(tx, {
+            commitment: "confirmed",
+          });
+          if (simulationResult.value.err) {
+            console.error("simulation", simulationResult.value);
+            throw new Error(simulationResult.value);
+          }
 
-          //   console.log(
-          //     chalk.green("simulation success", keypair.publicKey.toString())
-          //   );
+          console.log(
+            chalk.green("simulation success", keypair.publicKey.toString())
+          );
           buyTxns.push(tx);
         } catch (error) {
-          console.error(error.message);
+          console.error("messageV0", error.message);
           break;
         }
       }
@@ -174,25 +186,34 @@ class RaydiumCpmm extends Service {
         const { limit, price, fee } = wallet;
 
         let volumeIxs = [];
-        const computeBudgetConfig = {
-          units: limit,
-          microLamports: price,
-        };
-        const sellIxs = await getSwapInstructions({
-          tokenMint,
-          type: "sell",
-          inputAmount: new BN(tokenAmount),
-          slippage: SLIPPAGE_BASIS_POINTS,
-          computeBudgetConfig,
-          user: user,
-        });
-        const jitoTipIx = SystemProgram.transfer({
-          fromPubkey: keypair.publicKey,
-          toPubkey: jipAcc,
-          lamports: fee * LAMPORTS_PER_SOL,
-        });
-        volumeIxs = [...sellIxs, jitoTipIx];
-
+        let sellIxs;
+        if (wallet.isOkx) {
+          sellIxs = await okxSwap.getSellInstructions(ctx, {
+            user,
+            tokenMint,
+            tokenAmount: tokenAmount / 10 ** 6,
+          });
+          volumeIxs = [...sellIxs];
+        } else {
+          const computeBudgetConfig = {
+            units: limit,
+            microLamports: price,
+          };
+          sellIxs = await getSwapInstructions({
+            tokenMint,
+            type: "sell",
+            amount: tokenAmount,
+            slippage: SLIPPAGE_BASIS_POINTS,
+            computeBudgetConfig,
+            user: user,
+          });
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: keypair.publicKey,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
+          volumeIxs = [...sellIxs, jitoTipIx];
+        }
         try {
           const messageV0 = new TransactionMessage({
             payerKey: keypair.publicKey,
