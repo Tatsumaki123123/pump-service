@@ -120,7 +120,7 @@ async function getSwapInstructions(params) {
       rpcData.quoteReserve,
       rpcData.status.toNumber(),
     ];
-    const baseIn = inputMint === poolInfo.mintA.address;
+    const baseIn = inputMint.toBase58() === poolInfo.mintA.address;
     const [mintIn, mintOut] = baseIn
       ? [poolInfo.mintA, poolInfo.mintB]
       : [poolInfo.mintB, poolInfo.mintA];
@@ -133,7 +133,7 @@ async function getSwapInstructions(params) {
         status,
         version: 4,
       },
-      amountIn: amount,
+      amountIn: inputAmount,
       mintIn: mintIn.address,
       mintOut: mintOut.address,
       slippage: slippage,
@@ -142,12 +142,12 @@ async function getSwapInstructions(params) {
     const { execute, builder } = await raydium.liquidity.swap({
       poolInfo,
       poolKeys,
-      amountIn: amount,
+      amountIn: inputAmount,
       amountOut: out.minAmountOut,
       fixedSide: "in",
       inputMint: mintIn.address,
       txVersion,
-      computeBudgetConfig,
+      // computeBudgetConfig,
     });
     return builder.allInstructions;
   } else throw new Error("target pool is not CPMM pool");

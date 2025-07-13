@@ -28,7 +28,7 @@ const GMGN_FEES_VAULT = new PublicKey(
 );
 const GMGN_FEE = 0.0004;
 
-const SLIPPAGE_BASIS_POINTS = 0.2;
+const SLIPPAGE_BASIS_POINTS = 0.4;
 class RaydiumCpmm extends Service {
   async batchBuyToken(token, wallets) {
     const { ctx } = this;
@@ -115,17 +115,17 @@ class RaydiumCpmm extends Service {
           tx.sign([keypair]);
 
           // 模拟交易
-          const simulationResult = await connection.simulateTransaction(tx, {
-            commitment: "confirmed",
-          });
-          if (simulationResult.value.err) {
-            console.error("simulation", simulationResult.value);
-            throw new Error(simulationResult.value);
-          }
+          // const simulationResult = await connection.simulateTransaction(tx, {
+          //   commitment: "confirmed",
+          // });
+          // if (simulationResult.value.err) {
+          //   console.error("simulation", simulationResult.value);
+          //   throw new Error(simulationResult.value);
+          // }
 
-          console.log(
-            chalk.green("simulation success", keypair.publicKey.toString())
-          );
+          // console.log(
+          //   chalk.green("simulation success", keypair.publicKey.toString())
+          // );
           buyTxns.push(tx);
         } catch (error) {
           console.error("messageV0", error.message);
