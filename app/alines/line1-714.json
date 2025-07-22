@@ -1,0 +1,39 @@
+[
+  {
+    "transferAmount": 5,
+    "buyAmount": [0.8, 1, 1.2, 1.4],
+    "limit": 157000,
+    "price": 0,
+    "fee": 0.00001,
+    "firstBuy": false,
+    "secondBuy": false,
+    "multiBuy": true,
+    "thirdBuy": false,
+    "isTrogan": true
+  },
+  {
+    "transferAmount": 5,
+    "buyAmount": [0.8, 1, 1.2, 1.4],
+    "limit": 157000,
+    "price": 0,
+    "fee": 0.00001,
+    "firstBuy": false,
+    "secondBuy": true,
+    "multiBuy": false,
+    "thirdBuy": false,
+    "isTrogan": true
+  },
+  {
+    "transferAmount": 1,
+    "buyAmount": [0.1],
+    "limit": 200000,
+    "price": 86550,
+    "fee": 0.00001,
+    "firstBuy": true,
+    "secondBuy": false,
+    "multiBuy": false,
+    "thirdBuy": false,
+    "isTrogan": true,
+    "isProxyBuy": true
+  }
+]

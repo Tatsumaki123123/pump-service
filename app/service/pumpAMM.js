@@ -38,6 +38,10 @@ const ProxyPumpSwapSDK = require("../libs/proxyPumpSwap");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const { getSPLBalance } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
+const {
+  sendAstralaneTransaction,
+  connectionForAstra,
+} = require("../utils/astralane");
 
 const RENT_SYSVAR = new PublicKey(
   "SysvarRent111111111111111111111111111111111"
@@ -55,7 +59,7 @@ const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
 // const SLIPPAGE_BASIS_POINTS = 0.2; // 10% 滑点
 // const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
 
-const SLIPPAGE_BASIS_POINTS = 0.4;
+const SLIPPAGE_BASIS_POINTS = 0.7;
 
 const pSwap = new PumpSwapSDK();
 const proxyPumpSwap = new ProxyPumpSwapSDK();
@@ -103,12 +107,7 @@ class PumpAMM extends Service {
             slippage: SLIPPAGE_BASIS_POINTS,
             poolDetail,
           });
-          const tipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: BLOCK_RAZOR_1,
-            lamports: 0.0002 * LAMPORTS_PER_SOL,
-          });
-          volumeIxs = [...okxIxs, tipIx];
+          volumeIxs = [...okxIxs];
         } else {
           const jipAcc = ctx.service.jito.getTipAcc();
 
@@ -149,23 +148,21 @@ class PumpAMM extends Service {
             const troganTipIx = createTroProxyInstruction(user, jipAcc);
 
             volumeIxs.push(troganTipIx);
-          } else {
-            const jitoTipIx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(jitoTipIx);
-            existJitoIx = true;
           }
 
-          if (existJitoIx === false && i === wallets.length - 1) {
-            const jitoTipIx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(jitoTipIx);
+          if (wallets.length === 1) {
+            await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
+            return;
+          } else {
+            if (existJitoIx === false && i === wallets.length - 1) {
+              const jipAcc = ctx.service.jito.getTipAcc();
+              const jitoTipIx = SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: jipAcc,
+                lamports: fee * LAMPORTS_PER_SOL,
+              });
+              volumeIxs.push(jitoTipIx);
+            }
           }
         }
 
@@ -201,27 +198,9 @@ class PumpAMM extends Service {
       // for end
       console.log("buyTxns", buyTxns.length);
       // return;
-      if (buyTxns.length > 0) {
-        // for (let i = 0; i < buyTxns.length; i++) {
-        //   console.log("buy txn -", i);
-        //   const transferTx = buyTxns[i];
-        //   const signature = await connection.sendTransaction(transferTx, {
-        //     skipPreflight: false,
-        //   });
-        //   await connection.confirmTransaction(signature, "processed");
-        // }
-        // return;
-        if (buyTxns.length === 1) {
-          const transferTx = buyTxns[0];
-          const signature = await connection.sendTransaction(transferTx, {
-            skipPreflight: false,
-          });
-          await connection.confirmTransaction(signature, "confirmed");
-          return true;
-        }
+      if (buyTxns.length > 1) {
         const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
         console.log(bundleResult);
-
         console.log(chalk.green("Buy transactions completed."));
       }
     } else {
@@ -237,12 +216,9 @@ class PumpAMM extends Service {
       const tokenMint = new PublicKey(token);
       const poolDetail = await getPoolsWithPrices(tokenMint);
       const { blockhash } = await connection.getLatestBlockhash();
-      const jipAcc = ctx.service.jito.getTipAcc();
 
       const sellTxns = [];
-
       const newWallets = [];
-
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
@@ -333,13 +309,6 @@ class PumpAMM extends Service {
             user
           );
 
-          //7
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: keypair.publicKey,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-
           volumeIxs = [
             setComputeUnitLimitIx,
             setComputeUnitPriceIx,
@@ -347,8 +316,22 @@ class PumpAMM extends Service {
             initializeAccountIx,
             swapTx,
             closeAccountIx,
-            jitoTipIx,
           ];
+        }
+
+        if (len === 1) {
+          await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
+          return;
+        } else {
+          if (i === len - 1) {
+            const jipAcc = ctx.service.jito.getTipAcc();
+            const jitoTipIx = SystemProgram.transfer({
+              fromPubkey: keypair.publicKey,
+              toPubkey: jipAcc,
+              lamports: fee * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(jitoTipIx);
+          }
         }
 
         try {
@@ -385,18 +368,9 @@ class PumpAMM extends Service {
         }
       }
       console.log("sellTxns", sellTxns.length);
-      if (sellTxns.length > 0) {
-        if (sellTxns.length === 1) {
-          const transferTx = sellTxns[0];
-          const signature = await connection.sendTransaction(transferTx, {
-            skipPreflight: false,
-          });
-          // await connection.confirmTransaction(signature, "confirmed");
-          return;
-        }
+      if (sellTxns.length > 1) {
         const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
         console.log(bundleResult);
-
         console.log(chalk.green("Sell transactions completed."));
       }
       return true;

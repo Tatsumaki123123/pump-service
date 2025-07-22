@@ -67,7 +67,6 @@ async function getSwapInstructions(params) {
     slippage = 0.01,
     computeBudgetConfig,
   } = params;
-  console.log(params);
   const raydium = await initSdk();
   raydium.setOwner(user);
   const inputAmount = new BN(amount);
@@ -90,6 +89,7 @@ async function getSwapInstructions(params) {
   }
   const poolId = poolInfo.id;
   if (isValidCpmm(poolInfo.programId)) {
+    console.log("cpmm pool");
     const baseIn = inputMint.toBase58() === poolInfo.mintA.address;
     rpcData = await raydium.cpmm.getRpcPoolInfo(poolInfo.id, true);
 
@@ -108,11 +108,12 @@ async function getSwapInstructions(params) {
       slippage,
       baseIn,
       computeBudgetConfig: computeBudgetConfig,
-      txVersion: TxVersion.V0,
+      txVersion,
     });
 
     return builder.allInstructions;
   } else if (isValidAmm(poolInfo.programId)) {
+    console.log("liquidity pool");
     poolKeys = await raydium.liquidity.getAmmPoolKeys(poolId);
     rpcData = await raydium.liquidity.getRpcPoolInfo(poolId);
     const [baseReserve, quoteReserve, status] = [
@@ -139,7 +140,7 @@ async function getSwapInstructions(params) {
       slippage: slippage,
     });
 
-    const { execute, builder } = await raydium.liquidity.swap({
+    const { execute, transaction, builder } = await raydium.liquidity.swap({
       poolInfo,
       poolKeys,
       amountIn: inputAmount,

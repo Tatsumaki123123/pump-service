@@ -18,6 +18,10 @@ const chalk = require("chalk");
 const { connection, BLOCK_RAZOR_1 } = require("../constants/");
 const { getSwapInstructions } = require("../utils/raydium");
 const { getSPLBalanceAmount, sendV0Transaction } = require("../utils/solana");
+const {
+  sendAstralaneTransaction,
+  connectionForAstra,
+} = require("../utils/astralane");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 
@@ -28,7 +32,7 @@ const GMGN_FEES_VAULT = new PublicKey(
 );
 const GMGN_FEE = 0.0004;
 
-const SLIPPAGE_BASIS_POINTS = 0.4;
+const SLIPPAGE_BASIS_POINTS = 0.6;
 class RaydiumCpmm extends Service {
   async batchBuyToken(token, wallets) {
     const { ctx } = this;
@@ -71,7 +75,6 @@ class RaydiumCpmm extends Service {
           // transaction.add(...buyIxs);
           volumeIxs = [...buyIxs];
 
-          const jipAcc = ctx.service.jito.getTipAcc();
           if (wallet.isGmgn) {
             const gmgnTipTx = SystemProgram.transfer({
               fromPubkey: user,
@@ -82,19 +85,15 @@ class RaydiumCpmm extends Service {
           }
           if (wallet.isTrogan) {
             const troganTipIx = createTroProxyInstruction(user, jipAcc);
-
             volumeIxs.push(troganTipIx);
-          } else {
-            const jitoTipIx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(jitoTipIx);
-            existJitoIx = true;
           }
-
-          if (existJitoIx === false && i !== 0 && i === wallets.length - 1) {
+        }
+        if (wallets.length === 1) {
+          await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
+          return;
+        } else {
+          if (existJitoIx === false && i === wallets.length - 1) {
+            const jipAcc = ctx.service.jito.getTipAcc();
             const jitoTipIx = SystemProgram.transfer({
               fromPubkey: user,
               toPubkey: jipAcc,
@@ -133,13 +132,7 @@ class RaydiumCpmm extends Service {
         }
       }
       console.log("buyTxns", buyTxns.length);
-      if (buyTxns.length > 0) {
-        if (buyTxns.length === 1) {
-          const transferTx = buyTxns[0];
-          const signature = await connection.sendTransaction(transferTx);
-          await connection.confirmTransaction(signature, "processed");
-          return true;
-        }
+      if (buyTxns.length > 1) {
         const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
         console.log(bundleResult);
         console.log(chalk.green("Buy transactions completed."));
@@ -157,7 +150,6 @@ class RaydiumCpmm extends Service {
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
       const { blockhash } = await connection.getLatestBlockhash();
-      const jipAcc = ctx.service.jito.getTipAcc();
       const sellTxns = [];
       const newWallets = [];
       for (let i = 0; i < wallets.length; i++) {
@@ -207,12 +199,21 @@ class RaydiumCpmm extends Service {
             computeBudgetConfig,
             user: user,
           });
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: keypair.publicKey,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs = [...sellIxs, jitoTipIx];
+          volumeIxs = [...sellIxs];
+          if (len === 1) {
+            await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
+            return;
+          } else {
+            if (i === len - 1) {
+              const jipAcc = ctx.service.jito.getTipAcc();
+              const jitoTipIx = SystemProgram.transfer({
+                fromPubkey: keypair.publicKey,
+                toPubkey: jipAcc,
+                lamports: fee * LAMPORTS_PER_SOL,
+              });
+              volumeIxs.push(jitoTipIx);
+            }
+          }
         }
         try {
           const messageV0 = new TransactionMessage({
@@ -249,15 +250,7 @@ class RaydiumCpmm extends Service {
       }
 
       console.log("sellTxns", sellTxns.length);
-      if (sellTxns.length > 0) {
-        if (sellTxns.length === 1) {
-          const transferTx = sellTxns[0];
-          const signature = await connection.sendTransaction(transferTx, {
-            skipPreflight: false,
-          });
-          await connection.confirmTransaction(signature, "processed");
-          return true;
-        }
+      if (sellTxns.length > 1) {
         const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
         console.log(bundleResult);
 

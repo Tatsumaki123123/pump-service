@@ -40,7 +40,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "start": "egg-scripts start --port=8899 --daemon --pump-service --ignore-stderr --inspect",
+    "start": "egg-scripts start --port=8899 --daemon --title=pump-service --ignore-stderr --inspect",
     "stop": "egg-scripts stop --title=pump-service",
     "dev": "egg-bin dev  --port=8899",
     "debug": "egg-bin debug",
