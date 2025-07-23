@@ -26,7 +26,7 @@ const {
   createAssociatedTokenAccountInstruction,
 } = require("@solana/spl-token");
 
-const { WSOL_TOKEN_ACCOUNT } = require("../constants/index");
+const { WSOL_TOKEN_ACCOUNT, connection } = require("../constants/index");
 
 const { sleep } = require("./utils");
 
@@ -319,12 +319,7 @@ async function getTokenMeta(connection, mintAddress) {
   }
 }
 
-async function sendV0Transaction(
-  connection,
-  user,
-  instructions,
-  lookupTableAccounts
-) {
+async function sendV0Transaction(user, instructions, lookupTableAccounts) {
   // Get the latest blockhash and last valid block height
   const { lastValidBlockHeight, blockhash } =
     await connection.getLatestBlockhash({ commitment: "confirmed" });

@@ -36,12 +36,8 @@ const {
 const PumpSwapSDK = require("../libs/pumpSwap");
 const ProxyPumpSwapSDK = require("../libs/proxyPumpSwap");
 const OKXSwapSDK = require("../libs/okxRouterV2");
-const { getSPLBalance } = require("../utils/solana");
+const { getSPLBalance, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
-const {
-  sendAstralaneTransaction,
-  connectionForAstra,
-} = require("../utils/astralane");
 
 const RENT_SYSVAR = new PublicKey(
   "SysvarRent111111111111111111111111111111111"
@@ -90,6 +86,7 @@ class PumpAMM extends Service {
 
       const buyTxns = [];
 
+      const jipAcc = ctx.service.jito.getTipAcc();
       let existJitoIx = false;
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
@@ -109,8 +106,6 @@ class PumpAMM extends Service {
           });
           volumeIxs = [...okxIxs];
         } else {
-          const jipAcc = ctx.service.jito.getTipAcc();
-
           //  1: limit
           const setComputeUnitLimitIx =
             ComputeBudgetProgram.setComputeUnitLimit({
@@ -151,11 +146,10 @@ class PumpAMM extends Service {
           }
 
           if (wallets.length === 1) {
-            await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
+            await sendV0Transaction(keypair, volumeIxs);
             return;
           } else {
             if (existJitoIx === false && i === wallets.length - 1) {
-              const jipAcc = ctx.service.jito.getTipAcc();
               const jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: jipAcc,
@@ -235,6 +229,7 @@ class PumpAMM extends Service {
         }
       }
 
+      newWallets.reverse();
       const len = newWallets.length > 5 ? 5 : newWallets.length;
       for (let i = 0; i < len; i++) {
         const wallet = newWallets[i];
@@ -320,7 +315,7 @@ class PumpAMM extends Service {
         }
 
         if (len === 1) {
-          await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
+          await sendV0Transaction(keypair, volumeIxs);
           return;
         } else {
           if (i === len - 1) {

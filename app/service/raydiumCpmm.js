@@ -18,10 +18,6 @@ const chalk = require("chalk");
 const { connection, BLOCK_RAZOR_1 } = require("../constants/");
 const { getSwapInstructions } = require("../utils/raydium");
 const { getSPLBalanceAmount, sendV0Transaction } = require("../utils/solana");
-const {
-  sendAstralaneTransaction,
-  connectionForAstra,
-} = require("../utils/astralane");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 
@@ -42,6 +38,7 @@ class RaydiumCpmm extends Service {
       const { blockhash } = await connection.getLatestBlockhash();
       const buyTxns = [];
       let existJitoIx = false;
+      const jipAcc = ctx.service.jito.getTipAcc();
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
@@ -89,11 +86,10 @@ class RaydiumCpmm extends Service {
           }
         }
         if (wallets.length === 1) {
-          await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
+          await sendV0Transaction(keypair, volumeIxs);
           return;
         } else {
           if (existJitoIx === false && i === wallets.length - 1) {
-            const jipAcc = ctx.service.jito.getTipAcc();
             const jitoTipIx = SystemProgram.transfer({
               fromPubkey: user,
               toPubkey: jipAcc,
@@ -167,7 +163,7 @@ class RaydiumCpmm extends Service {
           newWallets.push({ ...wallet, tokenAmount });
         }
       }
-
+      newWallets.reverse();
       const len = newWallets.length > 5 ? 5 : newWallets.length;
       for (let i = 0; i < len; i++) {
         const wallet = newWallets[i];
@@ -201,7 +197,7 @@ class RaydiumCpmm extends Service {
           });
           volumeIxs = [...sellIxs];
           if (len === 1) {
-            await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
+            await sendV0Transaction(keypair, volumeIxs);
             return;
           } else {
             if (i === len - 1) {
