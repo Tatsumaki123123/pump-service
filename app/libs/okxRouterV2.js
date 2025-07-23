@@ -8,49 +8,6 @@ const {
 
 const crypto = require("crypto");
 
-const {
-  getAssociatedTokenAddress,
-  TOKEN_PROGRAM_ID,
-  TOKEN_2022_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  NATIVE_MINT,
-} = require("@solana/spl-token");
-
-const borsh = require("@coral-xyz/borsh");
-
-const {
-  Program,
-  AnchorProvider,
-  Idl,
-  BN,
-  BorshInstructionCoder,
-} = require("@coral-xyz/anchor");
-const {
-  getPoolsWithPrices,
-  getCoinCreatorVaultAuthorityPda,
-  getCoinCreatorVaultAtaPda,
-  getBuyTokenAmountBuyPoolDetail,
-} = require("./pool");
-
-const {
-  connection,
-  RPC_URL,
-  WSOL_TOKEN_ACCOUNT,
-  PUMP_AMM_PROGRAM_ID,
-} = require("../constants");
-const {
-  RENT_SYSVAR,
-  GLOBAL_CONFIG,
-  PUMP_AMM_FEE,
-  PUMP_AMM_FEE_TOKEN_ACCOUNT,
-  EVENT_AUTHORITY,
-} = require("./constants");
-const chalk = require("chalk");
-
-const OKX_PROGRAM_ID = new PublicKey(
-  "6m2CDdhRgxpH4WjvdzxAYbGxwdGUz5MziiL5jek2kBma"
-);
-
 /**
  * okxRouter
  * okxRouter.1234

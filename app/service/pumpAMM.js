@@ -59,8 +59,11 @@ const SLIPPAGE_BASIS_POINTS = 0.7;
 
 const pSwap = new PumpSwapSDK();
 const proxyPumpSwap = new ProxyPumpSwapSDK();
-const okxSwap = new OKXSwapSDK();
 // const pSwap = new PumpAmmSdk(connection);
+
+const JupSDK = require("../libs/jup");
+
+const jupSwap = new JupSDK();
 
 class PumpAMM extends Service {
   constructor(ctx) {
@@ -105,6 +108,15 @@ class PumpAMM extends Service {
             poolDetail,
           });
           volumeIxs = [...okxIxs];
+        }
+        if (wallet.isOkx) {
+          const jupIxs = await jupSwap.getBuyInstructions(ctx, {
+            user,
+            tokenMint,
+            buyAmount: buyAmount,
+            slippage: SLIPPAGE_BASIS_POINTS,
+          });
+          volumeIxs = [...jupIxs];
         } else {
           //  1: limit
           const setComputeUnitLimitIx =
@@ -240,79 +252,68 @@ class PumpAMM extends Service {
         const { limit, price, fee } = wallet;
 
         let volumeIxs = [];
-        if (wallet.isOkx) {
-          console.log(tokenAmount);
-          const ixs = await okxSwap.getSellInstructions(ctx, {
-            user,
-            tokenMint,
-            tokenAmount,
-          });
-          volumeIxs = [...ixs];
-        } else {
-          // 1, setComputeUnitLimitIx
-          const setComputeUnitLimitIx =
-            ComputeBudgetProgram.setComputeUnitLimit({
-              units: limit,
-            });
 
-          // 2,
-          const setComputeUnitPriceIx =
-            ComputeBudgetProgram.setComputeUnitPrice({
-              microLamports: price,
-            });
+        // 1, setComputeUnitLimitIx
+        const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
+          units: limit,
+        });
 
-          // 3, createAccountWithSeed
-          const seed = new Date().getTime().toString();
-          // const seed = "1749356034021";
+        // 2,
+        const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
+          microLamports: price,
+        });
 
-          const newAccount = await PublicKey.createWithSeed(
-            user,
-            seed,
-            TOKEN_PROGRAM_ID
-          );
-          const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
-            fromPubkey: user,
-            newAccountPubkey: newAccount,
-            basePubkey: user,
-            seed: seed,
-            lamports: 2039280,
-            space: 165,
-            programId: TOKEN_PROGRAM_ID,
-          });
+        // 3, createAccountWithSeed
+        const seed = new Date().getTime().toString();
+        // const seed = "1749356034021";
 
-          // 4, initializeAccount
-          const initializeAccountIx = createInitializeAccountInstruction(
-            newAccount,
-            WSOL_TOKEN_ACCOUNT,
-            user,
-            TOKEN_PROGRAM_ID
-          );
+        const newAccount = await PublicKey.createWithSeed(
+          user,
+          seed,
+          TOKEN_PROGRAM_ID
+        );
+        const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
+          fromPubkey: user,
+          newAccountPubkey: newAccount,
+          basePubkey: user,
+          seed: seed,
+          lamports: 2039280,
+          space: 165,
+          programId: TOKEN_PROGRAM_ID,
+        });
 
-          // 5, pump sell
-          const swapTx = await pSwap.createSellInstruction({
-            user,
-            tokenMint,
-            tokenAmount,
-            sellNewAccount: newAccount,
-            poolDetail: poolDetail,
-          });
+        // 4, initializeAccount
+        const initializeAccountIx = createInitializeAccountInstruction(
+          newAccount,
+          WSOL_TOKEN_ACCOUNT,
+          user,
+          TOKEN_PROGRAM_ID
+        );
 
-          // 6. Token Program: closeAccount
-          const closeAccountIx = createCloseAccountInstruction(
-            newAccount,
-            user,
-            user
-          );
+        // 5, pump sell
+        const swapTx = await pSwap.createSellInstruction({
+          user,
+          tokenMint,
+          tokenAmount,
+          sellNewAccount: newAccount,
+          poolDetail: poolDetail,
+        });
 
-          volumeIxs = [
-            setComputeUnitLimitIx,
-            setComputeUnitPriceIx,
-            createAccountWithSeedIx,
-            initializeAccountIx,
-            swapTx,
-            closeAccountIx,
-          ];
-        }
+        // 6. Token Program: closeAccount
+        const closeAccountIx = createCloseAccountInstruction(
+          newAccount,
+          user,
+          user
+        );
+
+        volumeIxs = [
+          setComputeUnitLimitIx,
+          setComputeUnitPriceIx,
+          createAccountWithSeedIx,
+          initializeAccountIx,
+          swapTx,
+          closeAccountIx,
+        ];
 
         if (len === 1) {
           await sendV0Transaction(keypair, volumeIxs);
