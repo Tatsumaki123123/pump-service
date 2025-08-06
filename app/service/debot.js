@@ -1,6 +1,10 @@
 const { Service } = require("egg");
 const { chain } = require("lodash");
 
+const PROXY_KEY =
+  "1E97W3TTT5OI4P8LO7NR3HIPG2TAULEIIYKWJVZAIC23RYUDDYD8TVW8Q6ZLFA5LQS4B76940UXI52DB";
+const PROXY_URL = `https://app.scrapingbee.com/api/v1/?api_key=${PROXY_KEY}`;
+
 const BASE_URL = "https://debot.ai/api/";
 
 const cookieStr = "";
@@ -15,15 +19,19 @@ class Debot extends Service {
       sort_field = groupSort.sort_field;
       sort_order = groupSort.sort_order;
     }
-    const uri = `${BASE_URL}wallet/group/hot_token?group_id=${groupId}&page_index=1&page_size=200&sort_field=${sort_field}&sort_order=${sort_order}&duration=6H`;
+    const uri = `${BASE_URL}wallet/group/hot_token?group_id=${groupId}&page_index=1&page_size=200&sort_field=${sort_field}&sort_order=${sort_order}&duration=24H`;
+
+    // const proxyUri = `${PROXY_URL}&url=${encodeURIComponent(uri)}`;
     const res = await ctx.curl(uri, {
       method: "GET",
       dataType: "json",
       headers: {
         "Content-Type": "application/json",
         cookie: appData.debotCookie,
+        "sec-ch-ua-full-version": "138.0.7204.158",
       },
     });
+    console.log(res);
     if (res.data.code !== 0) {
       throw new Error("Get data from debot error");
     }

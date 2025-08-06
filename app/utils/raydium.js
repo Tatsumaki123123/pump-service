@@ -4,16 +4,11 @@ const {
   CurveCalculator,
   TxVersion,
   CREATE_CPMM_POOL_PROGRAM,
-  DEV_CREATE_CPMM_POOL_PROGRAM,
   AMM_V4,
   AMM_STABLE,
-  DEVNET_PROGRAM_ID,
-  API_URLS,
-  ALL_PROGRAM_ID,
-  addComputeBudget,
-  swapBaseInAutoAccount,
-  ApiSwapV1Out,
-  getATAAddress,
+  getPdaLaunchpadPoolId,
+  LAUNCHPAD_PROGRAM,
+  PlatformConfig,
 } = require("@raydium-io/raydium-sdk-v2");
 const { LAMPORTS_PER_SOL, PublicKey } = require("@solana/web3.js");
 const BN = require("bn.js");
@@ -22,8 +17,6 @@ const {
   RAYDIUM_CPMM_CONFIG_ID,
 } = require("../constants/raydium");
 const { NATIVE_MINT } = require("@solana/spl-token");
-
-const axios = require("axios");
 
 const { testWallet, connection } = require("../constants");
 const { getSPLBalanceAmount } = require("./solana");
@@ -154,4 +147,67 @@ async function getSwapInstructions(params) {
   } else throw new Error("target pool is not CPMM pool");
 }
 
-module.exports = { initSdk, getRaydiumCpmmPoolId, getSwapInstructions };
+async function getRaydiumLaunchSwapInstructions(params) {
+  const {
+    tokenMint,
+    user,
+    type = "buy",
+    amount,
+    slippage = 0.01,
+    computeBudgetConfig,
+  } = params;
+  const raydium = await initSdk();
+  raydium.setOwner(user);
+  const mintA = tokenMint;
+  const mintB = NATIVE_MINT;
+  const programId = LAUNCHPAD_PROGRAM;
+  const inAmount = new BN(amount);
+  const txVersion = TxVersion.V0;
+
+  const poolId = await getPdaLaunchpadPoolId(LAUNCHPAD_PROGRAM, mintA, mintB)
+    .publicKey;
+  const poolInfo = await raydium.launchpad.getRpcPoolInfo({ poolId });
+  const data = await raydium.connection.getAccountInfo(poolInfo.platformId);
+  const platformInfo = PlatformConfig.decode(data.data);
+  if (!poolInfo) {
+    throw new Error("Cannot find pool info");
+  }
+
+  const newSlippage = new BN(10000 * slippage);
+
+  if (type === "buy") {
+    const { transaction, extInfo, execute, builder } =
+      await raydium.launchpad.buyToken({
+        programId,
+        mintA,
+        slippage: newSlippage,
+        configInfo: poolInfo.configInfo,
+        platformFeeRate: platformInfo.feeRate,
+        txVersion: txVersion.V0,
+        buyAmount: inAmount,
+        computeBudgetConfig,
+      });
+    return builder.allInstructions;
+  } else if (type === "sell") {
+    const { execute, transaction, builder } = await raydium.launchpad.sellToken(
+      {
+        programId,
+        mintA,
+        configInfo: poolInfo.configInfo,
+        platformFeeRate: platformInfo.feeRate,
+        txVersion: TxVersion.V0,
+        sellAmount: inAmount,
+      }
+    );
+    return builder.allInstructions;
+  }
+}
+
+module.exports = {
+  initSdk,
+  getRaydiumCpmmPoolId,
+  getSwapInstructions,
+  getRaydiumLaunchSwapInstructions,
+  isValidCpmm,
+  isValidAmm,
+};

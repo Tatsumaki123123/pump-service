@@ -33,9 +33,10 @@ const {
   WSOL_TOKEN_ACCOUNT,
   BLOCK_RAZOR_1,
 } = require("../constants");
-const PumpSwapSDK = require("../libs/pumpSwap");
+const PumpSwapSDK = require("../libs/pumpSwap1");
 const ProxyPumpSwapSDK = require("../libs/proxyPumpSwap");
 const OKXSwapSDK = require("../libs/okxRouterV2");
+const JupSDK = require("../libs/jup");
 const { getSPLBalance, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 
@@ -52,8 +53,6 @@ const TROGAN_FEE = 0.00036;
 
 const TRANSACTION_FEE = 5000;
 const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
-// const SLIPPAGE_BASIS_POINTS = 0.2; // 10% 滑点
-// const SLIPPAGE_BASIS_POINTS = 0.1; // 10% 滑点
 
 const SLIPPAGE_BASIS_POINTS = 0.7;
 
@@ -61,8 +60,7 @@ const pSwap = new PumpSwapSDK();
 const proxyPumpSwap = new ProxyPumpSwapSDK();
 // const pSwap = new PumpAmmSdk(connection);
 
-const JupSDK = require("../libs/jup");
-
+const okxSwap = new OKXSwapSDK();
 const jupSwap = new JupSDK();
 
 class PumpAMM extends Service {
@@ -78,7 +76,7 @@ class PumpAMM extends Service {
    */
   async batchBuyToken(token, wallets) {
     const { ctx } = this;
-    console.log(chalk.green("\n batchBuyToken----", wallets.length));
+    console.log(chalk.green("\npump amm batchBuyToken----", wallets.length));
 
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
@@ -92,29 +90,28 @@ class PumpAMM extends Service {
       const jipAcc = ctx.service.jito.getTipAcc();
       let existJitoIx = false;
       for (let i = 0; i < wallets.length; i++) {
+        const slippage = i === 0 ? 0.01 : SLIPPAGE_BASIS_POINTS;
         const wallet = wallets[i];
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
         const { buyAmount, limit, price, fee } = wallet;
         let volumeIxs = [];
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
-        // const SLIPPAGE_BASIS_POINTS = buyAmount > 0.3 ? 0.1 : 0.2;
         if (wallet.isOkx) {
           const okxIxs = await okxSwap.getBuyInstructions(ctx, {
             user,
             tokenMint,
             buyAmount: buyAmount,
-            slippage: SLIPPAGE_BASIS_POINTS,
+            slippage,
             poolDetail,
           });
           volumeIxs = [...okxIxs];
-        }
-        if (wallet.isOkx) {
+        } else if (wallet.isJup) {
           const jupIxs = await jupSwap.getBuyInstructions(ctx, {
             user,
             tokenMint,
             buyAmount: buyAmount,
-            slippage: SLIPPAGE_BASIS_POINTS,
+            slippage,
           });
           volumeIxs = [...jupIxs];
         } else {
@@ -134,7 +131,7 @@ class PumpAMM extends Service {
             tokenMint,
             wallet,
             poolDetail,
-            SLIPPAGE_BASIS_POINTS
+            slippage
           );
           volumeIxs = [
             setComputeUnitLimitIx,
@@ -156,19 +153,18 @@ class PumpAMM extends Service {
 
             volumeIxs.push(troganTipIx);
           }
-
-          if (wallets.length === 1) {
-            await sendV0Transaction(keypair, volumeIxs);
-            return;
-          } else {
-            if (existJitoIx === false && i === wallets.length - 1) {
-              const jitoTipIx = SystemProgram.transfer({
-                fromPubkey: user,
-                toPubkey: jipAcc,
-                lamports: fee * LAMPORTS_PER_SOL,
-              });
-              volumeIxs.push(jitoTipIx);
-            }
+        }
+        if (wallets.length === 1) {
+          await sendV0Transaction(keypair, volumeIxs);
+          return;
+        } else {
+          if (existJitoIx === false && i === wallets.length - 1) {
+            const jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: fee * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(jitoTipIx);
           }
         }
 
@@ -183,17 +179,17 @@ class PumpAMM extends Service {
           tx.sign([keypair]);
 
           // 模拟交易
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.error("simulation", simulationResult.value);
-          //   throw new Error(simulationResult.value);
-          // }
+          const simulationResult = await connection.simulateTransaction(tx, {
+            commitment: "confirmed",
+          });
+          if (simulationResult.value.err) {
+            console.error("simulation", simulationResult.value);
+            throw new Error(simulationResult.value);
+          }
 
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
+          console.log(
+            chalk.green("simulation success", keypair.publicKey.toString())
+          );
           buyTxns.push(tx);
         } catch (error) {
           console.error(error.message);
@@ -225,6 +221,7 @@ class PumpAMM extends Service {
 
       const sellTxns = [];
       const newWallets = [];
+      const slippage = wallets.length === 1 ? 0.01 : SLIPPAGE_BASIS_POINTS;
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
@@ -436,7 +433,7 @@ class PumpAMM extends Service {
     return Ixs;
   }
 
-  async genBuyProxyIxs(tokenMint, wallet, poolDetail, SLIPPAGE_BASIS_POINTS) {
+  async genBuyProxyIxs(tokenMint, wallet, poolDetail, slippage) {
     const { ctx } = this;
 
     let proxyBuyIxs = [];
@@ -450,7 +447,7 @@ class PumpAMM extends Service {
         tokenMint: tokenMint,
         user: user,
         buyAmount: buyAmount,
-        slippage: SLIPPAGE_BASIS_POINTS,
+        slippage: slippage,
         poolDetail: poolDetail,
       });
       proxyBuyIxs = [proxyBuyIx];
@@ -460,7 +457,7 @@ class PumpAMM extends Service {
         user,
         buyAmount,
         poolDetail,
-        SLIPPAGE_BASIS_POINTS
+        slippage
       );
     }
 

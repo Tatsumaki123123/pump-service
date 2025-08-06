@@ -15,6 +15,7 @@ function aveTokenToDB(item) {
   return {
     token: item.target_token,
     symbol: symbol,
+    logo_url: item.logo_url,
     mkt_cap: item.market_cap,
     create_time: item.created_at,
     amm: item.amm,
@@ -31,6 +32,35 @@ function aveTokenToDB(item) {
     percent1h: item.price_change_1h,
     latest_time: item.last_trade_at,
     holders: item.holders,
+  };
+}
+
+function aveTokenInfoToList(item) {
+  let amm = "";
+  if (item.issue_platform === "letsbonk.fun") {
+    amm = "raydiumcpmm";
+  } else if (item.issue_platform === "pump.fun") {
+    amm = "pumpfunamm";
+  }
+  return {
+    token: item.token,
+    symbol: item.symbol,
+    logo_url: item.logo_url,
+    mkt_cap: parseFloat(item.current_price_usd) * 10 ** 9,
+    create_time: parseInt(item.last_txn_time) * 1000,
+    amm: amm,
+    usdPrice: item.current_price_usd,
+    pool: "",
+    volume_u_5m: 0,
+    volume_u_1h: 0,
+    wallet_count: 0,
+    transaction_count: 0,
+    buy_count: item.total_purchase,
+    sell_count: item.total_sold,
+    percent5m: 0,
+    percent1h: 0,
+    latest_time: parseInt(item.last_txn_time) * 1000,
+    holders: 0,
   };
 }
 
@@ -97,6 +127,14 @@ class Ave extends Service {
 
   async getList(groupSort) {
     const { ctx } = this;
+
+    const category = groupSort.category || "pump_out_new";
+
+    if (category === "user") {
+      const list = await this.getUserList(groupSort);
+      return list;
+    }
+
     const sort_field = groupSort.sort_field || "created_at";
     const sort_order = groupSort.sort_order || "asc";
     const mcp_min = groupSort.mcp_min || 4000;
@@ -105,7 +143,6 @@ class Ave extends Service {
     const create_min =
       Math.round(new Date().getTime() / 1000) - create_day * 24 * 3600;
     const holder_min = 50;
-    const category = groupSort.category || "pump_out_new";
     const uri = `${AVE_API_URL}v1api/v4/tokens/treasure/list?chain=solana&sort=${sort_field}&sort_dir=${sort_order}&created_at_min=${create_min}&marketcap_min=${mcp_min}&marketcap_max=${mcp_max}&holder_min=${holder_min}&pageNO=1&pageSize=500&category=${category}`;
 
     const X_AUTH = await this.getXAuth();
@@ -118,7 +155,6 @@ class Ave extends Service {
     });
     const data = res.data?.data?.data;
     if (data) {
-      console.log(data.length);
       return data.map((item) => aveTokenToDB(item));
     }
     return data;
@@ -151,6 +187,44 @@ class Ave extends Service {
       return data.map((item) => aveTokenToDB(item));
     }
     return [];
+  }
+
+  async getUserList(groupSort) {
+    const { address } = groupSort;
+    if (!address || address.length === 0) {
+      throw new Error("address is required");
+    }
+    const X_AUTH = await this.getXAuth();
+    const { ctx } = this;
+
+    const list = [];
+    for (const addr of address) {
+      const uri = `${AVE_API_URL}/v2api/walletinfo/v1/tokens?user_address=${addr}&chain=solana&pageNO=1&pageSize=500&sort_dir=desc&sort=last_txn_time&is_self=0e`;
+
+      const res = await ctx.curl(uri, {
+        dataType: "json",
+        headers: {
+          "x-auth": X_AUTH,
+        },
+      });
+      const data = res.data?.data;
+      if (data) {
+        const tokens = data.filter(
+          (item) =>
+            parseInt(item.total_profit) !== 0 &&
+            item.token !== "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        );
+        tokens.forEach((tItem) => {
+          if (!list.find((item) => item.token === tItem.token)) {
+            list.push(tItem);
+          }
+        });
+      }
+    }
+
+    return list
+      .map((item) => aveTokenInfoToList(item))
+      .filter((item) => item.amm);
   }
 }
 module.exports = Ave;

@@ -172,7 +172,7 @@ const calculateWithSlippageBuy = (amount, basisPoints) => {
 };
 
 const getBuyTokenAmount = async (solNum, mint) => {
-  const solAmount = BigInt(solNum * LAMPORTS_PER_SOL);
+  const solAmount = BigInt(parseInt(solNum * LAMPORTS_PER_SOL));
   const pool_detail = await getPoolsWithPrices(mint);
   const sol_reserve = BigInt(
     Math.floor(pool_detail.reserves.native * LAMPORTS_PER_SOL)
@@ -189,7 +189,7 @@ const getBuyTokenAmount = async (solNum, mint) => {
 };
 
 const getBuyTokenAmountBuyPoolDetail = (solNum, pool_detail) => {
-  const solAmount = BigInt(solNum * LAMPORTS_PER_SOL);
+  const solAmount = BigInt(parseInt(solNum * LAMPORTS_PER_SOL));
   const sol_reserve = BigInt(
     Math.floor(pool_detail.reserves.native * LAMPORTS_PER_SOL)
   );

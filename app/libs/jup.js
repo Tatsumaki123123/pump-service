@@ -25,7 +25,7 @@ class JupSDK {
 
   async getSellInstructions(ctx, params) {
     const { user, tokenMint, tokenAmount, slippage } = params;
-    const amount = tokenAmount * 10 ** 6;
+    const amount = tokenAmount;
     const quoteResponse = await this.getQuote(
       ctx,
       tokenMint.toBase58(),

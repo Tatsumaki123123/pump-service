@@ -12,20 +12,19 @@ const {
   TransactionInstruction,
   Transaction,
 } = require("@solana/web3.js");
+const { AnchorProvider, Wallet } = require("@coral-xyz/anchor");
+const BN = require("bn.js");
 const chalk = require("chalk");
-const { MARKET_STATE_LAYOUT_V3 } = require("@raydium-io/raydium-sdk-v2");
-const { connection, BLOCK_RAZOR_1 } = require("../constants/");
-const { getSwapInstructions } = require("../utils/raydium");
+const { connection, BLOCK_RAZOR_1 } = require("../constants");
+const { getRaydiumLaunchSwapInstructions } = require("../utils/raydium");
 const { getSPLBalanceAmount, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
-const RaydiumRouterSDK = require("../libs/raydiumRouter");
 const { sendAstralaneTransaction } = require("../utils/astralane");
 
 const okxSwap = new OKXSwapSDK();
 const jupSwap = new JupSDK();
-const rayRouterSwap = new RaydiumRouterSDK();
 
 const GMGN_FEES_VAULT = new PublicKey(
   "BB5dnY55FXS1e1NXqZDwCzgdYJdMCj3B92PU6Q5Fb6DT"
@@ -33,10 +32,12 @@ const GMGN_FEES_VAULT = new PublicKey(
 const GMGN_FEE = 0.0004;
 
 const SLIPPAGE_BASIS_POINTS = 0.6;
-class RaydiumCpmm extends Service {
+class RaydiumLaunch extends Service {
   async batchBuyToken(token, wallets) {
     const { ctx } = this;
-    console.log(chalk.green("\nRaydiumCpmm batchBuyToken----", wallets.length));
+    console.log(
+      chalk.green("\nRaydiumLaunch batchBuyToken----", wallets.length)
+    );
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
       const { blockhash } = await connection.getLatestBlockhash();
@@ -49,10 +50,7 @@ class RaydiumCpmm extends Service {
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
         const { buyAmount, limit, price, fee } = wallet;
-        const computeBudgetConfig = {
-          units: limit,
-          microLamports: price,
-        };
+
         let volumeIxs = [];
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
 
@@ -72,17 +70,12 @@ class RaydiumCpmm extends Service {
             slippage: slippage,
           });
           volumeIxs = [...jupIxs];
-        } else if (wallet.isRayRouter) {
-          const routerIxs = await rayRouterSwap.getBuyInstructions(ctx, {
-            user,
-            tokenMint,
-            buyAmount: buyAmount,
-            slippage: slippage,
-            computeBudgetConfig,
-          });
-          volumeIxs = [...routerIxs];
         } else {
-          const buyIxs = await getSwapInstructions({
+          const computeBudgetConfig = {
+            units: limit,
+            microLamports: price,
+          };
+          const buyIxs = await getRaydiumLaunchSwapInstructions({
             tokenMint,
             type: "buy",
             amount: buyAmount * LAMPORTS_PER_SOL,
@@ -197,40 +190,23 @@ class RaydiumCpmm extends Service {
         const { limit, price, fee } = wallet;
 
         let volumeIxs = [];
+        let sellIxs;
         const computeBudgetConfig = {
           units: limit,
           microLamports: price,
         };
-        if (wallet.isOkx && i === 0) {
-          const okxIxs = await okxSwap.getSellInstructions(ctx, {
-            user,
-            tokenMint,
-            tokenAmount: tokenAmount,
-            slippage: slippage,
-          });
-          volumeIxs = [...okxIxs];
-        } else if (wallet.isJup && i === 0) {
-          const jupIxs = await jupSwap.getSellInstructions(ctx, {
-            user,
-            tokenMint,
-            tokenAmount: tokenAmount,
-            slippage: slippage,
-          });
-          volumeIxs = [...jupIxs];
-        } else {
-          const sellIxs = await getSwapInstructions({
-            tokenMint,
-            type: "sell",
-            amount: tokenAmount,
-            slippage: slippage,
-            computeBudgetConfig,
-            user: user,
-          });
-          volumeIxs = [...sellIxs];
-        }
+        sellIxs = await getRaydiumLaunchSwapInstructions({
+          tokenMint,
+          type: "sell",
+          amount: tokenAmount,
+          slippage: slippage,
+          computeBudgetConfig,
+          user: user,
+        });
+        volumeIxs = [...sellIxs];
         if (len === 1) {
-          await sendV0Transaction(keypair, volumeIxs);
-          // await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
+          // await sendV0Transaction(keypair, volumeIxs);
+          await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
           return;
         } else {
           if (i === len - 1) {
@@ -289,19 +265,5 @@ class RaydiumCpmm extends Service {
       throw new Error("batch sell Token: param error");
     }
   }
-
-  async checkSellOrder(pool) {
-    const poolId = new PublicKey(pool);
-    const poolAccountInfo = await connection.getAccountInfo(poolId);
-    if (!poolAccountInfo) {
-      throw new Error("cannot get pool");
-    }
-
-    const poolState = MARKET_STATE_LAYOUT_V3.decode(poolAccountInfo.data);
-    console.log(poolState);
-
-    const marketId = poolState.marketId;
-    const marketAsks = poolState.marketAsks;
-  }
 }
-module.exports = RaydiumCpmm;
+module.exports = RaydiumLaunch;

@@ -36,6 +36,7 @@ const PUMP_AMM_NAME = "pumpfunamm";
 const PUMP_FUN_NAME = "pump";
 
 const RAYDIUM_CPMM_NAME = "raydiumcpmm";
+const RAYDIUM_LANUCH_NAME = "raydiumlaunchlab";
 
 class ExecuteSwap extends Service {
   constructor(props) {
@@ -280,12 +281,20 @@ class ExecuteSwap extends Service {
     const token = tokenInfo.token;
     const line = tokenInfo.line;
     console.log(chalk.green(`\nStep 3: Buying ${token}`));
-    console.log(tokenInfo);
 
-    const wallets = await this.getWalletsWithLineFirstWallet(line, type);
+    const configWallets = await this.getWalletsWithLineFirstWallet(line, type);
+    const wallets = [];
+    configWallets.forEach((wallet) => {
+      const { buyTimes = 1 } = wallet;
+      for (let index = 0; index < buyTimes; index++) {
+        wallets.push(wallet);
+      }
+    });
     if (wallets && wallets.length > 0 && token) {
       if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
         await ctx.service.raydiumCpmm.batchBuyToken(token, wallets);
+      } else if (tokenInfo.amm === RAYDIUM_LANUCH_NAME) {
+        await ctx.service.raydiumLaunch.batchBuyToken(token, wallets);
       } else if (tokenInfo.amm === PUMP_AMM_NAME) {
         await ctx.service.pumpAMM.batchBuyToken(token, wallets);
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
@@ -325,6 +334,8 @@ class ExecuteSwap extends Service {
     if (wallets && wallets.length > 0 && token) {
       if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
         await ctx.service.raydiumCpmm.batchSellToken(token, wallets);
+      } else if (tokenInfo.amm === RAYDIUM_LANUCH_NAME) {
+        await ctx.service.raydiumLaunch.batchSellToken(token, wallets);
       } else if (tokenInfo.amm === PUMP_AMM_NAME) {
         await ctx.service.pumpAMM.batchSellToken(token, wallets);
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
@@ -604,36 +615,27 @@ class ExecuteSwap extends Service {
     }
 
     let amm = tokenData.amm;
-    let dev = "";
-    let pool = "";
-    if (amm === PUMP_AMM_NAME) {
-      dev = "";
-      pool = tokenData.pool;
-    } else if (amm === PUMP_FUN_NAME) {
-      dev = "";
-      pool = tokenData.pool;
-    } else if (amm === RAYDIUM_CPMM_NAME) {
+    let dev, pool;
+    if (tokenData.pool) {
       dev = "";
       pool = tokenData.pool;
     } else {
-      const poolId = await getRaydiumCpmmPoolId(new PublicKey(token));
-      if (poolId) {
-        pool = poolId.toBase58();
-        dev = "";
-        amm = RAYDIUM_CPMM_NAME;
+      let poolDetail;
+      try {
+        poolDetail = await getPoolsWithPrices(new PublicKey(token));
+      } catch (error) {}
+      if (poolDetail) {
+        amm = PUMP_AMM_NAME;
+        dev = poolDetail.poolData.coinCreator;
+        pool = poolDetail.address;
       } else {
-        let poolDetail;
-        try {
-          poolDetail = await getPoolsWithPrices(new PublicKey(token));
-        } catch (error) {
-          console.error(error);
-        }
-        if (poolDetail) {
-          amm = PUMP_AMM_NAME;
-          dev = poolDetail.poolData.coinCreator;
-          pool = poolDetail.address;
+        const poolId = await getRaydiumCpmmPoolId(new PublicKey(token));
+        if (poolId) {
+          pool = poolId.toBase58();
+          dev = "";
+          amm = RAYDIUM_CPMM_NAME;
         } else {
-          poolDetail = await ctx.service.pumpfun.getPoolDetail(token);
+          const poolDetail = await ctx.service.pumpfun.getPoolDetail(token);
           if (poolDetail) {
             amm = PUMP_FUN_NAME;
             dev = poolDetail.dev;
@@ -644,6 +646,13 @@ class ExecuteSwap extends Service {
         }
       }
     }
+
+    // if (!forceCheck) {
+    //   const orderCheck = await this.checkSellOrder(amm, pool);
+    //   if (!orderCheck) {
+    //     throw new Error("Exist sell order");
+    //   }
+    // }
 
     const tokenDb = await ctx.model.ExecuteToken.findOne({
       eid: eid,
@@ -840,6 +849,15 @@ class ExecuteSwap extends Service {
       { isActive: false }
     );
     return true;
+  }
+
+  async checkSellOrder(amm, pool) {
+    const { ctx } = this;
+    let result = true;
+    if (amm === RAYDIUM_CPMM_NAME) {
+      result = await ctx.service.raydiumCpmm.checkSellOrder(pool);
+    }
+    return result;
   }
 }
 

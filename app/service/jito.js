@@ -39,11 +39,6 @@ const tipAccounts = [
   "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
 ];
 
-const quickNodeConnection = new Connection(
-  "https://little-practical-lake.solana-mainnet.quiknode.pro/748dd52b1227a0602d41ef4ac30d2b4a01f39dc3/",
-  "confirmed"
-);
-
 const SLOT_API_KEY = "";
 const slot0Connection = new Connection(
   `https://ny.0slot.trade?api-key=${SLOT_API_KEY}`,
@@ -93,10 +88,7 @@ class Jito extends Service {
       params: [transactions, "ny"],
     };
 
-    const result = await quickNodeConnection._rpcRequest(
-      request.method,
-      request.params
-    );
+    const result = await connection._rpcRequest(request.method, request.params);
 
     console.log(JSON.stringify(result, null, 2));
     return result;

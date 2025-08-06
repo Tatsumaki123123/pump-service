@@ -61,6 +61,7 @@ class OKXRouterSDK {
         userWalletAddress: user.toBase58(),
       });
 
+      console.log(res);
       const data = res?.data?.data;
       if (data && data.instructionLists) {
         const instructions = data.instructionLists;
@@ -83,7 +84,7 @@ class OKXRouterSDK {
       const res = await this.getRouterInstruction(ctx, {
         fromTokenAddress: tokenMint.toBase58(),
         toTokenAddress: fromTokenAddress,
-        amount: tokenAmount * 10 ** 6,
+        amount: tokenAmount,
         slippage,
         userWalletAddress: user.toBase58(),
       });
