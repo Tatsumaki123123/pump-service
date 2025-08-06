@@ -361,6 +361,13 @@ async function main() {
   console.log("coin_creator_vault_ata: ", coin_creator_vault_ata[0].toBase58());
 }
 
+function getUserVolumeAccumulatorPda(user) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("user_volume_accumulator"), user.toBuffer()],
+    PUMP_AMM_PROGRAM_ID
+  )[0];
+}
+
 // main();
 
 module.exports = {
@@ -371,4 +378,5 @@ module.exports = {
   getBuyTokenAmountBuyPoolDetail,
   getPoolsWithBaseMint,
   getPriceAndLiquidity,
+  getUserVolumeAccumulatorPda,
 };

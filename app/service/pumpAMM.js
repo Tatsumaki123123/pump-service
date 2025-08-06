@@ -33,7 +33,7 @@ const {
   WSOL_TOKEN_ACCOUNT,
   BLOCK_RAZOR_1,
 } = require("../constants");
-const PumpSwapSDK = require("../libs/pumpSwap1");
+const PumpSwapSDK = require("../libs/pumpSwap");
 const ProxyPumpSwapSDK = require("../libs/proxyPumpSwap");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
