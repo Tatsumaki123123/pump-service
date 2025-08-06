@@ -14,10 +14,10 @@ const crypto = require("crypto");
  */
 const SOLANA_CHAIN_ID = "501";
 const CLIENT_CONFIG = {
-  apiKey: "e84bcde0-0522-45a6-8c6c-081181e14f42",
-  secretKey: "CF299A4E3849179B27F8FBB97F30318F",
-  apiPassphrase: "okxRouter.1234",
-  projectId: "d3158151954a9493528106856d205a7f",
+  apiKey: "cf60893d-2b6d-4f4e-97f9-b6f18c887b42",
+  secretKey: "BEB7804D176CE9630A14821C7E1833D9",
+  apiPassphrase: "Youarebeautiful.1234",
+  projectId: "8b31b7f024e326c88c39a2ca3ceda15e",
 };
 
 const OKX_BASE_URL = "https://web3.okx.com";
