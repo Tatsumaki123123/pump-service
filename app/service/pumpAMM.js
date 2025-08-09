@@ -54,7 +54,7 @@ const TROGAN_FEE = 0.00036;
 const TRANSACTION_FEE = 5000;
 const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
 
-const SLIPPAGE_BASIS_POINTS = 0.7;
+const SLIPPAGE_BASIS_POINTS = 0.2;
 
 const pSwap = new PumpSwapSDK();
 const proxyPumpSwap = new ProxyPumpSwapSDK();
@@ -158,14 +158,12 @@ class PumpAMM extends Service {
           await sendV0Transaction(keypair, volumeIxs);
           return;
         } else {
-          if (existJitoIx === false && i === wallets.length - 1) {
-            const jitoTipIx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(jitoTipIx);
-          }
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
+          volumeIxs.push(jitoTipIx);
         }
 
         try {
@@ -179,17 +177,17 @@ class PumpAMM extends Service {
           tx.sign([keypair]);
 
           // 模拟交易
-          const simulationResult = await connection.simulateTransaction(tx, {
-            commitment: "confirmed",
-          });
-          if (simulationResult.value.err) {
-            console.error("simulation", simulationResult.value);
-            throw new Error(simulationResult.value);
-          }
+          // const simulationResult = await connection.simulateTransaction(tx, {
+          //   commitment: "confirmed",
+          // });
+          // if (simulationResult.value.err) {
+          //   console.error("simulation", simulationResult.value);
+          //   throw new Error(simulationResult.value);
+          // }
 
-          console.log(
-            chalk.green("simulation success", keypair.publicKey.toString())
-          );
+          // console.log(
+          //   chalk.green("simulation success", keypair.publicKey.toString())
+          // );
           buyTxns.push(tx);
         } catch (error) {
           console.error(error.message);
@@ -316,15 +314,13 @@ class PumpAMM extends Service {
           await sendV0Transaction(keypair, volumeIxs);
           return;
         } else {
-          if (i === len - 1) {
-            const jipAcc = ctx.service.jito.getTipAcc();
-            const jitoTipIx = SystemProgram.transfer({
-              fromPubkey: keypair.publicKey,
-              toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(jitoTipIx);
-          }
+          const jipAcc = ctx.service.jito.getTipAcc();
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: keypair.publicKey,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
+          volumeIxs.push(jitoTipIx);
         }
 
         try {

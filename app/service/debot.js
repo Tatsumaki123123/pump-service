@@ -10,8 +10,17 @@ const BASE_URL = "https://debot.ai/api/";
 const cookieStr = "";
 
 class Debot extends Service {
-  async getHotToken(groupId, groupSort = {}) {
+  async getList(groupSort) {
+    const { category } = groupSort;
+    if (category === "fav") {
+      return this.getCollectToken(groupSort);
+    } else {
+      return this.getHotToken(groupSort);
+    }
+  }
+  async getHotToken(groupSort = {}) {
     const { ctx } = this;
+    const { groupId } = groupSort;
     const appData = await ctx.service.appData.getData();
     let sort_field = "latest_time";
     let sort_order = "desc";
@@ -69,6 +78,63 @@ class Debot extends Service {
             latest_time: item.latest_time * 1000,
           };
         });
+      return list;
+    } else {
+      console.log(res);
+      throw new Error(res.message);
+    }
+  }
+
+  async getCollectToken(groupSort) {
+    const { ctx } = this;
+    const { favId } = groupSort;
+    const appData = await ctx.service.appData.getData();
+
+    const uri = `${BASE_URL}self-select/token/group/rank?&group_id=${favId}&chain=solana&duration=1H&sort_field=creation_timestamp&sort_order=asc&filter=%7B%7D`;
+
+    // const proxyUri = `${PROXY_URL}&url=${encodeURIComponent(uri)}`;
+    const res = await ctx.curl(uri, {
+      method: "GET",
+      dataType: "json",
+      headers: {
+        "Content-Type": "application/json",
+        cookie: appData.debotCookie,
+        "sec-ch-ua-full-version": "138.0.7204.158",
+      },
+    });
+    if (res.data.code !== 0) {
+      throw new Error("Get data from debot error");
+    }
+    const data = res.data?.data;
+
+    if (data) {
+      const list = data.map((item) => {
+        const { tags = [], market_info } = item;
+        let amm = "pumpfunamm";
+        if (tags && tags.includes("raydium_launchlab")) {
+          amm = "raydiumcpmm";
+        }
+        return {
+          amm,
+          create_time: item.create_time * 1000,
+          latest_time: item.latest_time * 1000,
+          token: item.address,
+          symbol: item.symbol,
+          mkt_cap: market_info.mkt_cap,
+          create_time: item.creation_timestamp * 1000,
+          usdPrice: market_info.price,
+          volume_u_5m: market_info.volume,
+          volume_u_1h: market_info.volume,
+          wallet_count: 0,
+          transaction_count: 0,
+          buy_count: 0,
+          sell_count: 0,
+          percent5m: market_info.percent_5m,
+          percent1h: market_info.percent_5m,
+          latest_time: market_info.last_update_time * 1000,
+          holders: market_info.holders,
+        };
+      });
       return list;
     } else {
       console.log(res);

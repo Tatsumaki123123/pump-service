@@ -610,7 +610,7 @@ class ExecuteSwap extends Service {
 
     let symbol = tokenData.symbol;
     if (!symbol) {
-      const metaData = await ctx.service.debot.getTokenInfo(token);
+      const metaData = await ctx.service.ave.getTokenInfo(token);
       symbol = metaData.symbol;
     }
 

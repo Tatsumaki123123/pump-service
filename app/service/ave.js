@@ -226,5 +226,7 @@ class Ave extends Service {
       .map((item) => aveTokenInfoToList(item))
       .filter((item) => item.amm);
   }
+
+  async getFavList(groupSort) {}
 }
 module.exports = Ave;

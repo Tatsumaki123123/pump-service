@@ -10,14 +10,11 @@ class ExecuteToken extends Service {
     const executeData = await ctx.service.executeSwap.getExecuteData(line);
     const lineData = await ctx.model.ExecuteLine.findOne({ lineId: line });
     if (executeData && lineData) {
-      const { groupId, sourceWeb = "debot" } = lineData;
+      const { groupId, sourceWeb = "debot", groupSort } = lineData;
       console.log(sourceWeb);
       let allList = [];
       if (sourceWeb === "debot") {
-        allList = await ctx.service.debot.getHotToken(
-          groupId,
-          lineData.groupSort
-        );
+        allList = await ctx.service.debot.getList(lineData.groupSort);
       } else if (sourceWeb === "ave") {
         //ave
         allList = await ctx.service.ave.getList(lineData.groupSort);
