@@ -343,11 +343,12 @@ class RaydiumCpmm extends Service {
         for (const wallets of Object.values(sellAllObj)) {
           if (wallets.length > 0) {
             await func(wallets);
+            await sleep(0.5);
           }
         }
         return true;
       } else {
-        return func(wallets);
+        return func(newWallets);
       }
     } else {
       throw new Error("batch sell Token: param error");

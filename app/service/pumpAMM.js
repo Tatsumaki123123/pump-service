@@ -40,6 +40,7 @@ const JupSDK = require("../libs/jup");
 const { getSPLBalance, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const moment = require("moment");
+const { sleep } = require("../utils/utils");
 
 const RENT_SYSVAR = new PublicKey(
   "SysvarRent111111111111111111111111111111111"
@@ -81,15 +82,14 @@ class PumpAMM extends Service {
 
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
+      const { blockhash } = await connection.getLatestBlockhash();
 
       const func = async (wallets) => {
-        const startTime = new Date();
         const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
-        const { blockhash } = await connection.getLatestBlockhash();
         const buyTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
         for (let i = 0; i < wallets.length; i++) {
-          const slippage = i === 0 ? 0.01 : SLIPPAGE_BASIS_POINTS;
+          const slippage = i === 0 ? 0.1 : SLIPPAGE_BASIS_POINTS;
           const wallet = wallets[i];
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
@@ -227,6 +227,7 @@ class PumpAMM extends Service {
         for (const wallets of Object.values(buyAllObj)) {
           if (wallets.length > 0) {
             await func(wallets);
+            await sleep(0.5);
           }
         }
         return true;
@@ -264,10 +265,10 @@ class PumpAMM extends Service {
 
       newWallets.reverse();
 
+      const { blockhash } = await connection.getLatestBlockhash();
       const func = async (wallets) => {
         const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
         const sellTxns = [];
-        const { blockhash } = await connection.getLatestBlockhash();
         for (let i = 0; i < wallets.length; i++) {
           const wallet = wallets[i];
           const keypair = wallet.keypair;
@@ -418,11 +419,12 @@ class PumpAMM extends Service {
         for (const wallets of Object.values(sellAllObj)) {
           if (wallets.length > 0) {
             await func(wallets);
+            await sleep(0.5);
           }
         }
         return true;
       } else {
-        return func(wallets);
+        return func(newWallets);
       }
     } else {
       throw new Error("batch sell Token: param error");
