@@ -59,6 +59,7 @@ async function getSwapInstructions(params) {
     amount,
     slippage = 0.01,
     computeBudgetConfig,
+    poolDetail,
   } = params;
   const raydium = await initSdk();
   raydium.setOwner(user);
@@ -69,16 +70,22 @@ async function getSwapInstructions(params) {
   let poolInfo;
   let poolKeys;
   let rpcData;
-  // const poolId = await getRaydiumCpmmPoolId(tokenMint);
-  const poolData = await raydium.api.fetchPoolByMints({
-    mint1: tokenMint,
-    mint2: NATIVE_MINT,
-  });
-  // const data = await raydium.api.fetchPoolById({ ids: poolId });
-  // console.log(data);
-  poolInfo = poolData.data[0];
-  if (!poolInfo) {
-    throw new Error("Cannot find pool info");
+  if (poolDetail) {
+    poolInfo = poolDetail.poolInfo;
+    poolKeys = poolDetail.poolKeys;
+    rpcData = poolDetail.rpcData;
+  } else {
+    // const poolId = await getRaydiumCpmmPoolId(tokenMint);
+    const poolData = await raydium.api.fetchPoolByMints({
+      mint1: tokenMint,
+      mint2: NATIVE_MINT,
+    });
+    // const data = await raydium.api.fetchPoolById({ ids: poolId });
+    // console.log(data);
+    poolInfo = poolData.data[0];
+    if (!poolInfo) {
+      throw new Error("Cannot find pool info");
+    }
   }
   const poolId = poolInfo.id;
   if (isValidCpmm(poolInfo.programId)) {
@@ -203,6 +210,24 @@ async function getRaydiumLaunchSwapInstructions(params) {
   }
 }
 
+async function getPoolDetail(tokenMint) {
+  const raydium = await initSdk();
+  const poolData = await raydium.api.fetchPoolByMints({
+    mint1: tokenMint,
+    mint2: NATIVE_MINT,
+  });
+  poolInfo = poolData.data[0];
+  if (!poolInfo) {
+    throw new Error("Cannot find pool info");
+  }
+  rpcData = await raydium.cpmm.getRpcPoolInfo(poolInfo.id, true);
+  return {
+    poolInfo,
+    poolKeys: undefined,
+    rpcData,
+  };
+}
+
 module.exports = {
   initSdk,
   getRaydiumCpmmPoolId,
@@ -210,4 +235,5 @@ module.exports = {
   getRaydiumLaunchSwapInstructions,
   isValidCpmm,
   isValidAmm,
+  getPoolDetail,
 };

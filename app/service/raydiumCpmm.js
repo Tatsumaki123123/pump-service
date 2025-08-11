@@ -13,9 +13,9 @@ const {
   Transaction,
 } = require("@solana/web3.js");
 const chalk = require("chalk");
-const { MARKET_STATE_LAYOUT_V3 } = require("@raydium-io/raydium-sdk-v2");
+const { NATIVE_MINT } = require("@solana/spl-token");
 const { connection, BLOCK_RAZOR_1 } = require("../constants/");
-const { getSwapInstructions } = require("../utils/raydium");
+const { getSwapInstructions, getPoolDetail } = require("../utils/raydium");
 const { getSPLBalanceAmount, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const OKXSwapSDK = require("../libs/okxRouterV2");
@@ -45,6 +45,8 @@ class RaydiumCpmm extends Service {
         const { blockhash } = await connection.getLatestBlockhash();
         const buyTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
+
+        const poolDetail = await getPoolDetail(tokenMint);
 
         for (let i = 0; i < wallets.length; i++) {
           const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
@@ -92,6 +94,7 @@ class RaydiumCpmm extends Service {
               slippage: slippage,
               computeBudgetConfig,
               user: user,
+              poolDetail,
             });
             // transaction.add(...buyIxs);
             volumeIxs = [...buyIxs];
@@ -168,14 +171,15 @@ class RaydiumCpmm extends Service {
         wallets.forEach((wallet) => {
           if (wallet.firstBuy) {
             buyAllObj.firstBuy.push(wallet);
-          } else if (wallet.secondBuy) {
-            buyAllObj.secondBuy.push(wallet);
           } else if (wallet.multiBuy) {
             buyAllObj.multiBuy.push(wallet);
-          } else if (wallet.firstBuy) {
+          } else if (wallet.secondBuy) {
+            buyAllObj.secondBuy.push(wallet);
+          } else if (wallet.thirdBuy) {
             buyAllObj.thirdBuy.push(wallet);
           }
         });
+        console.log(buyAllObj);
 
         for (const wallets of Object.values(buyAllObj)) {
           if (wallets.length > 0) {
@@ -192,14 +196,12 @@ class RaydiumCpmm extends Service {
     }
   }
 
-  async batchSellToken(token, wallets) {
+  async batchSellToken(token, wallets, type = "") {
     const { ctx } = this;
     console.log(chalk.green("\n Raydium cpmm batch sell Token----"));
 
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
-      const { blockhash } = await connection.getLatestBlockhash();
-      const sellTxns = [];
       const newWallets = [];
       const slippage = wallets.length === 1 ? 0.01 : SLIPPAGE_BASIS_POINTS;
       for (let i = 0; i < wallets.length; i++) {
@@ -218,126 +220,138 @@ class RaydiumCpmm extends Service {
         }
       }
       newWallets.reverse();
-      const len = newWallets.length > 5 ? 5 : newWallets.length;
-      for (let i = 0; i < len; i++) {
-        const wallet = newWallets[i];
-        const keypair = wallet.keypair;
-        const user = keypair.publicKey;
-        const tokenAmount = wallet.tokenAmount;
 
-        const { limit, price, fee } = wallet;
+      const func = async (wallets) => {
+        const sellTxns = [];
+        const { blockhash } = await connection.getLatestBlockhash();
+        for (let i = 0; i < wallets.length; i++) {
+          const wallet = wallets[i];
+          const keypair = wallet.keypair;
+          const user = keypair.publicKey;
+          const tokenAmount = wallet.tokenAmount;
 
-        let volumeIxs = [];
-        const computeBudgetConfig = {
-          units: limit,
-          microLamports: price,
-        };
-        if (wallet.isOkx && i === 0) {
-          const okxIxs = await okxSwap.getSellInstructions(ctx, {
-            user,
-            tokenMint,
-            tokenAmount: tokenAmount,
-            slippage: slippage,
-          });
-          volumeIxs = [...okxIxs];
-        } else if (wallet.isJup && i === 0) {
-          const jupIxs = await jupSwap.getSellInstructions(ctx, {
-            user,
-            tokenMint,
-            tokenAmount: tokenAmount,
-            slippage: slippage,
-          });
-          volumeIxs = [...jupIxs];
-        } else {
-          const sellIxs = await getSwapInstructions({
-            tokenMint,
-            type: "sell",
-            amount: tokenAmount,
-            slippage: slippage,
-            computeBudgetConfig,
-            user: user,
-          });
-          volumeIxs = [...sellIxs];
-        }
-        if (len === 1) {
-          await sendV0Transaction(keypair, volumeIxs);
-          // await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
-          return;
-        } else {
-          if (i === len - 1) {
-            const jipAcc = ctx.service.jito.getTipAcc();
-            const jitoTipIx = SystemProgram.transfer({
-              fromPubkey: keypair.publicKey,
-              toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
+          const { limit, price, fee } = wallet;
+
+          let volumeIxs = [];
+          const computeBudgetConfig = {
+            units: limit,
+            microLamports: price,
+          };
+          if (wallet.isOkx && i === 0) {
+            const okxIxs = await okxSwap.getSellInstructions(ctx, {
+              user,
+              tokenMint,
+              tokenAmount: tokenAmount,
+              slippage: slippage,
             });
-            volumeIxs.push(jitoTipIx);
+            volumeIxs = [...okxIxs];
+          } else if (wallet.isJup && i === 0) {
+            const jupIxs = await jupSwap.getSellInstructions(ctx, {
+              user,
+              tokenMint,
+              tokenAmount: tokenAmount,
+              slippage: slippage,
+            });
+            volumeIxs = [...jupIxs];
+          } else {
+            const sellIxs = await getSwapInstructions({
+              tokenMint,
+              type: "sell",
+              amount: tokenAmount,
+              slippage: slippage,
+              computeBudgetConfig,
+              user: user,
+            });
+            volumeIxs = [...sellIxs];
+          }
+
+          const jipAcc = ctx.service.jito.getTipAcc();
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: keypair.publicKey,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
+          volumeIxs.push(jitoTipIx);
+          try {
+            const messageV0 = new TransactionMessage({
+              payerKey: keypair.publicKey,
+              recentBlockhash: blockhash,
+              instructions: volumeIxs,
+            }).compileToV0Message();
+
+            const tx = new VersionedTransaction(messageV0);
+            tx.sign([keypair]);
+
+            // 模拟交易
+            // const simulationResult = await connection.simulateTransaction(tx, {
+            //   commitment: "confirmed",
+            // });
+            // if (simulationResult.value.err) {
+            //   console.log("simulation", simulationResult.value);
+            //   throw new Error(simulationResult.value);
+            // }
+
+            // console.log(
+            //   chalk.green("simulation success", keypair.publicKey.toString())
+            // );
+            sellTxns.push(tx);
+          } catch (error) {
+            console.error(
+              chalk.red(
+                `Error compiling transaction for ${user.toBase58()}:`,
+                error.message
+              )
+            );
+            continue;
           }
         }
-        try {
-          const messageV0 = new TransactionMessage({
-            payerKey: keypair.publicKey,
-            recentBlockhash: blockhash,
-            instructions: volumeIxs,
-          }).compileToV0Message();
 
-          const tx = new VersionedTransaction(messageV0);
-          tx.sign([keypair]);
-
-          // 模拟交易
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.log("simulation", simulationResult.value);
-          //   throw new Error(simulationResult.value);
-          // }
-
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
-          sellTxns.push(tx);
-        } catch (error) {
-          console.error(
-            chalk.red(
-              `Error compiling transaction for ${user.toBase58()}:`,
-              error.message
-            )
+        console.log("sellTxns", sellTxns.length);
+        if (sellTxns.length > 1) {
+          const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
+          console.log(bundleResult);
+          console.log(chalk.green("Sell transactions completed."));
+        } else if (sellTxns.length === 1) {
+          const bundleResult = await ctx.service.jito.sendTransaction(
+            sellTxns[0]
           );
-          continue;
+          console.log(bundleResult);
+          console.log(chalk.green("Buy transactions completed."));
         }
-      }
+        return true;
+      };
 
-      console.log("sellTxns", sellTxns.length);
-      if (sellTxns.length > 1) {
-        const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
-        console.log(bundleResult);
-        console.log(chalk.green("Sell transactions completed."));
-      } else if (sellTxns.length === 1) {
-        const bundleResult = await ctx.service.jito.sendTransaction(
-          sellTxns[0]
-        );
-        console.log(bundleResult);
-        console.log(chalk.green("Buy transactions completed."));
+      if (type === "all") {
+        let sellAllObj = {
+          thirdBuy: [],
+          secondBuy: [],
+          multiBuy: [],
+          firstBuy: [],
+        };
+        newWallets.forEach((wallet) => {
+          if (wallet.firstBuy) {
+            sellAllObj.firstBuy.push(wallet);
+          } else if (wallet.secondBuy) {
+            sellAllObj.secondBuy.push(wallet);
+          } else if (wallet.multiBuy) {
+            sellAllObj.multiBuy.push(wallet);
+          } else if (wallet.thirdBuy) {
+            sellAllObj.thirdBuy.push(wallet);
+          }
+        });
+
+        for (const wallets of Object.values(sellAllObj)) {
+          if (wallets.length > 0) {
+            await func(wallets);
+          }
+        }
+        return true;
+      } else {
+        return func(wallets);
       }
-      return true;
     } else {
       throw new Error("batch sell Token: param error");
     }
-  }
-
-  async checkSellOrder(pool) {
-    const poolId = new PublicKey(pool);
-    const poolAccountInfo = await connection.getAccountInfo(poolId);
-    if (!poolAccountInfo) {
-      throw new Error("cannot get pool");
-    }
-
-    const poolState = MARKET_STATE_LAYOUT_V3.decode(poolAccountInfo.data);
-    console.log(poolState);
-
-    const marketId = poolState.marketId;
-    const marketAsks = poolState.marketAsks;
   }
 }
 module.exports = RaydiumCpmm;

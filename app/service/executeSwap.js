@@ -333,13 +333,13 @@ class ExecuteSwap extends Service {
     const wallets = await this.getWalletsWithLineFirstWallet(line, type);
     if (wallets && wallets.length > 0 && token) {
       if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
-        await ctx.service.raydiumCpmm.batchSellToken(token, wallets);
+        await ctx.service.raydiumCpmm.batchSellToken(token, wallets, type);
       } else if (tokenInfo.amm === RAYDIUM_LANUCH_NAME) {
-        await ctx.service.raydiumLaunch.batchSellToken(token, wallets);
+        await ctx.service.raydiumLaunch.batchSellToken(token, wallets, type);
       } else if (tokenInfo.amm === PUMP_AMM_NAME) {
-        await ctx.service.pumpAMM.batchSellToken(token, wallets);
+        await ctx.service.pumpAMM.batchSellToken(token, wallets, type);
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
-        await ctx.service.pumpfun.batchSellToken(token, wallets);
+        await ctx.service.pumpfun.batchSellToken(token, wallets, type);
       } else {
         throw new Error("Not pump token");
       }
@@ -655,13 +655,6 @@ class ExecuteSwap extends Service {
       }
     }
 
-    // if (!forceCheck) {
-    //   const orderCheck = await this.checkSellOrder(amm, pool);
-    //   if (!orderCheck) {
-    //     throw new Error("Exist sell order");
-    //   }
-    // }
-
     const tokenDb = await ctx.model.ExecuteToken.findOne({
       eid: eid,
       token: token,
@@ -857,15 +850,6 @@ class ExecuteSwap extends Service {
       { isActive: false }
     );
     return true;
-  }
-
-  async checkSellOrder(amm, pool) {
-    const { ctx } = this;
-    let result = true;
-    if (amm === RAYDIUM_CPMM_NAME) {
-      result = await ctx.service.raydiumCpmm.checkSellOrder(pool);
-    }
-    return result;
   }
 }
 

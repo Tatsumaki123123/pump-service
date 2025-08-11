@@ -14,42 +14,62 @@ const {
   TOKEN_PROGRAM_ID,
 } = require("@solana/spl-token");
 
+const { PumpAmmInternalSdk } = require("./pumpfun/sdk/pumpAmmInternal");
+const pumpAmmInternal = new PumpAmmInternalSdk(connection);
+
 const PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 const PUMP_PROGRAM_ID_PUBKEY = new PublicKey(PUMP_PROGRAM_ID);
 
 const program = new Program(IDL, { connection });
 
-const getPoolsWithBaseMint = async (mintAddress) => {
-  let response = null,
-    is_err = true,
-    cnt = 0;
+const getPoolsWithBaseMint = async (mintAddress, ctx) => {
+  let poolDataBuffer;
+  let poolId;
+  const dbData = await ctx.model.PoolStore.findOne({
+    token: mintAddress.toBase58(),
+  });
+  if (dbData) {
+    poolDataBuffer = dbData.poolData;
+    poolId = new PublicKey(dbData.pool);
+  } else {
+    let response = null,
+      is_err = true,
+      cnt = 0;
 
-  while (is_err) {
-    if (cnt >= 3) break;
-    try {
-      response = await connection.getProgramAccounts(PUMP_AMM_PROGRAM_ID, {
-        filters: [
-          {
-            memcmp: {
-              offset: 43,
-              bytes: mintAddress.toBase58(),
-            },
+    response = await connection.getProgramAccounts(PUMP_AMM_PROGRAM_ID, {
+      filters: [
+        {
+          memcmp: {
+            offset: 43,
+            bytes: mintAddress.toBase58(),
           },
-        ],
-      });
-      if (response.length > 0) {
-        is_err = false;
-      }
-    } catch (err) {
-      is_err = true;
+        },
+      ],
+    });
+    if (response.length > 0) {
+      is_err = false;
     }
-    cnt++;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
 
-  if (is_err) {
-    throw new Error(`Can not get Token ${mintAddress.toBase58()} pool data`);
+    if (is_err) {
+      throw new Error(`Can not get Token ${mintAddress.toBase58()} pool data`);
+    }
+
+    const pool = response[0];
+    poolId = pool.pubkey;
+    const data = Buffer.from(pool.account.data);
+    poolDataBuffer = data;
+    await ctx.model.PoolStore.create({
+      token: mintAddress.toBase58(),
+      poolData: poolDataBuffer,
+      pool: poolId.toBase58(),
+    });
   }
+  const poolData = program.coder.accounts.decode("pool", poolDataBuffer);
+  return {
+    address: poolId,
+    is_native_base: false,
+    poolData,
+  };
 
   const mappedPools = response.map((pool) => {
     const data = Buffer.from(pool.account.data);
@@ -61,6 +81,11 @@ const getPoolsWithBaseMint = async (mintAddress) => {
     };
   });
 
+  console.log("getPoolsWithBaseMint", new Date());
+  // await ctx.model.PoolStore.create({
+  //   token: mintAddress.toBase58(),
+  //   poolData: mappedPools,
+  // });
   return mappedPools;
 };
 
@@ -128,17 +153,15 @@ const getPriceAndLiquidity = async (pool) => {
   let wsolBalance, tokenBalance;
   let is_err = true,
     cnt = 0;
-  while (is_err) {
-    if (cnt >= 3) break;
-    try {
-      wsolBalance = await connection.getTokenAccountBalance(wsolAddress);
-      tokenBalance = await connection.getTokenAccountBalance(tokenAddress);
-      is_err = false;
-    } catch (err) {
-      is_err = true;
-    }
-    cnt++;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+  try {
+    wsolBalance = await connection.getTokenAccountBalance(wsolAddress);
+    tokenBalance = await connection.getTokenAccountBalance(tokenAddress);
+    is_err = false;
+  } catch (err) {
+    is_err = true;
+  }
+  if (is_err) {
+    throw new Error("get pool and lp error");
   }
   const price = wsolBalance.value.uiAmount / tokenBalance.value.uiAmount;
 
@@ -152,10 +175,10 @@ const getPriceAndLiquidity = async (pool) => {
   };
 };
 
-const getPoolsWithPrices = async (mintAddress) => {
-  const [poolsWithBaseMint] = await Promise.all([
-    getPoolsWithBaseMint(mintAddress),
-  ]);
+const getPoolsWithPrices = async (mintAddress, ctx) => {
+  const poolsWithBaseMint = await getPoolsWithBaseMint(mintAddress, ctx);
+  const result = await getPriceAndLiquidity(poolsWithBaseMint);
+  return result;
   const pools = [...poolsWithBaseMint];
 
   const results = await Promise.all(pools.map(getPriceAndLiquidity));

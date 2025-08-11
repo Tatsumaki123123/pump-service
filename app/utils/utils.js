@@ -1,3 +1,4 @@
+const { isObject } = require("lodash");
 function retrieveEnvVariable(variableName) {
   const variable = process.env[variableName] || "";
   if (!variable) {
@@ -43,4 +44,28 @@ async function retryAsync(func, maxAttempts = 3, onError = false) {
   }
 }
 
-module.exports = { retrieveEnvVariable, sleep, retry, retryAsync };
+function bnLayoutFormatter(obj) {
+  for (const key in obj) {
+    if (obj[key]?.constructor?.name === "PublicKey") {
+      obj[key] = obj[key].toBase58();
+    } else if (obj[key]?.constructor?.name === "BN") {
+      obj[key] = Number(obj[key].toString());
+    } else if (obj[key]?.constructor?.name === "BigInt") {
+      obj[key] = Number(obj[key].toString());
+    } else if (obj[key]?.constructor?.name === "Buffer") {
+      obj[key] = obj[key].toString("base64");
+    } else if (isObject(obj[key])) {
+      bnLayoutFormatter(obj[key]);
+    } else {
+      obj[key] = obj[key];
+    }
+  }
+}
+
+module.exports = {
+  retrieveEnvVariable,
+  sleep,
+  retry,
+  retryAsync,
+  bnLayoutFormatter,
+};

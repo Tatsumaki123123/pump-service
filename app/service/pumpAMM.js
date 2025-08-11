@@ -39,6 +39,7 @@ const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
 const { getSPLBalance, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
+const moment = require("moment");
 
 const RENT_SYSVAR = new PublicKey(
   "SysvarRent111111111111111111111111111111111"
@@ -74,156 +75,177 @@ class PumpAMM extends Service {
    * @param {*} token
    * @param {*} wallets [{keypair: keypair, amount: 0.1}]
    */
-  async batchBuyToken(token, wallets) {
+  async batchBuyToken(token, wallets, type = "") {
     const { ctx } = this;
     console.log(chalk.green("\npump amm batchBuyToken----", wallets.length));
 
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
 
-      const { blockhash } = await connection.getLatestBlockhash();
-      // const ATA_RENT = await connection.getMinimumBalanceForRentExemption(165);
-      const poolDetail = await getPoolsWithPrices(tokenMint);
-
-      const buyTxns = [];
-
-      const jipAcc = ctx.service.jito.getTipAcc();
-      let existJitoIx = false;
-      for (let i = 0; i < wallets.length; i++) {
-        const slippage = i === 0 ? 0.01 : SLIPPAGE_BASIS_POINTS;
-        const wallet = wallets[i];
-        const keypair = wallet.keypair;
-        const user = keypair.publicKey;
-        const { buyAmount, limit, price, fee } = wallet;
-        let volumeIxs = [];
-        console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
-        if (wallet.isOkx) {
-          const okxIxs = await okxSwap.getBuyInstructions(ctx, {
-            user,
-            tokenMint,
-            buyAmount: buyAmount,
-            slippage,
-            poolDetail,
-          });
-          volumeIxs = [...okxIxs];
-        } else if (wallet.isJup) {
-          const jupIxs = await jupSwap.getBuyInstructions(ctx, {
-            user,
-            tokenMint,
-            buyAmount: buyAmount,
-            slippage,
-          });
-          volumeIxs = [...jupIxs];
-        } else {
-          //  1: limit
-          const setComputeUnitLimitIx =
-            ComputeBudgetProgram.setComputeUnitLimit({
-              units: limit,
+      const func = async (wallets) => {
+        const startTime = new Date();
+        const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
+        const { blockhash } = await connection.getLatestBlockhash();
+        const buyTxns = [];
+        const jipAcc = ctx.service.jito.getTipAcc();
+        for (let i = 0; i < wallets.length; i++) {
+          const slippage = i === 0 ? 0.01 : SLIPPAGE_BASIS_POINTS;
+          const wallet = wallets[i];
+          const keypair = wallet.keypair;
+          const user = keypair.publicKey;
+          const { buyAmount, limit, price, fee } = wallet;
+          let volumeIxs = [];
+          console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
+          if (wallet.isOkx) {
+            const okxIxs = await okxSwap.getBuyInstructions(ctx, {
+              user,
+              tokenMint,
+              buyAmount: buyAmount,
+              slippage,
+              poolDetail,
             });
-
-          //  2: price
-          const setComputeUnitPriceIx =
-            ComputeBudgetProgram.setComputeUnitPrice({
-              microLamports: price,
+            volumeIxs = [...okxIxs];
+          } else if (wallet.isJup) {
+            const jupIxs = await jupSwap.getBuyInstructions(ctx, {
+              user,
+              tokenMint,
+              buyAmount: buyAmount,
+              slippage,
             });
+            volumeIxs = [...jupIxs];
+          } else {
+            //  1: limit
+            const setComputeUnitLimitIx =
+              ComputeBudgetProgram.setComputeUnitLimit({
+                units: limit,
+              });
 
-          const proxyBuyIxs = await this.genBuyProxyIxs(
-            tokenMint,
-            wallet,
-            poolDetail,
-            slippage
+            //  2: price
+            const setComputeUnitPriceIx =
+              ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: price,
+              });
+
+            const proxyBuyIxs = await this.genBuyProxyIxs(
+              tokenMint,
+              wallet,
+              poolDetail,
+              slippage
+            );
+            volumeIxs = [
+              setComputeUnitLimitIx,
+              setComputeUnitPriceIx,
+              ...proxyBuyIxs,
+            ];
+
+            // 9, gmgn, trogan, jito
+            if (wallet.isGmgn) {
+              const gmgnTipTx = SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: GMGN_FEES_VAULT,
+                lamports: GMGN_FEE * LAMPORTS_PER_SOL,
+              });
+              volumeIxs.push(gmgnTipTx);
+            }
+            if (wallet.isTrogan) {
+              const troganTipIx = createTroProxyInstruction(user, jipAcc);
+
+              volumeIxs.push(troganTipIx);
+            }
+          }
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
+          volumeIxs.push(jitoTipIx);
+
+          try {
+            const messageV0 = new TransactionMessage({
+              payerKey: user,
+              recentBlockhash: blockhash,
+              instructions: volumeIxs,
+            }).compileToV0Message();
+
+            const tx = new VersionedTransaction(messageV0);
+            tx.sign([keypair]);
+
+            // 模拟交易
+            // const simulationResult = await connection.simulateTransaction(tx, {
+            //   commitment: "confirmed",
+            // });
+            // if (simulationResult.value.err) {
+            //   console.error("simulation", simulationResult.value);
+            //   throw new Error(simulationResult.value);
+            // }
+
+            // console.log(
+            //   chalk.green("simulation success", keypair.publicKey.toString())
+            // );
+            buyTxns.push(tx);
+          } catch (error) {
+            console.error(error.message);
+            break;
+          }
+        }
+
+        // for end
+        console.log("buyTxns", buyTxns.length);
+        // return;
+        if (buyTxns.length > 1) {
+          const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
+          console.log(bundleResult);
+          console.log(chalk.green("Buy transactions completed."));
+        } else if (buyTxns.length === 1) {
+          const bundleResult = await ctx.service.jito.sendTransaction(
+            buyTxns[0]
           );
-          volumeIxs = [
-            setComputeUnitLimitIx,
-            setComputeUnitPriceIx,
-            ...proxyBuyIxs,
-          ];
-
-          // 9, gmgn, trogan, jito
-          if (wallet.isGmgn) {
-            const gmgnTipTx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: GMGN_FEES_VAULT,
-              lamports: GMGN_FEE * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(gmgnTipTx);
-          }
-          if (wallet.isTrogan) {
-            const troganTipIx = createTroProxyInstruction(user, jipAcc);
-
-            volumeIxs.push(troganTipIx);
-          }
+          console.log(bundleResult);
+          console.log(chalk.green("Buy transactions completed."));
         }
-        // if (wallets.length === 1) {
-        //   await sendV0Transaction(keypair, volumeIxs);
-        //   return;
-        // } else {
-        const jitoTipIx = SystemProgram.transfer({
-          fromPubkey: user,
-          toPubkey: jipAcc,
-          lamports: fee * LAMPORTS_PER_SOL,
+      };
+
+      if (type === "all") {
+        let buyAllObj = {
+          firstBuy: [],
+          multiBuy: [],
+          secondBuy: [],
+          thirdBuy: [],
+        };
+        wallets.forEach((wallet) => {
+          if (wallet.firstBuy) {
+            buyAllObj.firstBuy.push(wallet);
+          } else if (wallet.secondBuy) {
+            buyAllObj.secondBuy.push(wallet);
+          } else if (wallet.multiBuy) {
+            buyAllObj.multiBuy.push(wallet);
+          } else if (wallet.thirdBuy) {
+            buyAllObj.thirdBuy.push(wallet);
+          }
         });
-        volumeIxs.push(jitoTipIx);
-        // }
 
-        try {
-          const messageV0 = new TransactionMessage({
-            payerKey: user,
-            recentBlockhash: blockhash,
-            instructions: volumeIxs,
-          }).compileToV0Message();
-
-          const tx = new VersionedTransaction(messageV0);
-          tx.sign([keypair]);
-
-          // 模拟交易
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.error("simulation", simulationResult.value);
-          //   throw new Error(simulationResult.value);
-          // }
-
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
-          buyTxns.push(tx);
-        } catch (error) {
-          console.error(error.message);
-          break;
+        for (const wallets of Object.values(buyAllObj)) {
+          if (wallets.length > 0) {
+            await func(wallets);
+          }
         }
-      }
-
-      // for end
-      console.log("buyTxns", buyTxns.length);
-      // return;
-      if (buyTxns.length > 1) {
-        const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
-        console.log(bundleResult);
-        console.log(chalk.green("Buy transactions completed."));
-      } else if (buyTxns.length === 1) {
-        const bundleResult = await ctx.service.jito.sendTransaction(buyTxns[0]);
-        console.log(bundleResult);
-        console.log(chalk.green("Buy transactions completed."));
+        return true;
+      } else {
+        return func(wallets);
       }
     } else {
       throw new Error("batchBuyToken: param error");
     }
   }
 
-  async batchSellToken(token, wallets) {
+  async batchSellToken(token, wallets, type = "") {
     const { ctx } = this;
     console.log(chalk.green("\n batch sell Token----"));
 
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
-      const poolDetail = await getPoolsWithPrices(tokenMint);
-      const { blockhash } = await connection.getLatestBlockhash();
 
-      const sellTxns = [];
       const newWallets = [];
-      const slippage = wallets.length === 1 ? 0.01 : SLIPPAGE_BASIS_POINTS;
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
@@ -241,132 +263,167 @@ class PumpAMM extends Service {
       }
 
       newWallets.reverse();
-      const len = newWallets.length > 5 ? 5 : newWallets.length;
-      for (let i = 0; i < len; i++) {
-        const wallet = newWallets[i];
-        const keypair = wallet.keypair;
-        const user = keypair.publicKey;
-        const tokenAmount = wallet.tokenAmount;
 
-        const { limit, price, fee } = wallet;
+      const func = async (wallets) => {
+        const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
+        const sellTxns = [];
+        const { blockhash } = await connection.getLatestBlockhash();
+        for (let i = 0; i < wallets.length; i++) {
+          const wallet = wallets[i];
+          const keypair = wallet.keypair;
+          const user = keypair.publicKey;
+          const tokenAmount = wallet.tokenAmount;
 
-        let volumeIxs = [];
+          const { limit, price, fee } = wallet;
 
-        // 1, setComputeUnitLimitIx
-        const setComputeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
-          units: limit,
-        });
+          let volumeIxs = [];
 
-        // 2,
-        const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
-          microLamports: price,
-        });
+          // 1, setComputeUnitLimitIx
+          const setComputeUnitLimitIx =
+            ComputeBudgetProgram.setComputeUnitLimit({
+              units: limit,
+            });
 
-        // 3, createAccountWithSeed
-        const seed = new Date().getTime().toString();
-        // const seed = "1749356034021";
+          // 2,
+          const setComputeUnitPriceIx =
+            ComputeBudgetProgram.setComputeUnitPrice({
+              microLamports: price,
+            });
 
-        const newAccount = await PublicKey.createWithSeed(
-          user,
-          seed,
-          TOKEN_PROGRAM_ID
-        );
-        const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
-          fromPubkey: user,
-          newAccountPubkey: newAccount,
-          basePubkey: user,
-          seed: seed,
-          lamports: 2039280,
-          space: 165,
-          programId: TOKEN_PROGRAM_ID,
-        });
+          // 3, createAccountWithSeed
+          const seed = new Date().getTime().toString();
+          // const seed = "1749356034021";
 
-        // 4, initializeAccount
-        const initializeAccountIx = createInitializeAccountInstruction(
-          newAccount,
-          WSOL_TOKEN_ACCOUNT,
-          user,
-          TOKEN_PROGRAM_ID
-        );
-
-        // 5, pump sell
-        const swapTx = await pSwap.createSellInstruction({
-          user,
-          tokenMint,
-          tokenAmount,
-          sellNewAccount: newAccount,
-          poolDetail: poolDetail,
-        });
-
-        // 6. Token Program: closeAccount
-        const closeAccountIx = createCloseAccountInstruction(
-          newAccount,
-          user,
-          user
-        );
-
-        volumeIxs = [
-          setComputeUnitLimitIx,
-          setComputeUnitPriceIx,
-          createAccountWithSeedIx,
-          initializeAccountIx,
-          swapTx,
-          closeAccountIx,
-        ];
-
-        const jipAcc = ctx.service.jito.getTipAcc();
-        const jitoTipIx = SystemProgram.transfer({
-          fromPubkey: keypair.publicKey,
-          toPubkey: jipAcc,
-          lamports: fee * LAMPORTS_PER_SOL,
-        });
-        volumeIxs.push(jitoTipIx);
-
-        try {
-          const messageV0 = new TransactionMessage({
-            payerKey: keypair.publicKey,
-            recentBlockhash: blockhash,
-            instructions: volumeIxs,
-          }).compileToV0Message();
-
-          const tx = new VersionedTransaction(messageV0);
-          tx.sign([keypair]);
-
-          // 模拟交易
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.log("simulation", simulationResult.value);
-          //   throw new Error(simulationResult.value);
-          // }
-
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
-          sellTxns.push(tx);
-        } catch (error) {
-          console.error(
-            chalk.red(
-              `Error compiling transaction for ${user.toBase58()}:`,
-              error.message
-            )
+          const newAccount = await PublicKey.createWithSeed(
+            user,
+            seed,
+            TOKEN_PROGRAM_ID
           );
-          continue;
+          const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
+            fromPubkey: user,
+            newAccountPubkey: newAccount,
+            basePubkey: user,
+            seed: seed,
+            lamports: 2039280,
+            space: 165,
+            programId: TOKEN_PROGRAM_ID,
+          });
+
+          // 4, initializeAccount
+          const initializeAccountIx = createInitializeAccountInstruction(
+            newAccount,
+            WSOL_TOKEN_ACCOUNT,
+            user,
+            TOKEN_PROGRAM_ID
+          );
+
+          // 5, pump sell
+          const swapTx = await pSwap.createSellInstruction({
+            user,
+            tokenMint,
+            tokenAmount,
+            sellNewAccount: newAccount,
+            poolDetail: poolDetail,
+          });
+
+          // 6. Token Program: closeAccount
+          const closeAccountIx = createCloseAccountInstruction(
+            newAccount,
+            user,
+            user
+          );
+
+          volumeIxs = [
+            setComputeUnitLimitIx,
+            setComputeUnitPriceIx,
+            createAccountWithSeedIx,
+            initializeAccountIx,
+            swapTx,
+            closeAccountIx,
+          ];
+
+          const jipAcc = ctx.service.jito.getTipAcc();
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: keypair.publicKey,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
+          volumeIxs.push(jitoTipIx);
+
+          try {
+            const messageV0 = new TransactionMessage({
+              payerKey: keypair.publicKey,
+              recentBlockhash: blockhash,
+              instructions: volumeIxs,
+            }).compileToV0Message();
+
+            const tx = new VersionedTransaction(messageV0);
+            tx.sign([keypair]);
+
+            // 模拟交易
+            // const simulationResult = await connection.simulateTransaction(tx, {
+            //   commitment: "confirmed",
+            // });
+            // if (simulationResult.value.err) {
+            //   console.log("simulation", simulationResult.value);
+            //   throw new Error(simulationResult.value);
+            // }
+
+            // console.log(
+            //   chalk.green("simulation success", keypair.publicKey.toString())
+            // );
+            sellTxns.push(tx);
+          } catch (error) {
+            console.error(
+              chalk.red(
+                `Error compiling transaction for ${user.toBase58()}:`,
+                error.message
+              )
+            );
+            continue;
+          }
         }
+        if (sellTxns.length > 1) {
+          const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
+          console.log(bundleResult);
+          console.log(chalk.green("Sell transactions completed."));
+        } else if (sellTxns.length === 1) {
+          const bundleResult = await ctx.service.jito.sendTransaction(
+            sellTxns[0]
+          );
+          console.log(bundleResult);
+          console.log(chalk.green("Buy transactions completed."));
+        }
+        return true;
+      };
+      if (type === "all") {
+        let sellAllObj = {
+          thirdBuy: [],
+          secondBuy: [],
+          multiBuy: [],
+          firstBuy: [],
+        };
+        newWallets.forEach((wallet) => {
+          if (wallet.firstBuy) {
+            sellAllObj.firstBuy.push(wallet);
+          } else if (wallet.secondBuy) {
+            sellAllObj.secondBuy.push(wallet);
+          } else if (wallet.multiBuy) {
+            sellAllObj.multiBuy.push(wallet);
+          } else if (wallet.thirdBuy) {
+            sellAllObj.thirdBuy.push(wallet);
+          }
+        });
+
+        for (const wallets of Object.values(sellAllObj)) {
+          if (wallets.length > 0) {
+            await func(wallets);
+          }
+        }
+        return true;
+      } else {
+        return func(wallets);
       }
-      if (sellTxns.length > 1) {
-        const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
-        console.log(bundleResult);
-        console.log(chalk.green("Sell transactions completed."));
-      } else if (sellTxns.length === 1) {
-        const bundleResult = await ctx.service.jito.sendTransaction(
-          sellTxns[0]
-        );
-        console.log(bundleResult);
-        console.log(chalk.green("Buy transactions completed."));
-      }
-      return true;
     } else {
       throw new Error("batch sell Token: param error");
     }
