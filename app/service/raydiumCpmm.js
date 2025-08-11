@@ -22,6 +22,7 @@ const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
 const RaydiumRouterSDK = require("../libs/raydiumRouter");
 const { sendAstralaneTransaction } = require("../utils/astralane");
+const { sleep } = require("../utils/utils");
 
 const okxSwap = new OKXSwapSDK();
 const jupSwap = new JupSDK();
@@ -34,127 +35,160 @@ const GMGN_FEE = 0.0004;
 
 const SLIPPAGE_BASIS_POINTS = 0.6;
 class RaydiumCpmm extends Service {
-  async batchBuyToken(token, wallets) {
+  async batchBuyToken(token, wallets, type = "") {
     const { ctx } = this;
     console.log(chalk.green("\nRaydiumCpmm batchBuyToken----", wallets.length));
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
-      const { blockhash } = await connection.getLatestBlockhash();
-      const buyTxns = [];
-      let existJitoIx = false;
-      const jipAcc = ctx.service.jito.getTipAcc();
-      for (let i = 0; i < wallets.length; i++) {
-        const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
-        const wallet = wallets[i];
-        const keypair = wallet.keypair;
-        const user = keypair.publicKey;
-        const { buyAmount, limit, price, fee } = wallet;
-        const computeBudgetConfig = {
-          units: limit,
-          microLamports: price,
+
+      const func = async (wallets) => {
+        const { blockhash } = await connection.getLatestBlockhash();
+        const buyTxns = [];
+        let existJitoIx = false;
+        const jipAcc = ctx.service.jito.getTipAcc();
+
+        for (let i = 0; i < wallets.length; i++) {
+          const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
+          const wallet = wallets[i];
+          const keypair = wallet.keypair;
+          const user = keypair.publicKey;
+          const { buyAmount, limit, price, fee } = wallet;
+          const computeBudgetConfig = {
+            units: limit,
+            microLamports: price,
+          };
+          let volumeIxs = [];
+          console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
+
+          if (wallet.isOkx) {
+            const okxIxs = await okxSwap.getBuyInstructions(ctx, {
+              user,
+              tokenMint,
+              buyAmount: buyAmount,
+              slippage: slippage,
+            });
+            volumeIxs = [...okxIxs];
+          } else if (wallet.isJup) {
+            const jupIxs = await jupSwap.getBuyInstructions(ctx, {
+              user,
+              tokenMint,
+              buyAmount: buyAmount,
+              slippage: slippage,
+            });
+            volumeIxs = [...jupIxs];
+          } else if (wallet.isRayRouter) {
+            const routerIxs = await rayRouterSwap.getBuyInstructions(ctx, {
+              user,
+              tokenMint,
+              buyAmount: buyAmount,
+              slippage: slippage,
+              computeBudgetConfig,
+            });
+            volumeIxs = [...routerIxs];
+          } else {
+            const buyIxs = await getSwapInstructions({
+              tokenMint,
+              type: "buy",
+              amount: buyAmount * LAMPORTS_PER_SOL,
+              slippage: slippage,
+              computeBudgetConfig,
+              user: user,
+            });
+            // transaction.add(...buyIxs);
+            volumeIxs = [...buyIxs];
+
+            if (wallet.isGmgn) {
+              const gmgnTipTx = SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: GMGN_FEES_VAULT,
+                lamports: GMGN_FEE * LAMPORTS_PER_SOL,
+              });
+              volumeIxs.push(gmgnTipTx);
+            }
+            if (wallet.isTrogan) {
+              const troganTipIx = createTroProxyInstruction(user, jipAcc);
+              volumeIxs.push(troganTipIx);
+            }
+          }
+          if (wallets.length === 1) {
+            await sendV0Transaction(keypair, volumeIxs);
+            // await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
+            return;
+          } else {
+            if (existJitoIx === false && i === wallets.length - 1) {
+              const jitoTipIx = SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: jipAcc,
+                lamports: fee * LAMPORTS_PER_SOL,
+              });
+              volumeIxs.push(jitoTipIx);
+            }
+          }
+
+          try {
+            const messageV0 = new TransactionMessage({
+              payerKey: user,
+              recentBlockhash: blockhash,
+              instructions: volumeIxs,
+            }).compileToV0Message();
+
+            const tx = new VersionedTransaction(messageV0);
+            tx.sign([keypair]);
+
+            // 模拟交易
+            // const simulationResult = await connection.simulateTransaction(tx, {
+            //   commitment: "confirmed",
+            // });
+            // if (simulationResult.value.err) {
+            //   console.error("simulation", simulationResult.value);
+            //   throw new Error(simulationResult.value);
+            // }
+
+            // console.log(
+            //   chalk.green("simulation success", keypair.publicKey.toString())
+            // );
+            buyTxns.push(tx);
+          } catch (error) {
+            console.error("messageV0", error.message);
+            break;
+          }
+        }
+        if (buyTxns.length > 1) {
+          const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
+          console.log(bundleResult);
+          console.log(chalk.green("Buy transactions completed."));
+          return true;
+        }
+      };
+
+      if (type === "all") {
+        let buyAllObj = {
+          firstBuy: [],
+          multiBuy: [],
+          secondBuy: [],
+          thirdBuy: [],
         };
-        let volumeIxs = [];
-        console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
-
-        if (wallet.isOkx) {
-          const okxIxs = await okxSwap.getBuyInstructions(ctx, {
-            user,
-            tokenMint,
-            buyAmount: buyAmount,
-            slippage: slippage,
-          });
-          volumeIxs = [...okxIxs];
-        } else if (wallet.isJup) {
-          const jupIxs = await jupSwap.getBuyInstructions(ctx, {
-            user,
-            tokenMint,
-            buyAmount: buyAmount,
-            slippage: slippage,
-          });
-          volumeIxs = [...jupIxs];
-        } else if (wallet.isRayRouter) {
-          const routerIxs = await rayRouterSwap.getBuyInstructions(ctx, {
-            user,
-            tokenMint,
-            buyAmount: buyAmount,
-            slippage: slippage,
-            computeBudgetConfig,
-          });
-          volumeIxs = [...routerIxs];
-        } else {
-          const buyIxs = await getSwapInstructions({
-            tokenMint,
-            type: "buy",
-            amount: buyAmount * LAMPORTS_PER_SOL,
-            slippage: slippage,
-            computeBudgetConfig,
-            user: user,
-          });
-          // transaction.add(...buyIxs);
-          volumeIxs = [...buyIxs];
-
-          if (wallet.isGmgn) {
-            const gmgnTipTx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: GMGN_FEES_VAULT,
-              lamports: GMGN_FEE * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(gmgnTipTx);
+        wallets.forEach((wallet) => {
+          if (wallet.firstBuy) {
+            buyAllObj.firstBuy.push(wallet);
+          } else if (wallet.secondBuy) {
+            buyAllObj.secondBuy.push(wallet);
+          } else if (wallet.multiBuy) {
+            buyAllObj.multiBuy.push(wallet);
+          } else if (wallet.firstBuy) {
+            buyAllObj.thirdBuy.push(wallet);
           }
-          if (wallet.isTrogan) {
-            const troganTipIx = createTroProxyInstruction(user, jipAcc);
-            volumeIxs.push(troganTipIx);
+        });
+
+        for (const wallets of Object.values(buyAllObj)) {
+          if (wallets.length > 0) {
+            await func(wallets);
+            await sleep(0.5);
           }
         }
-        if (wallets.length === 1) {
-          await sendV0Transaction(keypair, volumeIxs);
-          // await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
-          return;
-        } else {
-          if (existJitoIx === false && i === wallets.length - 1) {
-            const jitoTipIx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(jitoTipIx);
-          }
-        }
-
-        try {
-          const messageV0 = new TransactionMessage({
-            payerKey: user,
-            recentBlockhash: blockhash,
-            instructions: volumeIxs,
-          }).compileToV0Message();
-
-          const tx = new VersionedTransaction(messageV0);
-          tx.sign([keypair]);
-
-          // 模拟交易
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.error("simulation", simulationResult.value);
-          //   throw new Error(simulationResult.value);
-          // }
-
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
-          buyTxns.push(tx);
-        } catch (error) {
-          console.error("messageV0", error.message);
-          break;
-        }
-      }
-      console.log("buyTxns", buyTxns.length);
-      if (buyTxns.length > 1) {
-        const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
-        console.log(bundleResult);
-        console.log(chalk.green("Buy transactions completed."));
         return true;
+      } else {
+        return func(wallets);
       }
     } else {
       throw new Error("batchBuyToken: param error");

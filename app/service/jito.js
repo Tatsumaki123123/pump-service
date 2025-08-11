@@ -79,6 +79,16 @@ class Jito extends Service {
       throw error;
     }
   }
+  async sendTransaction(tx) {
+    const transactions = serializeTransaction(tx);
+    const request = {
+      method: "sendTransaction",
+      params: [transactions, "ny"],
+    };
+    const result = await connection._rpcRequest(request.method, request.params);
+
+    return result;
+  }
 
   async setQuickNodeBundle(bundledTxns) {
     console.log(chalk.green("Send bundle quick node"));
@@ -90,7 +100,6 @@ class Jito extends Service {
 
     const result = await connection._rpcRequest(request.method, request.params);
 
-    console.log(JSON.stringify(result, null, 2));
     return result;
   }
 

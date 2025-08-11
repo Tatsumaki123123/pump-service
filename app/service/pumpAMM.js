@@ -154,17 +154,17 @@ class PumpAMM extends Service {
             volumeIxs.push(troganTipIx);
           }
         }
-        if (wallets.length === 1) {
-          await sendV0Transaction(keypair, volumeIxs);
-          return;
-        } else {
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(jitoTipIx);
-        }
+        // if (wallets.length === 1) {
+        //   await sendV0Transaction(keypair, volumeIxs);
+        //   return;
+        // } else {
+        const jitoTipIx = SystemProgram.transfer({
+          fromPubkey: user,
+          toPubkey: jipAcc,
+          lamports: fee * LAMPORTS_PER_SOL,
+        });
+        volumeIxs.push(jitoTipIx);
+        // }
 
         try {
           const messageV0 = new TransactionMessage({
@@ -200,6 +200,10 @@ class PumpAMM extends Service {
       // return;
       if (buyTxns.length > 1) {
         const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
+        console.log(bundleResult);
+        console.log(chalk.green("Buy transactions completed."));
+      } else if (buyTxns.length === 1) {
+        const bundleResult = await ctx.service.jito.sendTransaction(buyTxns[0]);
         console.log(bundleResult);
         console.log(chalk.green("Buy transactions completed."));
       }
@@ -310,18 +314,13 @@ class PumpAMM extends Service {
           closeAccountIx,
         ];
 
-        if (len === 1) {
-          await sendV0Transaction(keypair, volumeIxs);
-          return;
-        } else {
-          const jipAcc = ctx.service.jito.getTipAcc();
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: keypair.publicKey,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(jitoTipIx);
-        }
+        const jipAcc = ctx.service.jito.getTipAcc();
+        const jitoTipIx = SystemProgram.transfer({
+          fromPubkey: keypair.publicKey,
+          toPubkey: jipAcc,
+          lamports: fee * LAMPORTS_PER_SOL,
+        });
+        volumeIxs.push(jitoTipIx);
 
         try {
           const messageV0 = new TransactionMessage({
@@ -356,11 +355,16 @@ class PumpAMM extends Service {
           continue;
         }
       }
-      console.log("sellTxns", sellTxns.length);
       if (sellTxns.length > 1) {
         const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
         console.log(bundleResult);
         console.log(chalk.green("Sell transactions completed."));
+      } else if (sellTxns.length === 1) {
+        const bundleResult = await ctx.service.jito.sendTransaction(
+          sellTxns[0]
+        );
+        console.log(bundleResult);
+        console.log(chalk.green("Buy transactions completed."));
       }
       return true;
     } else {

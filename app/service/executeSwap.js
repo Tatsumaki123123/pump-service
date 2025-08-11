@@ -292,13 +292,13 @@ class ExecuteSwap extends Service {
     });
     if (wallets && wallets.length > 0 && token) {
       if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
-        await ctx.service.raydiumCpmm.batchBuyToken(token, wallets);
+        await ctx.service.raydiumCpmm.batchBuyToken(token, wallets, type);
       } else if (tokenInfo.amm === RAYDIUM_LANUCH_NAME) {
-        await ctx.service.raydiumLaunch.batchBuyToken(token, wallets);
+        await ctx.service.raydiumLaunch.batchBuyToken(token, wallets, type);
       } else if (tokenInfo.amm === PUMP_AMM_NAME) {
-        await ctx.service.pumpAMM.batchBuyToken(token, wallets);
+        await ctx.service.pumpAMM.batchBuyToken(token, wallets, type);
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
-        await ctx.service.pumpfun.batchBuyToken(token, wallets);
+        await ctx.service.pumpfun.batchBuyToken(token, wallets, type);
       } else {
         throw new Error("Not pump token");
       }
@@ -362,7 +362,7 @@ class ExecuteSwap extends Service {
       throw new Error("Token  not checked");
     }
     const token = tokenInfo.token;
-    console.log(chalk.green(`Step 3: Buy ${token}, `));
+    console.log(chalk.green(`Step 3: Buy ${token}, ${walletAddress} `));
     const wallets = await this.getWalletsWithConfig(tokenInfo.line);
     const wallet = wallets.find(
       (item) => item.publicKey.toBase58() === walletAddress
@@ -380,7 +380,7 @@ class ExecuteSwap extends Service {
       }
       return true;
     } else {
-      throw new Error("There are not wallets to sell");
+      throw new Error("There are not wallets to buy");
     }
   }
 
@@ -620,28 +620,36 @@ class ExecuteSwap extends Service {
       dev = "";
       pool = tokenData.pool;
     } else {
-      let poolDetail;
-      try {
-        poolDetail = await getPoolsWithPrices(new PublicKey(token));
-      } catch (error) {}
-      if (poolDetail) {
-        amm = PUMP_AMM_NAME;
-        dev = poolDetail.poolData.coinCreator;
-        pool = poolDetail.address;
+      const oldData = await ctx.model.ExecuteToken.findOne({
+        token: token,
+      });
+      if (oldData) {
+        dev = "";
+        pool = oldData.pool;
       } else {
-        const poolId = await getRaydiumCpmmPoolId(new PublicKey(token));
-        if (poolId) {
-          pool = poolId.toBase58();
-          dev = "";
-          amm = RAYDIUM_CPMM_NAME;
+        let poolDetail;
+        try {
+          poolDetail = await getPoolsWithPrices(new PublicKey(token));
+        } catch (error) {}
+        if (poolDetail) {
+          amm = PUMP_AMM_NAME;
+          dev = poolDetail.poolData.coinCreator;
+          pool = poolDetail.address;
         } else {
-          const poolDetail = await ctx.service.pumpfun.getPoolDetail(token);
-          if (poolDetail) {
-            amm = PUMP_FUN_NAME;
-            dev = poolDetail.dev;
-            pool = "";
+          const poolId = await getRaydiumCpmmPoolId(new PublicKey(token));
+          if (poolId) {
+            pool = poolId.toBase58();
+            dev = "";
+            amm = RAYDIUM_CPMM_NAME;
           } else {
-            throw new Error("Cannot find pool data");
+            const poolDetail = await ctx.service.pumpfun.getPoolDetail(token);
+            if (poolDetail) {
+              amm = PUMP_FUN_NAME;
+              dev = poolDetail.dev;
+              pool = "";
+            } else {
+              throw new Error("Cannot find pool data");
+            }
           }
         }
       }
