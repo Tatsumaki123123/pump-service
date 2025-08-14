@@ -153,12 +153,18 @@ class PumpAMM extends Service {
               volumeIxs.push(troganTipIx);
             }
           }
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(jitoTipIx);
+
+          if (wallets.length > 1) {
+            const jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: fee * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(jitoTipIx);
+          } else {
+            await sendV0Transaction(keypair, volumeIxs);
+            return true;
+          }
 
           try {
             const messageV0 = new TransactionMessage({
@@ -197,11 +203,11 @@ class PumpAMM extends Service {
           console.log(bundleResult);
           console.log(chalk.green("Buy transactions completed."));
         } else if (buyTxns.length === 1) {
-          const bundleResult = await ctx.service.jito.sendTransaction(
-            buyTxns[0]
-          );
-          console.log(bundleResult);
-          console.log(chalk.green("Buy transactions completed."));
+          // const bundleResult = await ctx.service.jito.sendTransaction(
+          //   buyTxns[0]
+          // );
+          // console.log(bundleResult);
+          // console.log(chalk.green("Buy transactions completed."));/
         }
       };
 
@@ -269,6 +275,7 @@ class PumpAMM extends Service {
       const func = async (wallets) => {
         const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
         const sellTxns = [];
+        const jipAcc = ctx.service.jito.getTipAcc();
         for (let i = 0; i < wallets.length; i++) {
           const wallet = wallets[i];
           const keypair = wallet.keypair;
@@ -343,7 +350,6 @@ class PumpAMM extends Service {
             closeAccountIx,
           ];
 
-          const jipAcc = ctx.service.jito.getTipAcc();
           const jitoTipIx = SystemProgram.transfer({
             fromPubkey: keypair.publicKey,
             toPubkey: jipAcc,

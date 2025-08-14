@@ -1,7 +1,7 @@
 [
   {
-    "transferAmount": 1.5,
-    "buyAmount": [0.01],
+    "transferAmount": 0.5,
+    "buyAmount": [0.007],
     "limit": 200000,
     "price": 0,
     "fee": 0.00002,
@@ -17,7 +17,7 @@
   },
   {
     "transferAmount": 1.5,
-    "buyAmount": [0.502],
+    "buyAmount": [0.7],
     "limit": 200000,
     "price": 0,
     "fee": 0.00002,
@@ -33,7 +33,7 @@
   },
   {
     "transferAmount": 1.5,
-    "buyAmount": [0.504],
+    "buyAmount": [0.7],
     "limit": 200000,
     "price": 0,
     "fee": 0.00002,
@@ -49,7 +49,7 @@
   },
   {
     "transferAmount": 1.5,
-    "buyAmount": [0.506],
+    "buyAmount": [0.7],
     "limit": 200000,
     "price": 0,
     "fee": 0.00002,
@@ -65,7 +65,7 @@
   },
   {
     "transferAmount": 1.5,
-    "buyAmount": [0.508],
+    "buyAmount": [0.7],
     "limit": 200000,
     "price": 0,
     "fee": 0.00002,
@@ -81,7 +81,7 @@
   },
   {
     "transferAmount": 1.5,
-    "buyAmount": [0.51],
+    "buyAmount": [0.7],
     "limit": 200000,
     "price": 0,
     "fee": 0.00002,
@@ -97,7 +97,7 @@
   },
   {
     "transferAmount": 1.5,
-    "buyAmount": [0.512],
+    "buyAmount": [0.7],
     "limit": 200000,
     "price": 0,
     "fee": 0.00002,
@@ -112,8 +112,8 @@
     "buyTimes": 1
   },
   {
-    "transferAmount": 1.5,
-    "buyAmount": [0.514],
+    "transferAmount": 2,
+    "buyAmount": [0.7],
     "limit": 200000,
     "price": 0,
     "fee": 0.00002,
@@ -128,8 +128,8 @@
     "buyTimes": 1
   },
   {
-    "transferAmount": 1.5,
-    "buyAmount": [0.516],
+    "transferAmount": 0.5,
+    "buyAmount": [0.015],
     "limit": 200000,
     "price": 0,
     "fee": 0.00002,

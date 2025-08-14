@@ -61,7 +61,6 @@ class OKXRouterSDK {
         userWalletAddress: user.toBase58(),
       });
 
-      console.log(res);
       const data = res?.data?.data;
       if (data && data.instructionLists) {
         const instructions = data.instructionLists;

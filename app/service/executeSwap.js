@@ -616,7 +616,7 @@ class ExecuteSwap extends Service {
 
     let amm = tokenData.amm;
     let dev, pool;
-    if (tokenData.pool) {
+    if (tokenData.pool && amm) {
       dev = "";
       pool = tokenData.pool;
     } else {
@@ -626,11 +626,14 @@ class ExecuteSwap extends Service {
       if (oldData) {
         dev = "";
         pool = oldData.pool;
+        amm = oldData.amm;
       } else {
         let poolDetail;
         try {
-          poolDetail = await getPoolsWithPrices(new PublicKey(token));
-        } catch (error) {}
+          poolDetail = await getPoolsWithPrices(new PublicKey(token), ctx);
+        } catch (error) {
+          throw new Error(error);
+        }
         if (poolDetail) {
           amm = PUMP_AMM_NAME;
           dev = poolDetail.poolData.coinCreator;

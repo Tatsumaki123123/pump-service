@@ -48,7 +48,7 @@
     "buyTimes": 1
   },
   {
-    "transferAmount": 2,
+    "transferAmount": 1.5,
     "buyAmount": [0.948],
     "limit": 200000,
     "price": 0,
