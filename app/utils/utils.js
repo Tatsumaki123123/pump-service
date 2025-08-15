@@ -1,4 +1,8 @@
 const { isObject } = require("lodash");
+
+const BN = require("bn.js");
+const { PublicKey } = require("@solana/web3.js");
+
 function retrieveEnvVariable(variableName) {
   const variable = process.env[variableName] || "";
   if (!variable) {
@@ -45,21 +49,46 @@ async function retryAsync(func, maxAttempts = 3, onError = false) {
 }
 
 function bnLayoutFormatter(obj) {
+  const newObj = {};
   for (const key in obj) {
     if (obj[key]?.constructor?.name === "PublicKey") {
-      obj[key] = obj[key].toBase58();
+      newObj[key] = obj[key].toBase58();
     } else if (obj[key]?.constructor?.name === "BN") {
-      obj[key] = Number(obj[key].toString());
+      newObj[key] = Number(obj[key].toString());
     } else if (obj[key]?.constructor?.name === "BigInt") {
-      obj[key] = Number(obj[key].toString());
+      newObj[key] = Number(obj[key].toString());
     } else if (obj[key]?.constructor?.name === "Buffer") {
-      obj[key] = obj[key].toString("base64");
+      newObj[key] = obj[key].toString("base64");
     } else if (isObject(obj[key])) {
-      bnLayoutFormatter(obj[key]);
+      newObj[key] = { ...obj[key] };
+      bnLayoutFormatter(newObj[key]);
     } else {
-      obj[key] = obj[key];
+      newObj[key] = obj[key];
     }
   }
+  return newObj;
+}
+
+function reverseBnLayoutFormatter(obj, options = {}) {
+  const newObj = {};
+  for (const key in obj) {
+    try {
+      if (typeof obj[key] === "string") {
+        newObj[key] = new PublicKey(obj[key]);
+      } else if (typeof obj[key] === "number" || typeof obj[key] === "string") {
+        newObj[key] = new BN(obj[key].toString());
+      } else if (isObject(obj[key])) {
+        newObj[key] = { ...obj[key] };
+        reverseBnLayoutFormatter(newObj[key]);
+      } else {
+        newObj[key] = obj[key];
+      }
+    } catch (error) {
+      console.warn(`Failed to convert ${key}: ${error.message}`);
+      newObj[key] = obj[key];
+    }
+  }
+  return newObj;
 }
 
 module.exports = {
@@ -68,4 +97,5 @@ module.exports = {
   retry,
   retryAsync,
   bnLayoutFormatter,
+  reverseBnLayoutFormatter,
 };

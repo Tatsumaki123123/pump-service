@@ -14,6 +14,11 @@ const {
   TOKEN_PROGRAM_ID,
 } = require("@solana/spl-token");
 
+const {
+  bnLayoutFormatter,
+  reverseBnLayoutFormatter,
+} = require("../utils/utils");
+
 const { PumpAmmInternalSdk } = require("./pumpfun/sdk/pumpAmmInternal");
 const pumpAmmInternal = new PumpAmmInternalSdk(connection);
 
@@ -23,14 +28,16 @@ const PUMP_PROGRAM_ID_PUBKEY = new PublicKey(PUMP_PROGRAM_ID);
 const program = new Program(IDL, { connection });
 
 const getPoolsWithBaseMint = async (mintAddress, ctx) => {
-  let poolDataBuffer;
-  let poolId;
   const dbData = await ctx.model.PoolStore.findOne({
     token: mintAddress.toBase58(),
   });
-  if (dbData) {
-    poolDataBuffer = dbData.poolData;
-    poolId = new PublicKey(dbData.pool);
+  if (dbData && dbData.poolObj) {
+    const poolData = reverseBnLayoutFormatter(dbData.poolObj);
+    return {
+      address: new PublicKey(dbData.pool),
+      is_native_base: false,
+      poolData,
+    };
   } else {
     let response = null,
       is_err = true,
@@ -53,40 +60,31 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
     if (is_err) {
       throw new Error(`Can not get Token ${mintAddress.toBase58()} pool data`);
     }
-
-    const pool = response[0];
-    poolId = pool.pubkey;
-    const data = Buffer.from(pool.account.data);
-    poolDataBuffer = data;
-    await ctx.model.PoolStore.create({
-      token: mintAddress.toBase58(),
-      poolData: poolDataBuffer,
-      pool: poolId.toBase58(),
+    const mappedPools = response.map((pool) => {
+      const data = Buffer.from(pool.account.data);
+      const poolData = program.coder.accounts.decode("pool", data);
+      return {
+        address: pool.pubkey,
+        is_native_base: false,
+        poolData,
+      };
     });
+    const pool = mappedPools.find((item) =>
+      NATIVE_MINT.equals(item.poolData.quoteMint)
+    );
+
+    if (pool) {
+      const newPoolData = bnLayoutFormatter(pool.poolData);
+      await ctx.model.PoolStore.create({
+        token: mintAddress.toBase58(),
+        pool: pool.address.toBase58(),
+        poolObj: newPoolData,
+      });
+      return pool;
+    } else {
+      throw new Error("Cannot find pump pool");
+    }
   }
-  const poolData = program.coder.accounts.decode("pool", poolDataBuffer);
-  return {
-    address: poolId,
-    is_native_base: false,
-    poolData,
-  };
-
-  const mappedPools = response.map((pool) => {
-    const data = Buffer.from(pool.account.data);
-    const poolData = program.coder.accounts.decode("pool", data);
-    return {
-      address: pool.pubkey,
-      is_native_base: false,
-      poolData,
-    };
-  });
-
-  console.log("getPoolsWithBaseMint", new Date());
-  // await ctx.model.PoolStore.create({
-  //   token: mintAddress.toBase58(),
-  //   poolData: mappedPools,
-  // });
-  return mappedPools;
 };
 
 const getPoolsWithQuoteMint = async (mintAddress) => {

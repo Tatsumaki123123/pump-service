@@ -154,17 +154,12 @@ class PumpAMM extends Service {
             }
           }
 
-          if (wallets.length > 1) {
-            const jitoTipIx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(jitoTipIx);
-          } else {
-            await sendV0Transaction(keypair, volumeIxs);
-            return true;
-          }
+          const jitoTipIx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: jipAcc,
+            lamports: fee * LAMPORTS_PER_SOL,
+          });
+          volumeIxs.push(jitoTipIx);
 
           try {
             const messageV0 = new TransactionMessage({
@@ -203,11 +198,11 @@ class PumpAMM extends Service {
           console.log(bundleResult);
           console.log(chalk.green("Buy transactions completed."));
         } else if (buyTxns.length === 1) {
-          // const bundleResult = await ctx.service.jito.sendTransaction(
-          //   buyTxns[0]
-          // );
-          // console.log(bundleResult);
-          // console.log(chalk.green("Buy transactions completed."));/
+          const bundleResult = await ctx.service.jito.sendTransaction(
+            buyTxns[0]
+          );
+          console.log(bundleResult);
+          console.log(chalk.green("Buy transactions completed."));
         }
       };
 

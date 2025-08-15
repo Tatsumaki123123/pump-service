@@ -6,6 +6,7 @@ module.exports = (app) => {
     token: { type: String, unique: true },
     poolData: { type: Buffer },
     pool: { type: String },
+    poolObj: { type: Object },
   });
 
   return mongoose.model("PoolStore", schema);
