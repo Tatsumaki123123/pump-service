@@ -10,7 +10,7 @@ const TROGAN_PROGRAM_ID = new PublicKey(
 );
 
 const TROGAN_FEES_VAULT = new PublicKey(
-  "9yMwSPk9mrXSN7yDHUuZurAh1sjbJsfpUqjZ7SvVtdco"
+  "FEPUHsSPy47EQm33TvBSfACp1ZFen3EVNUjKVdm9HSDD"
 );
 
 const discriminator = new Uint8Array([212, 6, 30, 174, 147, 23, 236, 55]);

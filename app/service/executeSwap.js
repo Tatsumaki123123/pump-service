@@ -497,18 +497,18 @@ class ExecuteSwap extends Service {
         const keypair = Keypair.fromSecretKey(
           bs58.decode(firstWallet.privateKey)
         );
+        const { privateKey, ...config } = firstWallet;
         const firstWalletConfig = {
           address: firstWallet.address,
           publicKey: new PublicKey(firstWallet.address),
           buyAmount: firstWallet.buyAmount,
           buyAmountArr: [firstWallet.buyAmount],
           keypair,
-          limit: 1000000,
+          limit: 2000000,
           price: 0,
           fee: 0.00002,
-          isFirst: true,
           firstBuy: true,
-          isProxy: true,
+          ...config,
         };
         if (firstWallet.position === "after") {
           newWallets = [...newWallets, firstWalletConfig];
@@ -632,7 +632,7 @@ class ExecuteSwap extends Service {
         try {
           poolDetail = await getPoolsWithPrices(new PublicKey(token), ctx);
         } catch (error) {
-          throw new Error(error);
+          // throw new Error(error);
         }
         if (poolDetail) {
           amm = PUMP_AMM_NAME;

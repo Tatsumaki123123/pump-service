@@ -41,6 +41,7 @@ const { getSPLBalance, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const moment = require("moment");
 const { sleep } = require("../utils/utils");
+const { getRandomAccount } = require("../utils/slot0trade");
 
 const RENT_SYSVAR = new PublicKey(
   "SysvarRent111111111111111111111111111111111"
@@ -56,7 +57,7 @@ const TROGAN_FEE = 0.00036;
 const TRANSACTION_FEE = 5000;
 const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
 
-const SLIPPAGE_BASIS_POINTS = 0.2;
+const SLIPPAGE_BASIS_POINTS = 0.4;
 
 const pSwap = new PumpSwapSDK();
 const proxyPumpSwap = new ProxyPumpSwapSDK();
@@ -89,7 +90,7 @@ class PumpAMM extends Service {
         const buyTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
         for (let i = 0; i < wallets.length; i++) {
-          const slippage = i === 0 ? 0.1 : SLIPPAGE_BASIS_POINTS;
+          const slippage = i === 0 ? 0.05 : SLIPPAGE_BASIS_POINTS;
           const wallet = wallets[i];
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
@@ -153,13 +154,22 @@ class PumpAMM extends Service {
               volumeIxs.push(troganTipIx);
             }
           }
-
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(jitoTipIx);
+          if (wallet.is0slot) {
+            const jipAcc = getRandomAccount();
+            const slotTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: 0.0001 * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(slotTipIx);
+          } else {
+            const jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: fee * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(jitoTipIx);
+          }
 
           try {
             const messageV0 = new TransactionMessage({
@@ -404,6 +414,7 @@ class PumpAMM extends Service {
           secondBuy: [],
           multiBuy: [],
           firstBuy: [],
+          otherBuy: [],
         };
         newWallets.forEach((wallet) => {
           if (wallet.firstBuy) {
@@ -414,6 +425,8 @@ class PumpAMM extends Service {
             sellAllObj.multiBuy.push(wallet);
           } else if (wallet.thirdBuy) {
             sellAllObj.thirdBuy.push(wallet);
+          } else {
+            sellAllObj.otherBuy.push(wallet);
           }
         });
 

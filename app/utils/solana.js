@@ -93,11 +93,12 @@ async function closeAllTokenAccounts(connection, keypair) {
     }
     let transaction = new Transaction();
     let len = 0;
+    const minAmount = 100 * 10 ** 6;
     for (const account of tokenAccounts.value) {
       const accountPubkey = account.pubkey;
       const accountInfo = await getAccount(connection, accountPubkey);
 
-      if (accountInfo.amount >= 1000) {
+      if (accountInfo.amount >= minAmount) {
         throw new Error(
           `Token account ${wallet.publicKey.toBase58()} has balance ${
             accountInfo.amount
@@ -105,7 +106,7 @@ async function closeAllTokenAccounts(connection, keypair) {
         );
       }
       // 检查余额是否为 0
-      if (accountInfo.amount > 0 && accountInfo.amount < 1000) {
+      if (accountInfo.amount > 0 && accountInfo.amount < minAmount) {
         console.log(
           chalk.red(
             `Token account ${wallet.publicKey.toBase58()} has balance ${

@@ -24,11 +24,13 @@ class Debot extends Service {
     const appData = await ctx.service.appData.getData();
     let sort_field = "latest_time";
     let sort_order = "desc";
+    let duration = 24;
     if (groupSort) {
       sort_field = groupSort.sort_field;
       sort_order = groupSort.sort_order;
+      duration = groupSort.duration;
     }
-    const uri = `${BASE_URL}wallet/group/hot_token?group_id=${groupId}&page_index=1&page_size=200&sort_field=${sort_field}&sort_order=${sort_order}&duration=24H`;
+    const uri = `${BASE_URL}wallet/group/hot_token?group_id=${groupId}&page_index=1&page_size=200&sort_field=${sort_field}&sort_order=${sort_order}&duration=${duration}H`;
 
     // const proxyUri = `${PROXY_URL}&url=${encodeURIComponent(uri)}`;
     const res = await ctx.curl(uri, {
