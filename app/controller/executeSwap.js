@@ -259,16 +259,27 @@ class ExecuteSwap extends BaseController {
     if (data) {
       try {
         const parseData = JSON.parse(data);
-        await ctx.model.ExecuteLine.updateOne({ lineId: line }, parseData);
+        const res = await ctx.model.ExecuteLine.findOne({
+          lineId: line,
+        }).lean();
+        const firstWallet = res.firstWallet;
+        const newData = {
+          ...res,
+          ...parseData,
+          firstWallet: { ...firstWallet, ...parseData.firstWallet },
+        };
+        await ctx.model.ExecuteLine.updateOne({ lineId: line }, newData);
         this.success(true);
       } catch (error) {
         throw new Error("Date format error");
       }
     } else {
       const res = await ctx.model.ExecuteLine.findOne({ lineId: line }).lean();
+      const { privateKey, ...firstWallet } = res.firstWallet;
       const data = {
         lineName: res.lineName,
         walletConfig: res.walletConfig,
+        firstWallet: firstWallet,
         needFirstWallet: res.needFirstWallet,
         sourceWeb: res.sourceWeb,
         groupSort: res.groupSort,

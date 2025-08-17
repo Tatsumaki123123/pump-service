@@ -42,7 +42,6 @@ class Debot extends Service {
         "sec-ch-ua-full-version": "138.0.7204.158",
       },
     });
-    console.log(res);
     if (res.data.code !== 0) {
       throw new Error("Get data from debot error");
     }

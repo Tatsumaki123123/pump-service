@@ -488,12 +488,14 @@ class ExecuteSwap extends Service {
 
   async getWalletsWithLineFirstWallet(line, type = "all") {
     let newWallets = await this.getWalletsWithConfig(line, type);
-    if (type === "first" || type === "all") {
-      const lineData = await this.ctx.model.ExecuteLine.findOne({
-        lineId: line,
-      }).lean();
-      const { firstWallet, needFirstWallet } = lineData;
-      if (firstWallet && needFirstWallet) {
+    const lineData = await this.ctx.model.ExecuteLine.findOne({
+      lineId: line,
+    }).lean();
+    const { firstWallet, needFirstWallet } = lineData;
+    if (firstWallet && needFirstWallet) {
+      const { type = "first" } = firstWallet;
+      const typeKey = `${type}Buy`;
+      if (newWallets.find((item) => item[typeKey] === true)) {
         const keypair = Keypair.fromSecretKey(
           bs58.decode(firstWallet.privateKey)
         );
@@ -507,9 +509,9 @@ class ExecuteSwap extends Service {
           limit: 2000000,
           price: 0,
           fee: 0.00002,
-          firstBuy: true,
           ...config,
         };
+        firstWalletConfig[typeKey] = true;
         if (firstWallet.position === "after") {
           newWallets = [...newWallets, firstWalletConfig];
         } else {
@@ -517,6 +519,7 @@ class ExecuteSwap extends Service {
         }
       }
     }
+    console.log(newWallets);
     return newWallets;
   }
 
