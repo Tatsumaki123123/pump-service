@@ -214,7 +214,6 @@ class PumpSwapSDK {
       poolDetail,
       isAxiom,
     } = params;
-    console.log(params);
 
     const accounts = await this.getAccounts({
       poolDetail: poolDetail,
@@ -350,7 +349,6 @@ class PumpSwapSDK {
       isWritable: item.writable,
     }));
 
-    console.log(accountObj);
     return accounts;
   }
 }
