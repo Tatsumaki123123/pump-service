@@ -43,6 +43,10 @@ module.exports = (app) => {
     controller.executeToken.initTokenList
   );
   router.post("/v1/executetoken/addToken", controller.executeToken.addToken);
+  router.post(
+    "/v1/executetoken/deletePoolStore",
+    controller.executeToken.deletePoolStore
+  );
 
   router.post("/v1/pumpmonitor/buyToken", controller.pumpMonitor.buyToken);
   router.post("/v1/pumpmonitor/sellToken", controller.pumpMonitor.sellToken);

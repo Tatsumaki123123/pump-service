@@ -57,7 +57,7 @@ const TROGAN_FEE = 0.00036;
 const TRANSACTION_FEE = 5000;
 const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
 
-const SLIPPAGE_BASIS_POINTS = 0.4;
+const SLIPPAGE_BASIS_POINTS = 0.3;
 
 const pSwap = new PumpSwapSDK();
 const proxyPumpSwap = new ProxyPumpSwapSDK();
@@ -90,11 +90,11 @@ class PumpAMM extends Service {
         const buyTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
         for (let i = 0; i < wallets.length; i++) {
-          const slippage = i === 0 ? 0.05 : SLIPPAGE_BASIS_POINTS;
+          const slippage = i === 0 ? 0.1 : SLIPPAGE_BASIS_POINTS;
           const wallet = wallets[i];
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
-          const { buyAmount, limit, price, fee } = wallet;
+          const { buyAmount, limit, price, fee, isAxiom } = wallet;
           let volumeIxs = [];
           console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
           if (wallet.isOkx) {
@@ -131,7 +131,8 @@ class PumpAMM extends Service {
               tokenMint,
               wallet,
               poolDetail,
-              slippage
+              slippage,
+              isAxiom
             );
             volumeIxs = [
               setComputeUnitLimitIx,
@@ -153,22 +154,24 @@ class PumpAMM extends Service {
 
               volumeIxs.push(troganTipIx);
             }
-          }
-          if (wallet.is0slot) {
-            const jipAcc = getRandomAccount();
-            const slotTipIx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: 0.0001 * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(slotTipIx);
-          } else {
-            const jitoTipIx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
-            });
-            volumeIxs.push(jitoTipIx);
+            if (wallet.isAxiom) {
+              const tipTx = SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: new PublicKey(
+                  "axmMdWvgEnN3NFrxMfTqUURzj9NLhZL2DkHkWCdgiFV"
+                ),
+                lamports: 0.001 * LAMPORTS_PER_SOL,
+              });
+              volumeIxs.push(tipTx);
+            }
+            if (wallets.length > 1 && i === wallets.length - 1) {
+              const jitoTipIx = SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: jipAcc,
+                lamports: fee * LAMPORTS_PER_SOL,
+              });
+              volumeIxs.push(jitoTipIx);
+            }
           }
 
           try {
@@ -182,17 +185,17 @@ class PumpAMM extends Service {
             tx.sign([keypair]);
 
             // 模拟交易
-            // const simulationResult = await connection.simulateTransaction(tx, {
-            //   commitment: "confirmed",
-            // });
-            // if (simulationResult.value.err) {
-            //   console.error("simulation", simulationResult.value);
-            //   throw new Error(simulationResult.value);
-            // }
+            const simulationResult = await connection.simulateTransaction(tx, {
+              commitment: "confirmed",
+            });
+            if (simulationResult.value.err) {
+              console.error("simulation", simulationResult.value);
+              throw new Error(simulationResult.value);
+            }
 
-            // console.log(
-            //   chalk.green("simulation success", keypair.publicKey.toString())
-            // );
+            console.log(
+              chalk.green("simulation success", keypair.publicKey.toString())
+            );
             buyTxns.push(tx);
           } catch (error) {
             console.error(error.message);
@@ -445,7 +448,14 @@ class PumpAMM extends Service {
     }
   }
 
-  async getBuyAmmIxs(tokenMint, user, buyAmount, poolDetail, slippage) {
+  async getBuyAmmIxs(
+    tokenMint,
+    user,
+    buyAmount,
+    poolDetail,
+    slippage,
+    isAxiom
+  ) {
     // 1
     const wSolATA = getAssociatedTokenAddressSync(
       WSOL_TOKEN_ACCOUNT,
@@ -490,6 +500,7 @@ class PumpAMM extends Service {
       buyAmount: buyAmount,
       slippage: slippage,
       poolDetail: poolDetail,
+      isAxiom,
     });
 
     // 指令 8: 关闭 wSOL ATA
@@ -506,7 +517,7 @@ class PumpAMM extends Service {
     return Ixs;
   }
 
-  async genBuyProxyIxs(tokenMint, wallet, poolDetail, slippage) {
+  async genBuyProxyIxs(tokenMint, wallet, poolDetail, slippage, isAxiom) {
     const { ctx } = this;
 
     let proxyBuyIxs = [];
@@ -530,7 +541,8 @@ class PumpAMM extends Service {
         user,
         buyAmount,
         poolDetail,
-        slippage
+        slippage,
+        isAxiom
       );
     }
 

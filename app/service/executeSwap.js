@@ -493,9 +493,9 @@ class ExecuteSwap extends Service {
     }).lean();
     const { firstWallet, needFirstWallet } = lineData;
     if (firstWallet && needFirstWallet) {
-      const { type = "first" } = firstWallet;
-      const typeKey = `${type}Buy`;
-      if (newWallets.find((item) => item[typeKey] === true)) {
+      const { type: firstType = "first" } = firstWallet;
+      const typeKey = `${firstType}Buy`;
+      if (type === firstType || type === "all") {
         const keypair = Keypair.fromSecretKey(
           bs58.decode(firstWallet.privateKey)
         );
@@ -519,7 +519,6 @@ class ExecuteSwap extends Service {
         }
       }
     }
-    console.log(newWallets);
     return newWallets;
   }
 

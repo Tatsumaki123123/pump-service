@@ -1,0 +1,34 @@
+[
+  {
+    "transferAmount": 4,
+    "buyAmount": [1.98],
+    "limit": 200000,
+    "price": 0,
+    "fee": 0.00001,
+    "firstBuy": true,
+    "secondBuy": false,
+    "multiBuy": false,
+    "isTrogan": false,
+    "thirdBuy": false,
+    "isOkx": false,
+    "isJup": false,
+    "isGmgn": true,
+    "buyTimes": 1
+  },
+  {
+    "transferAmount": 3,
+    "buyAmount": [0.54],
+    "limit": 200000,
+    "price": 0,
+    "fee": 0.00001,
+    "firstBuy": true,
+    "secondBuy": false,
+    "multiBuy": false,
+    "isTrogan": false,
+    "thirdBuy": false,
+    "isOkx": false,
+    "isJup": false,
+    "isGmgn": true,
+    "buyTimes": 1
+  }
+]

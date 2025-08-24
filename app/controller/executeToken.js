@@ -76,6 +76,20 @@ class ExecuteToken extends BaseController {
       throw new Error("Params error");
     }
   }
+
+  async deletePoolStore() {
+    const { ctx } = this;
+
+    const { token } = ctx.request.body;
+    if (token) {
+      await ctx.model.PoolStore.deleteOne({
+        token: token,
+      });
+      this.success(true);
+    } else {
+      throw new Error("Params error");
+    }
+  }
 }
 
 module.exports = ExecuteToken;

@@ -22,7 +22,11 @@ const {
   NATIVE_MINT,
 } = require("@solana/spl-token");
 
-const { WSOL_TOKEN_ACCOUNT, PUMP_AMM_PROGRAM_ID } = require("../constants");
+const {
+  WSOL_TOKEN_ACCOUNT,
+  PUMP_AMM_PROGRAM_ID,
+  AXIOM_PROGRAM_ID,
+} = require("../constants");
 
 const {
   getPoolsWithPrices,
@@ -202,7 +206,15 @@ class PumpSwapSDK {
   constructor() {}
 
   async createBuyInstruction(params) {
-    const { tokenMint, user, buyAmount, slippage = 0.1, poolDetail } = params;
+    const {
+      tokenMint,
+      user,
+      buyAmount,
+      slippage = 0.1,
+      poolDetail,
+      isAxiom,
+    } = params;
+    console.log(params);
 
     const accounts = await this.getAccounts({
       poolDetail: poolDetail,
@@ -220,24 +232,39 @@ class PumpSwapSDK {
     );
 
     const baseAmountOut = buyTokenAmount;
-    const maxQuoteAmountIn = BigInt(
-      Math.floor(buyAmount * (1 + slippage) * LAMPORTS_PER_SOL)
+    const maxQuoteAmountIn = Math.floor(
+      buyAmount * (1 + slippage) * LAMPORTS_PER_SOL
     );
+    let data;
 
-    const data = Buffer.alloc(8 + 8 + 8); // 24 bytes total
-    data.set(BUY_DISCRIMINATOR, 0);
-    data.writeBigUInt64LE(BigInt(baseAmountOut), 8); // Write base_amount_in as little-endian u64
-    data.writeBigUInt64LE(BigInt(maxQuoteAmountIn), 16); // Write min_quote_amount_out as little-endian u64
+    if (!isAxiom) {
+      data = Buffer.alloc(8 + 8 + 8); // 24 bytes total
+      data.set(BUY_DISCRIMINATOR, 0);
+      data.writeBigUInt64LE(BigInt(baseAmountOut), 8); // Write base_amount_in as little-endian u64
+      data.writeBigUInt64LE(BigInt(maxQuoteAmountIn), 16); // Write min_quote_amount_out as little-endian u64
+    } else {
+      data = Buffer.alloc(16);
+      data.writeUInt32LE(0x8119c000, 0);
+      data.writeUInt8((maxQuoteAmountIn >>> 24) & 0xff, 4);
+      data.writeBigInt64LE(BigInt(baseAmountOut), 8);
+    }
 
     return new TransactionInstruction({
       keys: accounts,
-      programId: PUMP_AMM_PROGRAM_ID,
+      programId: isAxiom ? AXIOM_PROGRAM_ID : PUMP_AMM_PROGRAM_ID,
       data: data,
     });
   }
 
   async createSellInstruction(params) {
-    const { tokenMint, user, tokenAmount, sellNewAccount, poolDetail } = params;
+    const {
+      tokenMint,
+      user,
+      tokenAmount,
+      sellNewAccount,
+      poolDetail,
+      isAxiom,
+    } = params;
 
     const accounts = await this.getAccounts({
       poolDetail,
@@ -258,7 +285,7 @@ class PumpSwapSDK {
 
     return new TransactionInstruction({
       keys: accounts,
-      programId: PUMP_AMM_PROGRAM_ID,
+      programId: isAxiom ? AXIOM_PROGRAM_ID : PUMP_AMM_PROGRAM_ID,
       data: data,
     });
   }
@@ -323,6 +350,7 @@ class PumpSwapSDK {
       isWritable: item.writable,
     }));
 
+    console.log(accountObj);
     return accounts;
   }
 }
