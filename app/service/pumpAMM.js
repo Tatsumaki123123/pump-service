@@ -158,13 +158,13 @@ class PumpAMM extends Service {
               const tipTx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: new PublicKey(
-                  "axmMdWvgEnN3NFrxMfTqUURzj9NLhZL2DkHkWCdgiFV"
+                  "5BqYhuD4q1YD3DMAYkc1FeTu9vqQVYYdfBAmkZjamyZg"
                 ),
-                lamports: 0.001 * LAMPORTS_PER_SOL,
+                lamports: 0.0001 * LAMPORTS_PER_SOL,
               });
               volumeIxs.push(tipTx);
             }
-            if (wallets.length > 1 && i === wallets.length - 1) {
+            if (i === wallets.length - 1) {
               const jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: jipAcc,
@@ -173,7 +173,6 @@ class PumpAMM extends Service {
               volumeIxs.push(jitoTipIx);
             }
           }
-
           try {
             const messageV0 = new TransactionMessage({
               payerKey: user,
@@ -185,20 +184,20 @@ class PumpAMM extends Service {
             tx.sign([keypair]);
 
             // 模拟交易
-            // const simulationResult = await connection.simulateTransaction(tx, {
-            //   commitment: "confirmed",
-            // });
-            // if (simulationResult.value.err) {
-            //   console.error("simulation", simulationResult.value);
-            //   throw new Error(simulationResult.value);
-            // }
+            const simulationResult = await connection.simulateTransaction(tx, {
+              commitment: "confirmed",
+            });
+            if (simulationResult.value.err) {
+              console.error("simulation", simulationResult.value);
+              throw new Error(simulationResult.value);
+            }
 
-            // console.log(
-            //   chalk.green("simulation success", keypair.publicKey.toString())
-            // );
+            console.log(
+              chalk.green("simulation success", keypair.publicKey.toString())
+            );
             buyTxns.push(tx);
           } catch (error) {
-            console.error(error.message);
+            console.error(error);
             break;
           }
         }
@@ -357,13 +356,14 @@ class PumpAMM extends Service {
             swapTx,
             closeAccountIx,
           ];
-
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: keypair.publicKey,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(jitoTipIx);
+          if (i === wallets.length - 1) {
+            const jitoTipIx = SystemProgram.transfer({
+              fromPubkey: keypair.publicKey,
+              toPubkey: jipAcc,
+              lamports: fee * LAMPORTS_PER_SOL,
+            });
+            volumeIxs.push(jitoTipIx);
+          }
 
           try {
             const messageV0 = new TransactionMessage({

@@ -690,12 +690,12 @@ class ExecuteSwap extends Service {
     return { ...tokenInfo, buyTimes, tid };
   }
 
-  async closeAllAccounts(line) {
+  async closeAllAccounts(line, force = false) {
     const { ctx } = this;
     const wallets = await this.getWallets(line, true);
     if (wallets && wallets.length > 0) {
       for (const wallet of wallets) {
-        await closeAllTokenAccounts(connection, wallet.keypair);
+        await closeAllTokenAccounts(connection, wallet.keypair, force);
         await sleep(1);
       }
       return true;

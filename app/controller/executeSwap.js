@@ -125,9 +125,9 @@ class ExecuteSwap extends BaseController {
   async closeAllAccounts() {
     const { ctx } = this;
 
-    const { line } = ctx.request.body;
+    const { line, force = false } = ctx.request.body;
     if (line) {
-      const res = await ctx.service.executeSwap.closeAllAccounts(line);
+      const res = await ctx.service.executeSwap.closeAllAccounts(line, force);
       this.success(res);
     } else {
       throw new Error("Params error");

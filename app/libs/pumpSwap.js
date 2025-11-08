@@ -66,7 +66,7 @@ const defaultBuyAccounts = {
   pool: {
     account: null,
     signer: false,
-    writable: false,
+    writable: true,
     label: "pool",
   },
   user: {
@@ -189,11 +189,17 @@ const defaultBuyAccounts = {
     writable: true,
     label: "user_volume_accumulator",
   },
-  account: {
-    account: null,
+  fee_config: {
+    account: new PublicKey("5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx"),
     signer: false,
-    writable: true,
-    label: "account",
+    writable: false,
+    label: "fee_config",
+  },
+  fee_program: {
+    account: new PublicKey("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"),
+    signer: false,
+    writable: false,
+    label: "fee_program",
   },
 };
 
@@ -230,29 +236,33 @@ class PumpSwapSDK {
       poolDetail
     );
 
-    const baseAmountOut = buyTokenAmount;
-    const maxQuoteAmountIn = Math.floor(
-      buyAmount * (1 + slippage) * LAMPORTS_PER_SOL
-    );
-    let data;
-
     if (!isAxiom) {
-      data = Buffer.alloc(8 + 8 + 8); // 24 bytes total
+      const baseAmountOut = buyTokenAmount;
+      const maxQuoteAmountIn = Math.floor(
+        buyAmount * (1 + slippage) * LAMPORTS_PER_SOL
+      );
+      const data = Buffer.alloc(8 + 8 + 8); // 24 bytes total
       data.set(BUY_DISCRIMINATOR, 0);
       data.writeBigUInt64LE(BigInt(baseAmountOut), 8); // Write base_amount_in as little-endian u64
       data.writeBigUInt64LE(BigInt(maxQuoteAmountIn), 16); // Write min_quote_amount_out as little-endian u64
+      return new TransactionInstruction({
+        keys: accounts,
+        programId: PUMP_AMM_PROGRAM_ID,
+        data: data,
+      });
     } else {
-      data = Buffer.alloc(16);
-      data.writeUInt32LE(0x8119c000, 0);
-      data.writeUInt8((maxQuoteAmountIn >>> 24) & 0xff, 4);
-      data.writeBigInt64LE(BigInt(baseAmountOut), 8);
+      const baseAmountOut = Math.floor(Number(buyTokenAmount) * (1 - slippage));
+      const maxQuoteAmountIn = buyAmount * LAMPORTS_PER_SOL;
+      const data = Buffer.alloc(1 + 8 + 8);
+      data.writeUInt8(0, 0);
+      data.writeBigUInt64LE(BigInt(maxQuoteAmountIn) - 2n, 1);
+      data.writeBigUInt64LE(BigInt(baseAmountOut), 9);
+      return new TransactionInstruction({
+        keys: accounts,
+        programId: AXIOM_PROGRAM_ID,
+        data: data,
+      });
     }
-
-    return new TransactionInstruction({
-      keys: accounts,
-      programId: isAxiom ? AXIOM_PROGRAM_ID : PUMP_AMM_PROGRAM_ID,
-      data: data,
-    });
   }
 
   async createSellInstruction(params) {
@@ -341,7 +351,10 @@ class PumpSwapSDK {
 
     accountObj.user_volume_accumulator.account =
       getUserVolumeAccumulatorPda(user);
-    accountObj.account.account = user;
+    if (type === "sell") {
+      delete accountObj.global_volume_accumulator;
+      delete accountObj.user_volume_accumulator;
+    }
 
     const accounts = Object.values(accountObj).map((item) => ({
       pubkey: item.account,
