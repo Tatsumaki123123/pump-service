@@ -43,7 +43,7 @@ constants.GRPC_ENDPOINT = "https://grpc-fra-1.erpc.global";
 constants.GRPC_TOKEN = "e8782e9b-dc7c-4bd4-b931-012e4f8f0dde";
 
 constants.AXIOM_PROGRAM_ID = new PublicKey(
-  "AxiomxSitiyXyPjKgJ9XSrdhsydtZsskZTEDam3PxKcC"
+  "6HB1VBBS8LrdQiR9MZcXV5VdpKFb7vjTMZuQQEQEPioC"
 );
 
 module.exports = constants;
