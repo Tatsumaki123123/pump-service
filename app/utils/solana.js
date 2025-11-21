@@ -35,14 +35,26 @@ async function getSPLBalance(
   connection,
   tokenMint,
   owner,
-  allowOffCurve = false
+  allowOffCurve = false,
+  tokenProgramId
 ) {
   try {
-    let ata = getAssociatedTokenAddressSync(tokenMint, owner, allowOffCurve);
+    let tokenProId = TOKEN_PROGRAM_ID;
+    if (!tokenProgramId) {
+      const mintInfo = await connection.getParsedAccountInfo(tokenMint);
+      tokenProId = mintInfo.value?.owner || TOKEN_PROGRAM_ID;
+    }
+
+    let ata = getAssociatedTokenAddressSync(
+      tokenMint,
+      owner,
+      allowOffCurve,
+      tokenProId
+    );
     const balance = await connection.getTokenAccountBalance(ata, "confirmed");
     return balance.value.uiAmount || 0;
   } catch (e) {
-    console.error(e.message);
+    // console.error(e);
   }
   return 0;
 }
@@ -452,6 +464,12 @@ async function wsolToSol(connection, wallet) {
   await connection.confirmTransaction(signature, "confirmed");
 }
 
+async function getTokenProgramId(tokenMint) {
+  const accountInfo = await connection.getParsedAccountInfo(tokenMint);
+  const programId = accountInfo.value.owner;
+  return programId || TOKEN_PROGRAM_ID;
+}
+
 module.exports = {
   getSPLBalance,
   getSPLBalanceAmount,
@@ -463,4 +481,5 @@ module.exports = {
   sendV0Transaction,
   wrapSolToWSol,
   wsolToSol,
+  getTokenProgramId,
 };

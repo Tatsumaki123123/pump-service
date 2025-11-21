@@ -37,7 +37,11 @@ const PumpSwapSDK = require("../libs/pumpSwap");
 const ProxyPumpSwapSDK = require("../libs/proxyPumpSwap");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
-const { getSPLBalance, sendV0Transaction } = require("../utils/solana");
+const {
+  getSPLBalance,
+  sendV0Transaction,
+  getTokenProgramId,
+} = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const moment = require("moment");
 const { sleep } = require("../utils/utils");
@@ -85,8 +89,9 @@ class PumpAMM extends Service {
       const tokenMint = new PublicKey(token);
       const { blockhash } = await connection.getLatestBlockhash();
 
+      const tokenProgramId = await getTokenProgramId(tokenMint);
+      const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
       const func = async (wallets) => {
-        const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
         const buyTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
         for (let i = 0; i < wallets.length; i++) {
@@ -127,13 +132,14 @@ class PumpAMM extends Service {
                 microLamports: price,
               });
 
-            const proxyBuyIxs = await this.genBuyProxyIxs(
+            const proxyBuyIxs = await this.genBuyProxyIxs({
               tokenMint,
               wallet,
               poolDetail,
               slippage,
-              isAxiom
-            );
+              isAxiom,
+              tokenProgramId,
+            });
             volumeIxs = [
               setComputeUnitLimitIx,
               setComputeUnitPriceIx,
@@ -258,6 +264,7 @@ class PumpAMM extends Service {
 
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
+      const tokenProgramId = await getTokenProgramId(tokenMint);
 
       const newWallets = [];
       for (let i = 0; i < wallets.length; i++) {
@@ -267,7 +274,8 @@ class PumpAMM extends Service {
         const tokenAmount = await getSPLBalance(
           connection,
           tokenMint,
-          keypair.publicKey
+          keypair.publicKey,
+          tokenProgramId
         );
 
         console.log(`${user.toBase58()} sell ${tokenAmount} ${token}`);
@@ -339,6 +347,7 @@ class PumpAMM extends Service {
             tokenAmount,
             sellNewAccount: newAccount,
             poolDetail: poolDetail,
+            tokenProgramId,
           });
 
           // 6. Token Program: closeAccount
@@ -448,14 +457,15 @@ class PumpAMM extends Service {
     }
   }
 
-  async getBuyAmmIxs(
+  async getBuyAmmIxs({
     tokenMint,
     user,
     buyAmount,
     poolDetail,
     slippage,
-    isAxiom
-  ) {
+    isAxiom,
+    tokenProgramId,
+  }) {
     // 1
     const wSolATA = getAssociatedTokenAddressSync(
       WSOL_TOKEN_ACCOUNT,
@@ -463,7 +473,12 @@ class PumpAMM extends Service {
       false
     );
     //2
-    const tokenAta = getAssociatedTokenAddressSync(tokenMint, user, false);
+    const tokenAta = getAssociatedTokenAddressSync(
+      tokenMint,
+      user,
+      false,
+      tokenProgramId
+    );
 
     //3
     const createWSOLAtaIx = createAssociatedTokenAccountIdempotentInstruction(
@@ -478,7 +493,8 @@ class PumpAMM extends Service {
       user,
       tokenAta,
       user,
-      tokenMint
+      tokenMint,
+      tokenProgramId || TOKEN_PROGRAM_ID
     );
     // 指令 5: 转账 SOL 到 wSOL ATA
     const transferLamportsWSOLIx = SystemProgram.transfer({
@@ -500,6 +516,7 @@ class PumpAMM extends Service {
       buyAmount: buyAmount,
       slippage: slippage,
       poolDetail: poolDetail,
+      tokenProgramId,
       isAxiom,
     });
 
@@ -517,7 +534,14 @@ class PumpAMM extends Service {
     return Ixs;
   }
 
-  async genBuyProxyIxs(tokenMint, wallet, poolDetail, slippage, isAxiom) {
+  async genBuyProxyIxs({
+    tokenMint,
+    wallet,
+    poolDetail,
+    slippage,
+    isAxiom,
+    tokenProgramId,
+  }) {
     const { ctx } = this;
 
     let proxyBuyIxs = [];
@@ -536,14 +560,15 @@ class PumpAMM extends Service {
       });
       proxyBuyIxs = [proxyBuyIx];
     } else {
-      proxyBuyIxs = await this.getBuyAmmIxs(
+      proxyBuyIxs = await this.getBuyAmmIxs({
         tokenMint,
         user,
         buyAmount,
         poolDetail,
         slippage,
-        isAxiom
-      );
+        isAxiom,
+        tokenProgramId,
+      });
     }
 
     return proxyBuyIxs;

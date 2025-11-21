@@ -130,7 +130,7 @@ const defaultBuyAccounts = {
     label: "protocol_fee_recipient_token_account",
   },
   base_token_program: {
-    account: TOKEN_PROGRAM_ID,
+    account: null,
     signer: false,
     writable: false,
     label: "base_token_program",
@@ -218,6 +218,7 @@ class PumpSwapSDK {
       buyAmount,
       slippage = 0.1,
       poolDetail,
+      tokenProgramId,
       isAxiom,
     } = params;
 
@@ -225,6 +226,7 @@ class PumpSwapSDK {
       poolDetail: poolDetail,
       tokenMint,
       user,
+      tokenProgramId,
     });
 
     // console.log(
@@ -273,6 +275,7 @@ class PumpSwapSDK {
       sellNewAccount,
       poolDetail,
       isAxiom,
+      tokenProgramId,
     } = params;
 
     const accounts = await this.getAccounts({
@@ -281,6 +284,7 @@ class PumpSwapSDK {
       user,
       sellNewAccount,
       type: "sell",
+      tokenProgramId,
     });
     // console.log(
     //   accounts.map((account, index) => [index + 1, account.pubkey.toBase58()])
@@ -305,13 +309,16 @@ class PumpSwapSDK {
     user,
     type = "buy",
     sellNewAccount,
+    tokenProgramId,
   }) {
     const accountObj = { ...defaultBuyAccounts };
 
     // Get user's token accounts
     const userBaseTokenAccount = await getAssociatedTokenAddress(
       tokenMint,
-      user
+      user,
+      false,
+      tokenProgramId
     );
     const userQuoteTokenAccount =
       type === "buy"
@@ -343,6 +350,7 @@ class PumpSwapSDK {
     accountObj.user_quote_token_account.account = userQuoteTokenAccount;
     accountObj.pool_base_token_account.account = poolBaseTokenAccount;
     accountObj.pool_quote_token_account.account = poolQuoteTokenAccount;
+    accountObj.base_token_program.account = tokenProgramId;
 
     // new add
     accountObj.coin_creator_vault_ata.account = coin_creator_vault_ata[0];
@@ -355,7 +363,6 @@ class PumpSwapSDK {
       delete accountObj.global_volume_accumulator;
       delete accountObj.user_volume_accumulator;
     }
-
     const accounts = Object.values(accountObj).map((item) => ({
       pubkey: item.account,
       isSigner: item.signer,
