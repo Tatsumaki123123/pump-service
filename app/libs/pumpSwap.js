@@ -18,6 +18,7 @@ const {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountIdempotentInstruction,
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   NATIVE_MINT,
 } = require("@solana/spl-token");
@@ -37,29 +38,29 @@ const {
 } = require("./pool");
 
 const GLOBAL_CONFIG = new PublicKey(
-  "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw"
+  "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
 );
 
 const PUMP_AMM_FEE = new PublicKey(
-  "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX"
+  "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
 ); // 3
 const PUMP_AMM_FEE_TOKEN_ACCOUNT = new PublicKey(
-  "X5QPJcpph4mBAJDzc4hRziFftSbcygV59kRb2Fu6Je1"
+  "X5QPJcpph4mBAJDzc4hRziFftSbcygV59kRb2Fu6Je1",
 );
 const EVENT_AUTHORITY = new PublicKey(
-  "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR"
+  "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
 );
 const feeRecipient = new PublicKey(
-  "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV"
+  "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
 );
 const feeRecipientAta = new PublicKey(
-  "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb"
+  "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
 );
 const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey(
-  "C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw"
+  "C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw",
 );
 const USER_VOLUME_ACCUMULATOR = new PublicKey(
-  "G3mxnPptzswsVDB5A6rQ6P3smPW8hTfgq9nHZRG8q2kP"
+  "G3mxnPptzswsVDB5A6rQ6P3smPW8hTfgq9nHZRG8q2kP",
 );
 
 const defaultBuyAccounts = {
@@ -201,6 +202,12 @@ const defaultBuyAccounts = {
     writable: false,
     label: "fee_program",
   },
+  pool_v2: {
+    account: null,
+    signer: false,
+    writable: false,
+    label: "pool_v2",
+  },
 };
 
 const BUY_DISCRIMINATOR = new Uint8Array([102, 6, 61, 18, 1, 218, 235, 234]);
@@ -235,13 +242,13 @@ class PumpSwapSDK {
 
     const buyTokenAmount = getBuyTokenAmountBuyPoolDetail(
       buyAmount,
-      poolDetail
+      poolDetail,
     );
 
     if (!isAxiom) {
       const baseAmountOut = buyTokenAmount;
       const maxQuoteAmountIn = Math.floor(
-        buyAmount * (1 + slippage) * LAMPORTS_PER_SOL
+        buyAmount * (1 + slippage) * LAMPORTS_PER_SOL,
       );
       const data = Buffer.alloc(8 + 8 + 8); // 24 bytes total
       data.set(BUY_DISCRIMINATOR, 0);
@@ -318,7 +325,7 @@ class PumpSwapSDK {
       tokenMint,
       user,
       false,
-      tokenProgramId
+      tokenProgramId,
     );
     const userQuoteTokenAccount =
       type === "buy"
@@ -330,12 +337,12 @@ class PumpSwapSDK {
 
     const coin_creator_vault_authority = getCoinCreatorVaultAuthorityPda(
       poolDetail.poolData.coinCreator,
-      PUMP_AMM_PROGRAM_ID
+      PUMP_AMM_PROGRAM_ID,
     );
     const coin_creator_vault_ata = getCoinCreatorVaultAtaPda(
       coin_creator_vault_authority[0],
       TOKEN_PROGRAM_ID,
-      NATIVE_MINT
+      NATIVE_MINT,
     );
     /**
      * pool, user, base_mint,
@@ -356,6 +363,13 @@ class PumpSwapSDK {
     accountObj.coin_creator_vault_ata.account = coin_creator_vault_ata[0];
     accountObj.coin_creator_vault_authority.account =
       coin_creator_vault_authority[0];
+
+    // pool_v2 PDA: seeds=["pool-v2", mint]
+    const [pool_v2] = PublicKey.findProgramAddressSync(
+      [Buffer.from("pool-v2"), tokenMint.toBuffer()],
+      PUMP_AMM_PROGRAM_ID,
+    );
+    accountObj.pool_v2.account = pool_v2;
 
     accountObj.user_volume_accumulator.account =
       getUserVolumeAccumulatorPda(user);
