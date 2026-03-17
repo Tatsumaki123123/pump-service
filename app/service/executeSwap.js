@@ -30,7 +30,7 @@ const { getPoolsWithPrices, getPoolsWithBaseMint } = require("../libs/pool");
 const { sleep, retryAsync } = require("../utils/utils");
 const { getRaydiumCpmmPoolId } = require("../utils/raydium");
 
-const BOSS_MIN_AMOUNT = 2.8;
+const BOSS_MIN_AMOUNT = 0;
 
 const PUMP_AMM_NAME = "pumpfunamm";
 const PUMP_FUN_NAME = "pump";
@@ -108,7 +108,7 @@ class ExecuteSwap extends Service {
       JSON.stringify({
         bossAddress: boss.publicKey.toBase58(),
         privateKey: bs58.encode(boss.secretKey),
-      })
+      }),
     );
     await ctx.model.ExecuteData.create(newData);
     return true;
@@ -121,7 +121,7 @@ class ExecuteSwap extends Service {
   async generateBoss(lastExecuteData) {
     const { ctx } = this;
     const lastBoss = Keypair.fromSecretKey(
-      bs58.decode(lastExecuteData.privateKey)
+      bs58.decode(lastExecuteData.privateKey),
     );
     const balance = await connection.getBalance(lastBoss.publicKey);
     const bossMinAmount =
@@ -144,11 +144,11 @@ class ExecuteSwap extends Service {
       JSON.stringify({
         bossAddress: boss.publicKey.toBase58(),
         privateKey: bs58.encode(boss.secretKey),
-      })
+      }),
     );
     await ctx.model.ExecuteData.updateMany(
       { active: true, line: lastExecuteData.line },
-      { active: false }
+      { active: false },
     );
     await ctx.model.ExecuteData.create(newData);
     // transfer
@@ -207,7 +207,7 @@ class ExecuteSwap extends Service {
       await transferSol(connection, boss, wallets, amounts);
       await ctx.model.ExecuteData.updateOne(
         { eid: executeData.eid },
-        { walletsExist: true }
+        { walletsExist: true },
       );
       return true;
     } else {
@@ -240,12 +240,12 @@ class ExecuteSwap extends Service {
         const res = await closeAllTokenAccounts(connection, wallet.keypair);
 
         console.log(
-          chalk.green("transfer sol", wallet.address, executeData.bossAddress)
+          chalk.green("transfer sol", wallet.address, executeData.bossAddress),
         );
         await transferAllSol(
           connection,
           wallet.keypair,
-          new PublicKey(executeData.bossAddress)
+          new PublicKey(executeData.bossAddress),
         );
       };
 
@@ -305,7 +305,7 @@ class ExecuteSwap extends Service {
 
       await ctx.model.ExecuteToken.updateOne(
         { tid: tokenInfo.tid },
-        { status: "buy", buyStatus: type, buyStartTime: new Date() }
+        { status: "buy", buyStatus: type, buyStartTime: new Date() },
       );
       return true;
     } else {
@@ -346,7 +346,7 @@ class ExecuteSwap extends Service {
       if (type === "all") {
         await ctx.model.ExecuteToken.updateOne(
           { tid: tokenInfo.tid },
-          { status: "sell" }
+          { status: "sell" },
         );
       }
       return true;
@@ -365,7 +365,7 @@ class ExecuteSwap extends Service {
     console.log(chalk.green(`Step 3: Buy ${token}, ${walletAddress} `));
     const wallets = await this.getWalletsWithConfig(tokenInfo.line);
     const wallet = wallets.find(
-      (item) => item.publicKey.toBase58() === walletAddress
+      (item) => item.publicKey.toBase58() === walletAddress,
     );
     if (wallet) {
       const wallets = [wallet];
@@ -394,14 +394,14 @@ class ExecuteSwap extends Service {
     console.log(chalk.green(`Step 4: Selling ${token}, `));
     const wallets = await this.getWalletsWithConfig(tokenInfo.line);
     const wallet = wallets.find(
-      (item) => item.publicKey.toBase58() === walletAddress
+      (item) => item.publicKey.toBase58() === walletAddress,
     );
     if (wallet) {
       const wallets = [wallet];
       if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
         const res = await ctx.service.raydiumCpmm.batchSellToken(
           token,
-          wallets
+          wallets,
         );
       } else if (tokenInfo.amm === PUMP_AMM_NAME) {
         const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
@@ -497,7 +497,7 @@ class ExecuteSwap extends Service {
       const typeKey = `${firstType}Buy`;
       if (type === firstType || type === "all") {
         const keypair = Keypair.fromSecretKey(
-          bs58.decode(firstWallet.privateKey)
+          bs58.decode(firstWallet.privateKey),
         );
         const { privateKey, ...config } = firstWallet;
         const firstWalletConfig = {
@@ -526,7 +526,7 @@ class ExecuteSwap extends Service {
     const { ctx } = this;
     const executeData = await this.getExecuteData(line);
     const bossBalance = await connection.getBalance(
-      new PublicKey(executeData.bossAddress)
+      new PublicKey(executeData.bossAddress),
     );
 
     const tokenCount = await ctx.model.ExecuteToken.count({
@@ -587,7 +587,7 @@ class ExecuteSwap extends Service {
         { tid: sellData.tid },
         {
           status: "buy",
-        }
+        },
       );
     }
     const executeData = await ctx.model.ExecuteData.findOne({ eid: eid });
@@ -603,7 +603,7 @@ class ExecuteSwap extends Service {
       }
       const lineBotAccounts = await this.getLineBotTokenBalance(
         executeData.line,
-        token
+        token,
       );
       if (lineBotAccounts.total > 1000) {
         throw new Error("Bot has to many token");
@@ -716,13 +716,13 @@ class ExecuteSwap extends Service {
           connection,
           boss,
           [new PublicKey(lineData.withdrawAddress)],
-          [amount]
+          [amount],
         );
       } else {
         await transferAllSol(
           connection,
           boss,
-          new PublicKey(lineData.withdrawAddress)
+          new PublicKey(lineData.withdrawAddress),
         );
       }
 
@@ -759,7 +759,7 @@ class ExecuteSwap extends Service {
         const tokenBalance = await getSPLBalance(
           connection,
           new PublicKey(token),
-          new PublicKey(lineBot.address)
+          new PublicKey(lineBot.address),
         );
 
         return {
@@ -785,7 +785,7 @@ class ExecuteSwap extends Service {
     if (eid && token) {
       const wallets = await ctx.model.ExecuteWallet.find(
         { eid: eid, isActive: true },
-        { address: 1 }
+        { address: 1 },
       );
       let list = [];
       if (wallets && wallets.length > 0) {
@@ -799,7 +799,7 @@ class ExecuteSwap extends Service {
           const tokenBalance = await getSPLBalance(
             connection,
             new PublicKey(token),
-            new PublicKey(wallet.address)
+            new PublicKey(wallet.address),
           );
           return { address: wallet.address, tokenBalance: tokenBalance };
         };
@@ -835,7 +835,7 @@ class ExecuteSwap extends Service {
           connection,
           wallet.keypair,
           keypair.publicKey,
-          0.01
+          0.01,
         );
       });
       oldAddress.push(wallet.address);
@@ -848,11 +848,11 @@ class ExecuteSwap extends Service {
 
     await ctx.model.ExecuteWallet.updateMany(
       { address: { $in: newAddress } },
-      { isActive: true }
+      { isActive: true },
     );
     await ctx.model.ExecuteWallet.updateMany(
       { address: { $in: oldAddress } },
-      { isActive: false }
+      { isActive: false },
     );
     return true;
   }

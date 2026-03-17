@@ -42,7 +42,7 @@ const tipAccounts = [
 const SLOT_API_KEY = "";
 const slot0Connection = new Connection(
   `https://ny.0slot.trade?api-key=${SLOT_API_KEY}`,
-  "confirmed"
+  "confirmed",
 );
 
 const SLOT_TIP_ACCOUNTS = [
@@ -65,7 +65,7 @@ class Jito extends Service {
     try {
       console.log(chalk.green("Send Bundle:"));
       const bundleResult = await jitoClient.sendBundle(
-        new Bundle(bundledTxns, bundledTxns.length)
+        new Bundle(bundledTxns, bundledTxns.length),
       );
       console.log(bundleResult);
       if (bundleResult.ok) {
@@ -83,7 +83,15 @@ class Jito extends Service {
     const transactions = serializeTransaction(tx);
     const request = {
       method: "sendTransaction",
-      params: [transactions, "ny"],
+      params: [
+        transactions,
+        {
+          encoding: "base58",
+          skipPreflight: true,
+          maxRetries: 0,
+          preflightCommitment: "confirmed",
+        },
+      ],
     };
     const result = await connection._rpcRequest(request.method, request.params);
 

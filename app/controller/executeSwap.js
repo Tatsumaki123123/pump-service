@@ -2,6 +2,8 @@
 
 const { Controller } = require("egg");
 const BaseController = require("./base");
+const { connection } = require("../constants");
+const { closeAllTokenAccounts } = require("../utils/solana");
 
 class ExecuteSwap extends BaseController {
   async start() {
@@ -45,7 +47,7 @@ class ExecuteSwap extends BaseController {
       if (walletAddress) {
         res = await ctx.service.executeSwap.buyTokenByWallet(
           tid,
-          walletAddress
+          walletAddress,
         );
       } else if (Array.isArray(type)) {
         res = await ctx.service.executeSwap.buyTokenArr(tid, type);
@@ -66,7 +68,7 @@ class ExecuteSwap extends BaseController {
       if (walletAddress) {
         res = await ctx.service.executeSwap.sellTokenByWallet(
           tid,
-          walletAddress
+          walletAddress,
         );
       } else if (Array.isArray(type)) {
         res = await ctx.service.executeSwap.sellTokenArr(tid, type);
@@ -114,7 +116,7 @@ class ExecuteSwap extends BaseController {
       const res = await ctx.service.executeSwap.checkToken(
         tokenData,
         eid,
-        forceCheck
+        forceCheck,
       );
       this.success(res);
     } else {
@@ -125,9 +127,17 @@ class ExecuteSwap extends BaseController {
   async closeAllAccounts() {
     const { ctx } = this;
 
-    const { line, force = false } = ctx.request.body;
+    const { line, isFirst = false, force = false } = ctx.request.body;
     if (line) {
-      const res = await ctx.service.executeSwap.closeAllAccounts(line, force);
+      if (isFirst) {
+        const lineData = await ctx.model.ExecuteLine.findOne({
+          lineId: line,
+          active: true,
+        }).lean();
+        const res = await closeAllTokenAccounts(connection);
+      } else {
+        const res = await ctx.service.executeSwap.closeAllAccounts(line, force);
+      }
       this.success(res);
     } else {
       throw new Error("Params error");
@@ -187,7 +197,7 @@ class ExecuteSwap extends BaseController {
       if (botLine) {
         const res = await ctx.service.executeSwap.getLineBotTokenBalance(
           botLine,
-          token
+          token,
         );
         data.lineBotsAccounts = res.list;
       }
@@ -226,7 +236,7 @@ class ExecuteSwap extends BaseController {
       } else {
         await ctx.model.ExecuteLine.updateOne(
           { lineId: line },
-          { autoSwap: status }
+          { autoSwap: status },
         );
         if (status) {
           // ctx.service.autoSwap.start(line);

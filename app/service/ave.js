@@ -1,6 +1,6 @@
 const { Service } = require("egg");
 
-const AVE_API_URL = "https://api.avegac.com/";
+const AVE_API_URL = "https://api.gejbckf.com/";
 
 function aveTokenToDB(item) {
   const {
@@ -212,7 +212,7 @@ class Ave extends Service {
         const tokens = data.filter(
           (item) =>
             parseInt(item.total_profit) !== 0 &&
-            item.token !== "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            item.token !== "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         );
         tokens.forEach((tItem) => {
           if (!list.find((item) => item.token === tItem.token)) {

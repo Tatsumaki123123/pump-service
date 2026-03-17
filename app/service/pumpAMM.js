@@ -48,11 +48,11 @@ const { sleep } = require("../utils/utils");
 const { getRandomAccount } = require("../utils/slot0trade");
 
 const RENT_SYSVAR = new PublicKey(
-  "SysvarRent111111111111111111111111111111111"
+  "SysvarRent111111111111111111111111111111111",
 );
 
 const GMGN_FEES_VAULT = new PublicKey(
-  "BB5dnY55FXS1e1NXqZDwCzgdYJdMCj3B92PU6Q5Fb6DT"
+  "BB5dnY55FXS1e1NXqZDwCzgdYJdMCj3B92PU6Q5Fb6DT",
 );
 const GMGN_FEE = 0.0004;
 
@@ -164,7 +164,7 @@ class PumpAMM extends Service {
               const tipTx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: new PublicKey(
-                  "5BqYhuD4q1YD3DMAYkc1FeTu9vqQVYYdfBAmkZjamyZg"
+                  "5BqYhuD4q1YD3DMAYkc1FeTu9vqQVYYdfBAmkZjamyZg",
                 ),
                 lamports: 0.0001 * LAMPORTS_PER_SOL,
               });
@@ -189,18 +189,18 @@ class PumpAMM extends Service {
             const tx = new VersionedTransaction(messageV0);
             tx.sign([keypair]);
 
-            // 模拟交易
-            const simulationResult = await connection.simulateTransaction(tx, {
-              commitment: "confirmed",
-            });
-            if (simulationResult.value.err) {
-              console.error("simulation", simulationResult.value);
-              throw new Error(simulationResult.value);
-            }
+            // // 模拟交易
+            // const simulationResult = await connection.simulateTransaction(tx, {
+            //   commitment: "confirmed",
+            // });
+            // if (simulationResult.value.err) {
+            //   console.error("simulation", simulationResult.value);
+            //   throw new Error(simulationResult.value);
+            // }
 
-            console.log(
-              chalk.green("simulation success", keypair.publicKey.toString())
-            );
+            // console.log(
+            //   chalk.green("simulation success", keypair.publicKey.toString()),
+            // );
             buyTxns.push(tx);
           } catch (error) {
             console.error(error);
@@ -217,7 +217,7 @@ class PumpAMM extends Service {
           console.log(chalk.green("Buy transactions completed."));
         } else if (buyTxns.length === 1) {
           const bundleResult = await ctx.service.jito.sendTransaction(
-            buyTxns[0]
+            buyTxns[0],
           );
           console.log(bundleResult);
           console.log(chalk.green("Buy transactions completed."));
@@ -275,7 +275,7 @@ class PumpAMM extends Service {
           connection,
           tokenMint,
           keypair.publicKey,
-          tokenProgramId
+          tokenProgramId,
         );
 
         console.log(`${user.toBase58()} sell ${tokenAmount} ${token}`);
@@ -320,7 +320,7 @@ class PumpAMM extends Service {
           const newAccount = await PublicKey.createWithSeed(
             user,
             seed,
-            TOKEN_PROGRAM_ID
+            TOKEN_PROGRAM_ID,
           );
           const createAccountWithSeedIx = SystemProgram.createAccountWithSeed({
             fromPubkey: user,
@@ -337,7 +337,7 @@ class PumpAMM extends Service {
             newAccount,
             WSOL_TOKEN_ACCOUNT,
             user,
-            TOKEN_PROGRAM_ID
+            TOKEN_PROGRAM_ID,
           );
 
           // 5, pump sell
@@ -354,7 +354,7 @@ class PumpAMM extends Service {
           const closeAccountIx = createCloseAccountInstruction(
             newAccount,
             user,
-            user
+            user,
           );
 
           volumeIxs = [
@@ -401,8 +401,8 @@ class PumpAMM extends Service {
             console.error(
               chalk.red(
                 `Error compiling transaction for ${user.toBase58()}:`,
-                error.message
-              )
+                error.message,
+              ),
             );
             continue;
           }
@@ -413,7 +413,7 @@ class PumpAMM extends Service {
           console.log(chalk.green("Sell transactions completed."));
         } else if (sellTxns.length === 1) {
           const bundleResult = await ctx.service.jito.sendTransaction(
-            sellTxns[0]
+            sellTxns[0],
           );
           console.log(bundleResult);
           console.log(chalk.green("Buy transactions completed."));
@@ -470,14 +470,14 @@ class PumpAMM extends Service {
     const wSolATA = getAssociatedTokenAddressSync(
       WSOL_TOKEN_ACCOUNT,
       user,
-      false
+      false,
     );
     //2
     const tokenAta = getAssociatedTokenAddressSync(
       tokenMint,
       user,
       false,
-      tokenProgramId
+      tokenProgramId,
     );
 
     //3
@@ -485,7 +485,7 @@ class PumpAMM extends Service {
       user,
       wSolATA,
       user,
-      WSOL_TOKEN_ACCOUNT
+      WSOL_TOKEN_ACCOUNT,
     );
 
     // 指令 4: 创建 tokenA ATA
@@ -494,7 +494,7 @@ class PumpAMM extends Service {
       tokenAta,
       user,
       tokenMint,
-      tokenProgramId || TOKEN_PROGRAM_ID
+      tokenProgramId || TOKEN_PROGRAM_ID,
     );
     // 指令 5: 转账 SOL 到 wSOL ATA
     const transferLamportsWSOLIx = SystemProgram.transfer({
