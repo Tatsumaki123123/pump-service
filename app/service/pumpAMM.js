@@ -47,6 +47,8 @@ const moment = require("moment");
 const { sleep } = require("../utils/utils");
 const { getRandomAccount } = require("../utils/slot0trade");
 
+const TIP_AMOUNT = 0.001 * LAMPORTS_PER_SOL; // NextBlock 最低 tip=1,000,000 lamports (0.001 SOL)
+
 const RENT_SYSVAR = new PublicKey(
   "SysvarRent111111111111111111111111111111111",
 );
@@ -59,7 +61,6 @@ const GMGN_FEE = 0.0004;
 const TROGAN_FEE = 0.00036;
 
 const TRANSACTION_FEE = 5000;
-const JITO_TIP_AMOUNT = 0.0001 * LAMPORTS_PER_SOL;
 
 const SLIPPAGE_BASIS_POINTS = 0.3;
 
@@ -174,7 +175,7 @@ class PumpAMM extends Service {
               const jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: jipAcc,
-                lamports: fee * LAMPORTS_PER_SOL,
+                lamports: TIP_AMOUNT,
               });
               volumeIxs.push(jitoTipIx);
             }
@@ -369,7 +370,7 @@ class PumpAMM extends Service {
             const jitoTipIx = SystemProgram.transfer({
               fromPubkey: keypair.publicKey,
               toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
+              lamports: TIP_AMOUNT,
             });
             volumeIxs.push(jitoTipIx);
           }

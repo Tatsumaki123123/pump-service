@@ -371,17 +371,54 @@ class PumpSwapSDK {
     );
     accountObj.pool_v2.account = pool_v2;
 
-    accountObj.user_volume_accumulator.account =
-      getUserVolumeAccumulatorPda(user);
+    const user_volume_accumulator_key = getUserVolumeAccumulatorPda(user);
+    accountObj.user_volume_accumulator.account = user_volume_accumulator_key;
+
     if (type === "sell") {
       delete accountObj.global_volume_accumulator;
       delete accountObj.user_volume_accumulator;
     }
+
     const accounts = Object.values(accountObj).map((item) => ({
       pubkey: item.account,
       isSigner: item.signer,
       isWritable: item.writable,
     }));
+
+    // 参考 trade_pump.ts: cashback 模式在 pool_v2 前条件性插入账户
+    const isCashback = !!poolDetail.poolData.is_cashback;
+    if (isCashback) {
+      const wsol_user_accumulator_ata = getAssociatedTokenAddressSync(
+        WSOL_TOKEN_ACCOUNT,
+        user_volume_accumulator_key,
+        true, // allowOwnerOffCurve，因为是 PDA
+      );
+      const cashbackAccounts =
+        type === "buy"
+          ? // buy: 只插入 wsol_user_accumulator_ata（user_volume_accumulator 已在固定列表中）
+            [
+              {
+                pubkey: wsol_user_accumulator_ata,
+                isSigner: false,
+                isWritable: true,
+              },
+            ]
+          : // sell: 固定列表里无这两个账户，需全部插入
+            [
+              {
+                pubkey: wsol_user_accumulator_ata,
+                isSigner: false,
+                isWritable: true,
+              },
+              {
+                pubkey: user_volume_accumulator_key,
+                isSigner: false,
+                isWritable: true,
+              },
+            ];
+      // pool_v2 是最后一个，splice 到倒数第一位之前
+      accounts.splice(accounts.length - 1, 0, ...cashbackAccounts);
+    }
 
     return accounts;
   }

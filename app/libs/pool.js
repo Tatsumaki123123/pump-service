@@ -63,6 +63,10 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
     const mappedPools = response.map((pool) => {
       const data = Buffer.from(pool.account.data);
       const poolData = program.coder.accounts.decode("pool", data);
+      // IDL 未包含 is_mayhem/is_cashback，从原始字节读取
+      // pool struct 字节布局: 8(discriminator)+1+2+32+32+32+32+32+32+8+32 = 243
+      poolData.is_mayhem = data[243] === 1;
+      poolData.is_cashback = data[244] === 1;
       return {
         address: pool.pubkey,
         is_native_base: false,
@@ -70,7 +74,7 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
       };
     });
     const pool = mappedPools.find((item) =>
-      NATIVE_MINT.equals(item.poolData.quoteMint)
+      NATIVE_MINT.equals(item.poolData.quoteMint),
     );
 
     if (pool) {
@@ -182,7 +186,7 @@ const getPoolsWithPrices = async (mintAddress, ctx) => {
   const results = await Promise.all(pools.map(getPriceAndLiquidity));
 
   const sortedByHighestLiquidity = results.sort(
-    (a, b) => b.reserves.native - a.reserves.native
+    (a, b) => b.reserves.native - a.reserves.native,
   );
 
   return sortedByHighestLiquidity[0];
@@ -196,10 +200,10 @@ const getBuyTokenAmount = async (solNum, mint) => {
   const solAmount = BigInt(parseInt(solNum * LAMPORTS_PER_SOL));
   const pool_detail = await getPoolsWithPrices(mint);
   const sol_reserve = BigInt(
-    Math.floor(pool_detail.reserves.native * LAMPORTS_PER_SOL)
+    Math.floor(pool_detail.reserves.native * LAMPORTS_PER_SOL),
   );
   const token_reserve = BigInt(
-    Math.floor(pool_detail.reserves.token * 10 ** 6)
+    Math.floor(pool_detail.reserves.token * 10 ** 6),
   );
   const product = sol_reserve * token_reserve;
   let new_sol_reserve = sol_reserve + solAmount;
@@ -212,10 +216,10 @@ const getBuyTokenAmount = async (solNum, mint) => {
 const getBuyTokenAmountBuyPoolDetail = (solNum, pool_detail) => {
   const solAmount = BigInt(parseInt(solNum * LAMPORTS_PER_SOL));
   const sol_reserve = BigInt(
-    Math.floor(pool_detail.reserves.native * LAMPORTS_PER_SOL)
+    Math.floor(pool_detail.reserves.native * LAMPORTS_PER_SOL),
   );
   const token_reserve = BigInt(
-    Math.floor(pool_detail.reserves.token * 10 ** 6)
+    Math.floor(pool_detail.reserves.token * 10 ** 6),
   );
   const product = sol_reserve * token_reserve;
   let new_sol_reserve = sol_reserve + solAmount;
@@ -229,13 +233,13 @@ const getSnipePumpTokenAmount = async (solNum, mint) => {
   const solAmount = BigInt(solNum * LAMPORTS_PER_SOL);
   const pool_detail = await getPoolsWithPrices(mint);
   const sol_reserve = BigInt(
-    Math.floor(pool_detail.reserves.native * LAMPORTS_PER_SOL)
+    Math.floor(pool_detail.reserves.native * LAMPORTS_PER_SOL),
   );
   if (pool_detail.reserves.native >= 150) {
     throw new Error("Reserves too high");
   }
   const token_reserve = BigInt(
-    Math.floor(pool_detail.reserves.token * 10 ** 6)
+    Math.floor(pool_detail.reserves.token * 10 ** 6),
   );
   const product = sol_reserve * token_reserve;
   let new_sol_reserve = sol_reserve + solAmount;
@@ -252,11 +256,11 @@ const getPumpSwapPool = async (mint) => {
 
 const pumpPoolAuthorityPDA = (baseMint) => {
   const programId = new PublicKey(
-    "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+    "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
   );
   const [pumpPoolAuthority] = PublicKey.findProgramAddressSync(
     [Buffer.from("pool-authority"), baseMint.toBuffer()],
-    programId
+    programId,
   );
   return pumpPoolAuthority;
 };
@@ -266,7 +270,7 @@ const CANONICAL_POOL_INDEX = 0;
 const globalConfigPda = (programId = PUMP_AMM_PROGRAM_ID) => {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("global_config")],
-    programId
+    programId,
   );
 };
 
@@ -275,7 +279,7 @@ const poolPda = (
   owner,
   baseMint,
   quoteMint,
-  programId = PUMP_AMM_PROGRAM_ID
+  programId = PUMP_AMM_PROGRAM_ID,
 ) => {
   return PublicKey.findProgramAddressSync(
     [
@@ -285,14 +289,14 @@ const poolPda = (
       baseMint.toBuffer(),
       quoteMint.toBuffer(),
     ],
-    programId
+    programId,
   );
 };
 
 const lpMintPda = (pool, programId = PUMP_AMM_PROGRAM_ID) => {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("pool_lp_mint"), pool.toBuffer()],
-    programId
+    programId,
   );
 };
 
@@ -301,21 +305,21 @@ const lpMintAta = (lpMint, owner) => {
     lpMint,
     owner,
     true,
-    TOKEN_2022_PROGRAM_ID
+    TOKEN_2022_PROGRAM_ID,
   );
 };
 
 const pumpPoolAuthorityPda = (mint, pumpProgramId = PUMP_PROGRAM_ID_PUBKEY) => {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("pool-authority"), mint.toBuffer()],
-    pumpProgramId
+    pumpProgramId,
   );
 };
 
 const canonicalPumpPoolPda = (
   mint,
   programId = PUMP_AMM_PROGRAM_ID,
-  pumpProgramId = PUMP_PROGRAM_ID_PUBKEY
+  pumpProgramId = PUMP_PROGRAM_ID_PUBKEY,
 ) => {
   const [pumpPoolAuthority] = pumpPoolAuthorityPda(mint, pumpProgramId);
 
@@ -324,28 +328,28 @@ const canonicalPumpPoolPda = (
     pumpPoolAuthority,
     mint,
     NATIVE_MINT,
-    programId
+    programId,
   );
 };
 
 const pumpAmmEventAuthorityPda = (programId = PUMP_AMM_PROGRAM_ID) => {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("__event_authority")],
-    programId
+    programId,
   );
 };
 
 const getCoinCreatorVaultAuthorityPda = (coinCreator, programId) => {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("creator_vault"), coinCreator.toBuffer()],
-    programId
+    programId,
   );
 };
 
 const getCoinCreatorVaultAtaPda = (
   coinCreatorVaultAuthority,
   quoteTokenProgram,
-  quoteMint
+  quoteMint,
 ) => {
   const programId = new PublicKey([
     140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11,
@@ -358,7 +362,7 @@ const getCoinCreatorVaultAtaPda = (
       quoteTokenProgram.toBuffer(),
       quoteMint.toBuffer(),
     ],
-    programId
+    programId,
   );
 };
 
@@ -368,16 +372,16 @@ async function main() {
   console.log(pool_detail);
   const coin_creator_vault_authority = getCoinCreatorVaultAuthorityPda(
     pool_detail.poolData.coinCreator,
-    PUMP_AMM_PROGRAM_ID
+    PUMP_AMM_PROGRAM_ID,
   );
   console.log(
     "coin_creator_vault_authority: ",
-    coin_creator_vault_authority[0].toBase58()
+    coin_creator_vault_authority[0].toBase58(),
   );
   const coin_creator_vault_ata = getCoinCreatorVaultAtaPda(
     coin_creator_vault_authority[0],
     TOKEN_PROGRAM_ID,
-    NATIVE_MINT
+    NATIVE_MINT,
   );
   console.log("coin_creator_vault_ata: ", coin_creator_vault_ata[0].toBase58());
 }
@@ -385,7 +389,7 @@ async function main() {
 function getUserVolumeAccumulatorPda(user) {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("user_volume_accumulator"), user.toBuffer()],
-    PUMP_AMM_PROGRAM_ID
+    PUMP_AMM_PROGRAM_ID,
   )[0];
 }
 

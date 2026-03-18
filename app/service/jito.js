@@ -13,20 +13,15 @@ const bs58 = require("bs58");
 require("dotenv").config();
 const chalk = require("chalk");
 
-const {
-  SearcherClient,
-  searcherClient,
-} = require("jito-ts/dist/sdk/block-engine/searcher");
-const { Bundle } = require("jito-ts/dist/sdk/block-engine/types");
-
 const { connection } = require("../constants");
 
-const JITO_RPC =
-  process.env.JITO_RPC || "https://mainnet.block-engine.jito.wtf";
-
-// const jitoClient = searcherClient(
-//   "https://little-practical-lake.solana-mainnet.quiknode.pro/748dd52b1227a0602d41ef4ac30d2b4a01f39dc3/"
-// );
+// Jito Block Engine REST 端点（多地区）
+const JITO_BUNDLE_ENDPOINTS = [
+  "https://mainnet.block-engine.jito.wtf/api/v1/bundles",
+  "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles",
+  "https://tokyo.mainnet.block-engine.jito.wtf/api/v1/bundles",
+  "https://ny.mainnet.block-engine.jito.wtf/api/v1/bundles",
+];
 
 const tipAccounts = [
   "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
@@ -61,21 +56,58 @@ function serializeTransaction(transaction) {
 
 class Jito extends Service {
   async sendBundle(bundledTxns) {
-    return await this.setQuickNodeBundle(bundledTxns);
+    // return await this.sendBundleJito(bundledTxns);
+    return await this.sendBundleNextBlock(bundledTxns);
+  }
+
+  /**
+   * 使用 Jito Block Engine REST API 发送 bundle（最便宜，min tip ~1000 lamports）
+   */
+  async sendBundleJito(bundledTxns) {
     try {
-      console.log(chalk.green("Send Bundle:"));
-      const bundleResult = await jitoClient.sendBundle(
-        new Bundle(bundledTxns, bundledTxns.length),
+      // base58 编码
+      const transactions = bundledTxns.map((tx) => serializeTransaction(tx));
+      const body = JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "sendBundle",
+        params: [transactions],
+      });
+
+      console.log(
+        chalk.green(`Send Bundle via Jito (${transactions.length} txns):`),
       );
-      console.log(bundleResult);
-      if (bundleResult.ok) {
-        console.log(chalk.green(`Bundle ${bundleResult} sent.`));
-        return true;
-      } else {
-        throw new Error(bundleResult.error);
+
+      // 广播到所有端点，取第一个成功的
+      const results = await Promise.allSettled(
+        JITO_BUNDLE_ENDPOINTS.map((url) =>
+          fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+          }).then((r) => r.json()),
+        ),
+      );
+
+      let bundleId = null;
+      for (const r of results) {
+        if (r.status === "fulfilled" && r.value?.result) {
+          bundleId = r.value.result;
+          break;
+        }
       }
+      if (!bundleId) {
+        const errs = results.map((r) =>
+          r.status === "fulfilled"
+            ? JSON.stringify(r.value)
+            : r.reason?.message,
+        );
+        throw new Error(`All Jito endpoints failed: ${errs.join(" | ")}`);
+      }
+      console.log(chalk.green(`Bundle accepted, id: ${bundleId}`));
+      return bundleId;
     } catch (error) {
-      console.error(chalk.red("Error sending bundle:", error.message));
+      console.error(chalk.red("Error sending bundle via Jito:"), error.message);
       throw error;
     }
   }
@@ -111,9 +143,79 @@ class Jito extends Service {
     return result;
   }
 
+  /**
+   * 使用 NextBlock API 发送 bundle，兼容官方文档格式
+   * @param {Array<Transaction|VersionedTransaction>} bundledTxns
+   * @returns {Promise<string>} bundleId
+   */
+  async sendBundleNextBlock(bundledTxns) {
+    try {
+      const apiKey =
+        process.env.NEXTBLOCK_API_KEY ||
+        "trial1773813120-20KZRalS09daDtkSAHYGiSD7ao/dUZWb1XD1BLiotn8=";
+      const endpoint = "https://fra.nextblock.io/api/v2/submit-batch";
+
+      // NextBlock 要求 base64 编码，且格式为 entries[].transaction.content
+      const entries = bundledTxns.map((tx) => ({
+        transaction: {
+          content: Buffer.from(tx.serialize()).toString("base64"),
+        },
+      }));
+
+      if (!entries.length) {
+        throw new Error("No valid transactions to send in bundle");
+      }
+
+      console.log(
+        chalk.green(`Send Bundle via NextBlock (${entries.length} txns):`),
+      );
+
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: apiKey,
+        },
+        body: JSON.stringify({ entries }),
+      });
+
+      const text = await resp.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        console.error(chalk.red("NextBlock returned non-JSON response:"));
+        console.error(text);
+        throw new Error(
+          `NextBlock returned non-JSON response, status: ${resp.status}`,
+        );
+      }
+      console.log(data);
+      if (!resp.ok || data.code) {
+        throw new Error(
+          `NextBlock error: ${data.message || JSON.stringify(data)}`,
+        );
+      }
+      const bundleId = data.signature || data.bundle_id || data.result;
+      console.log(chalk.green(`Bundle accepted, id: ${bundleId}`));
+      return bundleId;
+    } catch (error) {
+      console.error(
+        chalk.red("Error sending bundle via NextBlock:"),
+        error.message,
+      );
+      throw error;
+    }
+  }
+
   getTipAcc() {
-    const index = Math.floor(Math.random() * tipAccounts.length);
-    return new PublicKey(tipAccounts[index]);
+    // 当前使用 NextBlock，返回 NextBlock 官方 tip 地址
+    return this.getNextBlockTipAcc();
+  }
+
+  getNextBlockTipAcc() {
+    // NextBlock 官方 tip 地址
+    return new PublicKey("nEXTBLockYgngeRmRrjDV31mGSekVPqZoMGhQEZtPVG");
   }
 
   get0slotTipAcc() {
@@ -144,5 +246,4 @@ class Jito extends Service {
     return true;
   }
 }
-
 module.exports = Jito;
