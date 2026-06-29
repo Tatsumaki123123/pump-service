@@ -175,7 +175,7 @@ class PumpAMM extends Service {
               const jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: jipAcc,
-                lamports: TIP_AMOUNT,
+                lamports:  ,
               });
               volumeIxs.push(jitoTipIx);
             }

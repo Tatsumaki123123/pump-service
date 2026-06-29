@@ -124,8 +124,7 @@ class ExecuteSwap extends Service {
       bs58.decode(lastExecuteData.privateKey),
     );
     const balance = await connection.getBalance(lastBoss.publicKey);
-    const bossMinAmount =
-      lastExecuteData.line === 10000 ? 0.3 : BOSS_MIN_AMOUNT;
+    const bossMinAmount = BOSS_MIN_AMOUNT;
     if (balance / LAMPORTS_PER_SOL < bossMinAmount) {
       throw new Error(`Boss balance is not enough`);
     }
@@ -169,7 +168,7 @@ class ExecuteSwap extends Service {
 
     const isTest = line === 10000;
 
-    const bossMinAmount = isTest ? 0.3 : BOSS_MIN_AMOUNT;
+    const bossMinAmount = BOSS_MIN_AMOUNT;
     if (balance / LAMPORTS_PER_SOL < bossMinAmount) {
       throw new Error(`Boss balance is not enough`);
     }

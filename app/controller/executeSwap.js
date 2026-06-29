@@ -2,6 +2,8 @@
 
 const { Controller } = require("egg");
 const BaseController = require("./base");
+const { Keypair } = require("@solana/web3.js");
+const bs58 = require("bs58");
 const { connection } = require("../constants");
 const { closeAllTokenAccounts } = require("../utils/solana");
 
@@ -129,14 +131,17 @@ class ExecuteSwap extends BaseController {
 
     const { line, isFirst = false, force = false } = ctx.request.body;
     if (line) {
+      let res;
       if (isFirst) {
         const lineData = await ctx.model.ExecuteLine.findOne({
           lineId: line,
-          active: true,
         }).lean();
-        const res = await closeAllTokenAccounts(connection);
+        const { firstWallet } = lineData;
+        const secretKey = bs58.decode(firstWallet.privateKey);
+        const keypair = Keypair.fromSecretKey(secretKey);
+        res = await closeAllTokenAccounts(connection, keypair, force);
       } else {
-        const res = await ctx.service.executeSwap.closeAllAccounts(line, force);
+        res = await ctx.service.executeSwap.closeAllAccounts(line, force);
       }
       this.success(res);
     } else {

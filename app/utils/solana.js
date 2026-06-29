@@ -36,7 +36,7 @@ async function getSPLBalance(
   tokenMint,
   owner,
   allowOffCurve = false,
-  tokenProgramId
+  tokenProgramId,
 ) {
   try {
     let tokenProId = TOKEN_PROGRAM_ID;
@@ -49,7 +49,7 @@ async function getSPLBalance(
       tokenMint,
       owner,
       allowOffCurve,
-      tokenProId
+      tokenProId,
     );
     const balance = await connection.getTokenAccountBalance(ata, "confirmed");
     return balance.value.uiAmount || 0;
@@ -63,7 +63,7 @@ async function getSPLBalanceAmount(
   connection,
   tokenMint,
   owner,
-  allowOffCurve = false
+  allowOffCurve = false,
 ) {
   try {
     let ata = getAssociatedTokenAddressSync(tokenMint, owner, allowOffCurve);
@@ -82,25 +82,28 @@ async function getSPLBalanceAmount(
  * @returns
  */
 const closeTokenRecAddress = new PublicKey(
-  "914ieyzsV2wG4DDwqTTZ6be8TxZJ1s3cpRrz7LaviSrC"
+  "914ieyzsV2wG4DDwqTTZ6be8TxZJ1s3cpRrz7LaviSrC",
 );
 async function closeAllTokenAccounts(connection, keypair, force = false) {
   try {
     const wallet = keypair;
 
-    const tokenAccounts = await connection.getTokenAccountsByOwner(
-      wallet.publicKey,
-      {
+    const [tokenAccounts, token2022Accounts] = await Promise.all([
+      connection.getTokenAccountsByOwner(wallet.publicKey, {
         programId: TOKEN_PROGRAM_ID,
-      }
-    );
+      }),
+      connection.getTokenAccountsByOwner(wallet.publicKey, {
+        programId: TOKEN_2022_PROGRAM_ID,
+      }),
+    ]);
+    tokenAccounts.value.push(...token2022Accounts.value);
 
     console.log(
       chalk.green(
         "Close account:",
         wallet.publicKey.toBase58(),
-        tokenAccounts.value.length
-      )
+        tokenAccounts.value.length,
+      ),
     );
     const volumeIxs = [];
     if (tokenAccounts.value.length === 0) {
@@ -112,17 +115,29 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
     const minAmount = 100 * 10 ** 6;
     for (const account of tokenAccounts.value) {
       const accountPubkey = account.pubkey;
-      const accountInfo = await getAccount(connection, accountPubkey);
+      // 判断所属 program（Token 或 Token-2022）
+      const ownerProgram = account.account.owner;
+      const accountInfo = await getAccount(
+        connection,
+        accountPubkey,
+        "confirmed",
+        ownerProgram,
+      );
 
       if (accountInfo.amount >= minAmount) {
         if (force) {
+          let transferred = false;
           try {
             console.log(accountInfo);
             const dAccount = await getOrCreateAssociatedTokenAccount(
               connection,
               wallet,
               accountInfo.mint,
-              closeTokenRecAddress
+              closeTokenRecAddress,
+              false,
+              "confirmed",
+              undefined,
+              ownerProgram,
             );
             const signature = await transfer(
               connection,
@@ -130,17 +145,25 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
               accountInfo.address,
               dAccount.address,
               wallet.publicKey,
-              accountInfo.amount
+              accountInfo.amount,
+              [],
+              undefined,
+              ownerProgram,
             );
             await connection.confirmTransaction(signature, "confirmed");
+            transferred = true;
           } catch (error) {
-            console.log(error);
+            console.log(
+              chalk.red("Transfer failed, skip close:"),
+              error.message,
+            );
           }
+          if (!transferred) continue; // 转账失败不关闭
         } else {
           throw new Error(
             `Token account ${wallet.publicKey.toBase58()} has balance ${
               accountInfo.amount
-            }`
+            }`,
           );
         }
       } else if (accountInfo.amount > 0 && accountInfo.amount < minAmount) {
@@ -148,13 +171,14 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
           chalk.red(
             `Token account ${wallet.publicKey.toBase58()} has balance ${
               accountInfo.amount
-            }`
-          )
+            }`,
+          ),
         );
         const topHolder = await getTopLPTokenHolder(
           connection,
-          accountInfo.mint
+          accountInfo.mint,
         );
+        let transferred = false;
         if (topHolder) {
           try {
             const signature = await transfer(
@@ -163,20 +187,30 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
               accountInfo.address,
               topHolder.address,
               wallet.publicKey,
-              accountInfo.amount
+              accountInfo.amount,
+              [],
+              undefined,
+              ownerProgram,
             );
             await connection.confirmTransaction(signature, "confirmed");
+            transferred = true;
           } catch (error) {
-            console.log(error);
+            console.log(
+              chalk.red("Transfer failed, skip close:"),
+              error.message,
+            );
           }
         }
+        if (!transferred) continue; // 转账失败或无接收方，不关闭
       }
 
-      // close token account
+      // close token account（传正确的 programId，兼容 Token-2022）
       const ix = await createCloseAccountInstruction(
         accountPubkey,
         wallet.publicKey,
-        wallet.publicKey
+        wallet.publicKey,
+        [],
+        ownerProgram,
       );
       volumeIxs.push(ix);
     }
@@ -198,7 +232,7 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
         [wallet],
         {
           skipPreflight: false,
-        }
+        },
       );
       await connection.confirmTransaction(signature, "confirmed");
     }
@@ -224,8 +258,8 @@ async function transferAllSol(connection, from, to, remain = 0) {
   if (balance <= minAmount) {
     console.log(
       chalk.yellow(
-        `Insufficient balance for ${from.publicKey.toBase58()}, skipping.`
-      )
+        `Insufficient balance for ${from.publicKey.toBase58()}, skipping.`,
+      ),
     );
     return;
   }
@@ -264,7 +298,7 @@ async function transferSol(connection, from, wallets, amounts) {
     "transferSol",
     from.publicKey.toBase58(),
     wallets.map((item) => item.toBase58()),
-    amounts
+    amounts,
   );
   const { blockhash } = await connection.getLatestBlockhash();
 
@@ -274,7 +308,7 @@ async function transferSol(connection, from, wallets, amounts) {
         fromPubkey: from.publicKey,
         toPubkey: wallet,
         lamports: amounts[index] * LAMPORTS_PER_SOL,
-      })
+      }),
     );
 
     const transferMessage = new TransactionMessage({
@@ -325,7 +359,7 @@ async function getTokenMeta(connection, mintAddress) {
       connection,
       mintPublicKey,
       "confirmed",
-      TOKEN_2022_PROGRAM_ID
+      TOKEN_2022_PROGRAM_ID,
     );
 
     const metadataPointer = getMetadataPointerState(mint);
@@ -339,7 +373,7 @@ async function getTokenMeta(connection, mintAddress) {
       connection,
       mintPublicKey,
       "confirmed",
-      TOKEN_2022_PROGRAM_ID
+      TOKEN_2022_PROGRAM_ID,
     );
 
     if (!metadata) {
@@ -388,7 +422,7 @@ async function sendV0Transaction(user, instructions, lookupTableAccounts) {
       lastValidBlockHeight: lastValidBlockHeight,
       signature: txid,
     },
-    "processed"
+    "processed",
   );
 
   // Log the transaction URL on the Solana Explorer
@@ -399,7 +433,7 @@ async function wrapSolToWSol(connection, wallet, amount = 0.1) {
   console.log(chalk.green("wrapSolToWSol"));
   const associatedTokenAddress = await getAssociatedTokenAddress(
     WSOL_TOKEN_ACCOUNT,
-    wallet.publicKey
+    wallet.publicKey,
   );
 
   const accountInfo = await connection.getAccountInfo(associatedTokenAddress);
@@ -411,8 +445,8 @@ async function wrapSolToWSol(connection, wallet, amount = 0.1) {
         wallet.publicKey,
         associatedTokenAddress,
         wallet.publicKey,
-        WSOL_TOKEN_ACCOUNT
-      )
+        WSOL_TOKEN_ACCOUNT,
+      ),
     );
   }
 
@@ -424,7 +458,7 @@ async function wrapSolToWSol(connection, wallet, amount = 0.1) {
       toPubkey: associatedTokenAddress,
       lamports: amountToWrap,
     }),
-    createSyncNativeInstruction(associatedTokenAddress)
+    createSyncNativeInstruction(associatedTokenAddress),
   );
 
   const signature = await connection.sendTransaction(transaction, [wallet]);
@@ -437,7 +471,7 @@ async function wrapSolToWSol(connection, wallet, amount = 0.1) {
 async function wsolToSol(connection, wallet) {
   const associatedTokenAddress = await getAssociatedTokenAddress(
     WSOL_TOKEN_ACCOUNT,
-    wallet.publicKey
+    wallet.publicKey,
   );
 
   const accountInfo = await connection.getAccountInfo(associatedTokenAddress);
@@ -446,7 +480,7 @@ async function wsolToSol(connection, wallet) {
   }
 
   const balance = await connection.getTokenAccountBalance(
-    associatedTokenAddress
+    associatedTokenAddress,
   );
   console.log(` WSOL balance: ${balance.value.uiAmount} WSOL`);
 
@@ -454,8 +488,8 @@ async function wsolToSol(connection, wallet) {
     createCloseAccountInstruction(
       associatedTokenAddress,
       wallet.publicKey,
-      wallet.publicKey
-    )
+      wallet.publicKey,
+    ),
   );
 
   const signature = await connection.sendTransaction(transaction, [wallet], {
