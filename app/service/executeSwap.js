@@ -177,13 +177,19 @@ class ExecuteSwap extends Service {
       const wallets = [];
       const amounts = [];
       if (executeData.walletsExist) {
-        const walletData = await this.getWalletsWithBalance(line);
-        walletData.forEach((item, index) => {
-          if (item.balance === 0) {
-            wallets.push(item.publicKey);
-            amounts.push(walletConfig[index].transferAmount);
+        const walletData = await this.getWallets(line);
+        for (let index = 0; index < walletData.length; index++) {
+          const item = walletData[index];
+          const config = walletConfig[index];
+          if (!config) {
+            throw new Error(`walletConfig missing for wallet index ${index}`);
           }
-        });
+          const balance = await connection.getBalance(item.publicKey);
+          if (balance === 0) {
+            wallets.push(item.publicKey);
+            amounts.push(config.transferAmount);
+          }
+        }
       } else {
         const dbData = walletConfig.map((item, index) => {
           const keypair = Keypair.generate();
@@ -422,6 +428,61 @@ class ExecuteSwap extends Service {
     return true;
   }
 
+  getBuyStageConfig(config, type = "all") {
+    const keyMap = {
+      first: "firstBuy",
+      second: "secondBuy",
+      third: "thirdBuy",
+      multi: "multiBuy",
+    };
+    const stageKey = keyMap[type];
+    const stageConfig = stageKey ? config[stageKey] : null;
+    const buyAmountArr = Array.isArray(config.buyAmount)
+      ? config.buyAmount
+      : [config.buyAmount];
+    const indexMap = {
+      first: 0,
+      second: 1,
+      third: 2,
+      multi: 0,
+    };
+    const defaultBuyAmount =
+      buyAmountArr[indexMap[type] ?? 0] ?? buyAmountArr[0];
+    const stageFlags = {
+      firstBuy: false,
+      secondBuy: false,
+      thirdBuy: false,
+      multiBuy: false,
+    };
+    if (stageKey) {
+      stageFlags[stageKey] = true;
+    }
+
+    if (stageConfig && typeof stageConfig === "object") {
+      const { enable = false, ...stageOverrides } = stageConfig;
+      return {
+        enable,
+        config: {
+          ...config,
+          ...stageFlags,
+          ...stageOverrides,
+          buyAmount: stageOverrides.buyAmount ?? defaultBuyAmount,
+          buyAmountArr,
+          [stageKey]: enable,
+        },
+      };
+    }
+
+    return {
+      enable: type === "all" || stageConfig === true,
+      config: {
+        ...config,
+        ...stageFlags,
+        buyAmount: defaultBuyAmount,
+        buyAmountArr,
+      },
+    };
+  }
   /**
    * get keypair from db
    */
@@ -455,33 +516,29 @@ class ExecuteSwap extends Service {
     console.log(chalk.green("getWalletsWithConfig:", line, type));
     const wallets = await this.getWallets(line);
     const walletConfigs = await this.getWalletConfig(line);
-    const data = walletConfigs.map((config, index) => {
+    const data = walletConfigs.flatMap((config, index) => {
       const wallet = wallets[index];
-      const buyAmountArr = walletConfigs[index].buyAmount;
-      const buyAmount =
-        buyAmountArr[Math.floor(Math.random() * buyAmountArr.length)];
-      return {
-        ...wallet,
-        ...walletConfigs[index],
-        buyAmount: buyAmount,
-        buyAmountArr,
-      };
-    });
-
-    let newWallets = data.filter((wallet) => {
-      if (type === "first") {
-        return wallet.firstBuy === true;
-      } else if (type === "second") {
-        return wallet.secondBuy === true;
-      } else if (type === "third") {
-        return wallet.thirdBuy === true;
-      } else if (type === "multi") {
-        return wallet.multiBuy === true;
-      } else {
-        return true;
+      if (type === "all") {
+        return ["first", "second", "third", "multi"]
+          .map((stageType) => this.getBuyStageConfig(config, stageType))
+          .filter((stage) => stage.enable)
+          .map((stage) => ({
+            ...wallet,
+            ...stage.config,
+            stageEnable: true,
+          }));
       }
+      const stage = this.getBuyStageConfig(config, type);
+      return [
+        {
+          ...wallet,
+          ...stage.config,
+          stageEnable: stage.enable,
+        },
+      ];
     });
 
+    let newWallets = data.filter((wallet) => wallet.stageEnable);
     return newWallets;
   }
 
@@ -542,28 +599,67 @@ class ExecuteSwap extends Service {
     };
   }
 
-  async getWalletsWithBalance(line) {
-    const { ctx } = this;
-    const wallets = await this.getWalletsWithConfig(line);
-
-    const getWalletBalance = async (wallet) => {
-      if (wallet.publicKey) {
-        const balance = await connection.getBalance(wallet.publicKey);
-
-        const { privateKey, keypair, ...other } = wallet;
-        return {
-          balance: balance / LAMPORTS_PER_SOL,
-          ...other,
-        };
-      } else {
-        throw new Error("Cannot find wallets");
+  getWalletBalanceBuyAmount(config = {}) {
+    const amounts = [];
+    const addAmount = (value) => {
+      if (typeof value === "number") {
+        amounts.push(value);
       }
     };
 
-    const arr = wallets.map((wallet) => getWalletBalance(wallet));
-    const data = await Promise.all(arr);
+    if (Array.isArray(config.buyAmount)) {
+      config.buyAmount.forEach(addAmount);
+    } else {
+      addAmount(config.buyAmount);
+    }
 
-    return data;
+    ["firstBuy", "secondBuy", "thirdBuy", "multiBuy"].forEach((key) => {
+      const stageConfig = config[key];
+      if (stageConfig && typeof stageConfig === "object") {
+        addAmount(stageConfig.buyAmount);
+      }
+    });
+
+    return amounts.length ? Math.max(...amounts) : 0;
+  }
+  async getWalletsWithBalance(line) {
+    const wallets = await this.getWallets(line);
+    const walletConfigs = await this.getWalletConfig(line);
+    const seenAddresses = new Set();
+
+    const uniqueWallets = wallets.filter((wallet) => {
+      if (seenAddresses.has(wallet.address)) {
+        return false;
+      }
+      seenAddresses.add(wallet.address);
+      return true;
+    });
+
+    const getWalletBalance = async (wallet, index) => {
+      if (!wallet.publicKey) {
+        throw new Error("Cannot find wallets");
+      }
+
+      const rawConfig = walletConfigs[index] || {};
+      const { stageEnable, ...config } = rawConfig;
+      const balance = await connection.getBalance(wallet.publicKey);
+      const { privateKey, keypair, ...other } = wallet;
+
+      return {
+        ...other,
+        ...config,
+        buyAmount: this.getWalletBalanceBuyAmount(config),
+        buyAmountArr: Array.isArray(config.buyAmount)
+          ? config.buyAmount.filter((item) => typeof item === "number")
+          : [config.buyAmount].filter((item) => typeof item === "number"),
+        balance: balance / LAMPORTS_PER_SOL,
+      };
+    };
+
+    const arr = uniqueWallets.map((wallet, index) =>
+      getWalletBalance(wallet, index),
+    );
+    return Promise.all(arr);
   }
 
   async checkToken(tokenData, eid, forceCheck = false) {

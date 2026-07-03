@@ -41,6 +41,16 @@ const GLOBAL_CONFIG = new PublicKey(
   "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
 );
 
+const BUYBACK_FEE_RECIPIENT = new PublicKey(
+  "GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL",
+);
+const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = getAssociatedTokenAddressSync(
+  NATIVE_MINT,
+  BUYBACK_FEE_RECIPIENT,
+  true,
+  TOKEN_PROGRAM_ID,
+);
+
 const PUMP_AMM_FEE = new PublicKey(
   "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
 ); // 3
@@ -418,6 +428,21 @@ class PumpSwapSDK {
             ];
       // pool_v2 是最后一个，splice 到倒数第一位之前
       accounts.splice(accounts.length - 1, 0, ...cashbackAccounts);
+    }
+
+    if (type === "buy" || type === "sell") {
+      accounts.push(
+        {
+          pubkey: BUYBACK_FEE_RECIPIENT,
+          isSigner: false,
+          isWritable: false,
+        },
+        {
+          pubkey: BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT,
+          isSigner: false,
+          isWritable: true,
+        },
+      );
     }
 
     return accounts;

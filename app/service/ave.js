@@ -1,6 +1,7 @@
 const { Service } = require("egg");
 
 const AVE_API_URL = "https://api.gejbckf.com/";
+const AVE_TOKEN_INFO_API_URL = "https://cyjm22.com/";
 
 function aveTokenToDB(item) {
   const {
@@ -73,7 +74,8 @@ class Ave extends Service {
   async getTokenInfo(tokenAddress) {
     const { ctx } = this;
     const X_AUTH = await this.getXAuth();
-    const uri = `${AVE_API_URL}v1api/v3/tokens/${tokenAddress}-solana`;
+    const tokenId = `${tokenAddress}-solana`;
+    const uri = `${AVE_TOKEN_INFO_API_URL}v2api/token_info/v1/token/detail?token_id=${tokenId}&cache_use=false`;
 
     const res = await ctx.curl(uri, {
       dataType: "json",
@@ -81,24 +83,47 @@ class Ave extends Service {
         "x-auth": X_AUTH,
       },
     });
-    console.log(res);
     const data = res.data?.data;
 
     // const devData = await this.getTokenDev(tokenAddress);
-    if (data) {
+    if (res.data?.status === 1 && data?.token) {
       const result = {};
-      const { pairs, token } = data;
-      // const pair = pairs.find((item) => item.amm === "pumpfunamm");
-      const pair = pairs[0] || {};
+      const { pairs = [], token } = data;
+      const pair =
+        pairs.find((item) => item.pair === token.main_pair) || pairs[0] || {};
+      const usdPrice = Number(token.current_price_usd || 0);
+      const totalSupply = Number(token.total || 0);
+      let appendix = {};
+      try {
+        appendix = token.appendix ? JSON.parse(token.appendix) : {};
+      } catch (error) {}
 
       result.token = token.token;
       result.symbol = token.symbol;
+      result.name = token.name;
+      result.logo_url = token.logo_url;
       // result.dev = devData;
       result.usdPrice = token.current_price_usd;
       result.solPrice = token.current_price_eth;
-      result.pool = pair.pair;
-      result.volume_u_5m = pair.volume_u_5m;
-      result.volume_u_1h = pair.volume_u_1h;
+      result.mkt_cap = usdPrice && totalSupply ? usdPrice * totalSupply : 0;
+      result.pool = pair.pair || token.main_pair || "";
+      result.amm = pair.amm || token.launchpad || "";
+      result.volume_u_5m = pair.volume_u_5m || 0;
+      result.volume_u_1h = pair.volume_u_1h || 0;
+      result.volume_u_24h = pair.volume_u_24h || 0;
+      result.wallet_count = pair.makers_5m || 0;
+      result.transaction_count = pair.tx_5m_count || 0;
+      result.buy_count = pair.buys_tx_5m_count || 0;
+      result.sell_count = pair.sells_tx_5m_count || 0;
+      result.percent5m = pair.price_change_5m ?? token.price_change ?? 0;
+      result.percent1h = pair.price_change_1h ?? token.price_change ?? 0;
+      result.holders = token.holders || 0;
+      result.create_time =
+        (token.opening_at || token.publish_at || pair.created_at || 0) * 1000;
+      result.latest_time =
+        (pair.updated_at || pair.first_trade_at || 0) * 1000;
+      result.twitter = appendix.twitter || "";
+      result.website = appendix.website || "";
 
       return result;
     } else {

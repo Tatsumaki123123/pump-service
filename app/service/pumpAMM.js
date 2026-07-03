@@ -37,6 +37,7 @@ const PumpSwapSDK = require("../libs/pumpSwap");
 const ProxyPumpSwapSDK = require("../libs/proxyPumpSwap");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
+const { createAxiomBuyInstructions } = require("../libs/axiom");
 const {
   getSPLBalance,
   sendV0Transaction,
@@ -47,7 +48,8 @@ const moment = require("moment");
 const { sleep } = require("../utils/utils");
 const { getRandomAccount } = require("../utils/slot0trade");
 
-const TIP_AMOUNT = 0.001 * LAMPORTS_PER_SOL; // NextBlock 最低 tip=1,000,000 lamports (0.001 SOL)
+const NEXTBLOCK_TIP_EVERY_TX = process.env.NEXTBLOCK_TIP_EVERY_TX === "true";
+const SIMULATE_BEFORE_BUNDLE = process.env.SIMULATE_BEFORE_BUNDLE === "true";
 
 const RENT_SYSVAR = new PublicKey(
   "SysvarRent111111111111111111111111111111111",
@@ -61,8 +63,11 @@ const GMGN_FEE = 0.0004;
 const TROGAN_FEE = 0.00036;
 
 const TRANSACTION_FEE = 5000;
+const MAX_TRANSACTION_SIZE = 1232;
+const DEFAULT_PROXY_PUMP_SWAP_LOOKUP_TABLE =
+  "4j834PBihsChsKWF4SZCY4K9tVNHc5JFpw1vEDJgbW29";
 
-const SLIPPAGE_BASIS_POINTS = 0.3;
+const SLIPPAGE_BASIS_POINTS = 0.8;
 
 const pSwap = new PumpSwapSDK();
 const proxyPumpSwap = new ProxyPumpSwapSDK();
@@ -75,6 +80,55 @@ class PumpAMM extends Service {
   constructor(ctx) {
     super(ctx);
     this.subscriptionId = null;
+    this.pumpSwapLookupTables = null;
+  }
+
+  getLookupTableAddresses() {
+    const configuredAddresses = [
+      process.env.PROXY_PUMP_SWAP_LOOKUP_TABLE ||
+        DEFAULT_PROXY_PUMP_SWAP_LOOKUP_TABLE,
+      process.env.PUMP_AMM_LOOKUP_TABLES,
+      process.env.AXIOM_LOOKUP_TABLES,
+    ]
+      .flatMap((value) => (value || "").split(","))
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    return [...new Set(configuredAddresses)];
+  }
+
+  async getProxyPumpSwapLookupTables() {
+    if (this.pumpSwapLookupTables) {
+      return this.pumpSwapLookupTables;
+    }
+
+    const lookupTableAddresses = this.getLookupTableAddresses();
+    this.pumpSwapLookupTables = [];
+
+    for (const lookupTableAddress of lookupTableAddresses) {
+      try {
+        const lookupTable = await connection.getAddressLookupTable(
+          new PublicKey(lookupTableAddress),
+        );
+        if (lookupTable.value) {
+          this.pumpSwapLookupTables.push(lookupTable.value);
+        } else {
+          console.log(
+            chalk.yellow(
+              `Pump AMM lookup table not found: ${lookupTableAddress}`,
+            ),
+          );
+        }
+      } catch (error) {
+        console.log(
+          chalk.yellow(
+            `Failed to load pump AMM lookup table ${lookupTableAddress}: ${error.message}`,
+          ),
+        );
+      }
+    }
+
+    return this.pumpSwapLookupTables;
   }
 
   /**
@@ -95,6 +149,12 @@ class PumpAMM extends Service {
       const func = async (wallets) => {
         const buyTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
+        const tipAmount = ctx.service.jito.getTipAmount();
+        const lookupTableAccounts = await this.getProxyPumpSwapLookupTables();
+        const lookupTables = lookupTableAccounts.length
+          ? lookupTableAccounts
+          : undefined;
+        let bundleHasTip = false;
         for (let i = 0; i < wallets.length; i++) {
           const slippage = i === 0 ? 0.1 : SLIPPAGE_BASIS_POINTS;
           const wallet = wallets[i];
@@ -102,6 +162,7 @@ class PumpAMM extends Service {
           const user = keypair.publicKey;
           const { buyAmount, limit, price, fee, isAxiom } = wallet;
           let volumeIxs = [];
+          let jitoTipIx = null;
           console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
           if (wallet.isOkx) {
             const okxIxs = await okxSwap.getBuyInstructions(ctx, {
@@ -159,50 +220,163 @@ class PumpAMM extends Service {
             if (wallet.isTrogan) {
               const troganTipIx = createTroProxyInstruction(user, jipAcc);
 
-              volumeIxs.push(troganTipIx);
+              if (troganTipIx) {
+                volumeIxs.push(troganTipIx);
+              }
             }
-            if (wallet.isAxiom) {
-              const tipTx = SystemProgram.transfer({
-                fromPubkey: user,
-                toPubkey: new PublicKey(
-                  "5BqYhuD4q1YD3DMAYkc1FeTu9vqQVYYdfBAmkZjamyZg",
-                ),
-                lamports: 0.0001 * LAMPORTS_PER_SOL,
-              });
-              volumeIxs.push(tipTx);
-            }
-            if (i === wallets.length - 1) {
-              const jitoTipIx = SystemProgram.transfer({
+
+            if (NEXTBLOCK_TIP_EVERY_TX || i === 0) {
+              jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: jipAcc,
-                lamports:  ,
+                lamports: tipAmount,
               });
               volumeIxs.push(jitoTipIx);
             }
+
+          if (!jitoTipIx && (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)) {
+            jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: tipAmount,
+            });
+            volumeIxs.push(jitoTipIx);
+          }
           }
           try {
-            const messageV0 = new TransactionMessage({
-              payerKey: user,
-              recentBlockhash: blockhash,
-              instructions: volumeIxs,
-            }).compileToV0Message();
+            let tx;
+            let splitTipTx = null;
+            const assertTxSize = (transaction, label) => {
+              const size = transaction.serialize().length;
+              if (size > MAX_TRANSACTION_SIZE) {
+                throw new Error(
+                  `${label} size ${size} exceeds maximum allowed size of ${MAX_TRANSACTION_SIZE} bytes`,
+                );
+              }
+              return size;
+            };
+            try {
+              const messageV0 = new TransactionMessage({
+                payerKey: user,
+                recentBlockhash: blockhash,
+                instructions: volumeIxs,
+              }).compileToV0Message(lookupTables);
 
-            const tx = new VersionedTransaction(messageV0);
-            tx.sign([keypair]);
+              tx = new VersionedTransaction(messageV0);
+              tx.sign([keypair, ...(wallet.extraSigners || [])]);
+              assertTxSize(tx, "swap tx");
+            } catch (error) {
+              const canSplitTip =
+                jitoTipIx &&
+                /(encoding overruns Uint8Array|exceeds maximum allowed size)/.test(
+                  error.message,
+                );
+              if (!canSplitTip) {
+                if (
+                  wallet.isAxiom &&
+                  /encoding overruns Uint8Array/.test(error.message)
+                ) {
+                  throw new Error(
+                    "Axiom transaction is too large. Configure AXIOM_LOOKUP_TABLES with the Axiom address lookup table used by the source transaction.",
+                  );
+                }
+                throw error;
+              }
 
-            // // 模拟交易
-            // const simulationResult = await connection.simulateTransaction(tx, {
-            //   commitment: "confirmed",
-            // });
-            // if (simulationResult.value.err) {
-            //   console.error("simulation", simulationResult.value);
-            //   throw new Error(simulationResult.value);
-            // }
+              let swapIxs = volumeIxs.filter((ix) => ix !== jitoTipIx);
+              let swapMessageV0;
+              try {
+                swapMessageV0 = new TransactionMessage({
+                  payerKey: user,
+                  recentBlockhash: blockhash,
+                  instructions: swapIxs,
+                }).compileToV0Message(lookupTables);
+              } catch (splitError) {
+                if (!/encoding overruns Uint8Array/.test(splitError.message)) {
+                  throw splitError;
+                }
 
-            // console.log(
-            //   chalk.green("simulation success", keypair.publicKey.toString()),
-            // );
+                swapIxs = swapIxs.filter(
+                  (ix) => !ix.programId.equals(ComputeBudgetProgram.programId),
+                );
+                swapMessageV0 = new TransactionMessage({
+                  payerKey: user,
+                  recentBlockhash: blockhash,
+                  instructions: swapIxs,
+                }).compileToV0Message(lookupTables);
+                console.log(
+                  chalk.yellow(
+                    "Removed compute budget instructions because swap tx is still too large.",
+                  ),
+                );
+              }
+              tx = new VersionedTransaction(swapMessageV0);
+              tx.sign([keypair, ...(wallet.extraSigners || [])]);
+              try {
+                assertTxSize(tx, "swap tx");
+              } catch (sizeError) {
+                if (wallet.isAxiom) {
+                  throw new Error(
+                    "Axiom transaction is too large. Configure AXIOM_LOOKUP_TABLES with the Axiom address lookup table used by the source transaction.",
+                  );
+                }
+                if (!/exceeds maximum allowed size/.test(sizeError.message)) {
+                  throw sizeError;
+                }
+
+                swapIxs = swapIxs.filter(
+                  (ix) => !ix.programId.equals(ComputeBudgetProgram.programId),
+                );
+                const compactMessageV0 = new TransactionMessage({
+                  payerKey: user,
+                  recentBlockhash: blockhash,
+                  instructions: swapIxs,
+                }).compileToV0Message(lookupTables);
+                tx = new VersionedTransaction(compactMessageV0);
+                tx.sign([keypair, ...(wallet.extraSigners || [])]);
+                assertTxSize(tx, "compact swap tx");
+                console.log(
+                  chalk.yellow(
+                    "Removed compute budget instructions because swap tx is still too large.",
+                  ),
+                );
+              }
+
+              const tipMessageV0 = new TransactionMessage({
+                payerKey: user,
+                recentBlockhash: blockhash,
+                instructions: [jitoTipIx],
+              }).compileToV0Message();
+              splitTipTx = new VersionedTransaction(tipMessageV0);
+              splitTipTx.sign([keypair]);
+              assertTxSize(splitTipTx, "tip tx");
+              console.log(
+                chalk.yellow(
+                  "Split Jito tip into a separate transaction because swap tx is too large.",
+                ),
+              );
+            }
+
+            // 模拟交易
+            const simulationResult = await connection.simulateTransaction(tx, {
+              commitment: "confirmed",
+            });
+            if (simulationResult.value.err) {
+              console.error("simulation", simulationResult.value);
+              throw new Error(simulationResult.value);
+            }
+
+            console.log(
+              chalk.green("simulation success", keypair.publicKey.toString()),
+            );
             buyTxns.push(tx);
+            if (jitoTipIx) {
+              bundleHasTip = true;
+            }
+            if (splitTipTx) {
+              buyTxns.push(splitTipTx);
+              bundleHasTip = true;
+            }
           } catch (error) {
             console.error(error);
             break;
@@ -211,6 +385,21 @@ class PumpAMM extends Service {
 
         // for end
         console.log("buyTxns", buyTxns.length);
+        if (SIMULATE_BEFORE_BUNDLE) {
+          for (let i = 0; i < buyTxns.length; i++) {
+            const simulationResult = await connection.simulateTransaction(
+              buyTxns[i],
+              { commitment: "confirmed" },
+            );
+            if (simulationResult.value.err) {
+              console.error("simulation tx", i, simulationResult.value);
+              throw new Error(
+                `Simulation failed for tx ${i}: ${JSON.stringify(simulationResult.value.err)}`,
+              );
+            }
+            console.log(chalk.green("simulation success", i));
+          }
+        }
         // return;
         if (buyTxns.length > 1) {
           const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
@@ -268,6 +457,7 @@ class PumpAMM extends Service {
       const tokenProgramId = await getTokenProgramId(tokenMint);
 
       const newWallets = [];
+      const seenSellWallets = new Set();
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
@@ -281,6 +471,14 @@ class PumpAMM extends Service {
 
         console.log(`${user.toBase58()} sell ${tokenAmount} ${token}`);
         if (tokenAmount >= 100) {
+          const walletAddress = user.toBase58();
+          if (seenSellWallets.has(walletAddress)) {
+            console.log(
+              chalk.yellow(`Skip duplicate sell wallet ${walletAddress}`),
+            );
+            continue;
+          }
+          seenSellWallets.add(walletAddress);
           newWallets.push({ ...wallet, tokenAmount });
         }
       }
@@ -292,6 +490,8 @@ class PumpAMM extends Service {
         const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
         const sellTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
+        const tipAmount = ctx.service.jito.getTipAmount();
+        let bundleHasTip = false;
         for (let i = 0; i < wallets.length; i++) {
           const wallet = wallets[i];
           const keypair = wallet.keypair;
@@ -366,24 +566,46 @@ class PumpAMM extends Service {
             swapTx,
             closeAccountIx,
           ];
-          if (i === wallets.length - 1) {
+          if (wallets.length > 1 && i === 0) {
             const jitoTipIx = SystemProgram.transfer({
               fromPubkey: keypair.publicKey,
               toPubkey: jipAcc,
-              lamports: TIP_AMOUNT,
+              lamports: tipAmount,
             });
             volumeIxs.push(jitoTipIx);
           }
 
           try {
-            const messageV0 = new TransactionMessage({
-              payerKey: keypair.publicKey,
-              recentBlockhash: blockhash,
-              instructions: volumeIxs,
-            }).compileToV0Message();
+            const buildSellTx = (instructions) => {
+              const messageV0 = new TransactionMessage({
+                payerKey: keypair.publicKey,
+                recentBlockhash: blockhash,
+                instructions,
+              }).compileToV0Message();
 
-            const tx = new VersionedTransaction(messageV0);
-            tx.sign([keypair]);
+              const transaction = new VersionedTransaction(messageV0);
+              transaction.sign([keypair]);
+              return transaction;
+            };
+
+            let tx = buildSellTx(volumeIxs);
+            if (tx.serialize().length > MAX_TRANSACTION_SIZE) {
+              const compactIxs = volumeIxs.filter(
+                (ix) => !ix.programId.equals(ComputeBudgetProgram.programId),
+              );
+              tx = buildSellTx(compactIxs);
+              console.log(
+                chalk.yellow(
+                  "Removed compute budget instructions because sell tx is too large.",
+                ),
+              );
+            }
+            const txSize = tx.serialize().length;
+            if (txSize > MAX_TRANSACTION_SIZE) {
+              throw new Error(
+                `sell tx size ${txSize} exceeds maximum allowed size of ${MAX_TRANSACTION_SIZE} bytes`,
+              );
+            }
 
             // 模拟交易
             // const simulationResult = await connection.simulateTransaction(tx, {
@@ -398,6 +620,9 @@ class PumpAMM extends Service {
             //   chalk.green("simulation success", keypair.publicKey.toString())
             // );
             sellTxns.push(tx);
+            if (shouldAddBundleTip) {
+              bundleHasTip = true;
+            }
           } catch (error) {
             console.error(
               chalk.red(
@@ -413,11 +638,11 @@ class PumpAMM extends Service {
           console.log(bundleResult);
           console.log(chalk.green("Sell transactions completed."));
         } else if (sellTxns.length === 1) {
-          const bundleResult = await ctx.service.jito.sendTransaction(
+          const signatures = await ctx.service.jito.sendTransactionsByRpc([
             sellTxns[0],
-          );
-          console.log(bundleResult);
-          console.log(chalk.green("Buy transactions completed."));
+          ]);
+          console.log(signatures);
+          console.log(chalk.green("Sell transaction completed."));
         }
         return true;
       };
@@ -497,7 +722,7 @@ class PumpAMM extends Service {
       tokenMint,
       tokenProgramId || TOKEN_PROGRAM_ID,
     );
-    // 指令 5: 转账 SOL 到 wSOL ATA
+    // 指令 5: 转账 SOL �?wSOL ATA
     const transferLamportsWSOLIx = SystemProgram.transfer({
       fromPubkey: user,
       toPubkey: wSolATA,
@@ -551,13 +776,26 @@ class PumpAMM extends Service {
     const user = keypair.publicKey;
     console.log(chalk.green("Proxy buy:", user.toBase58()));
     const { buyAmount } = wallet;
-    if (wallet.isProxyBuy) {
+    if (isAxiom) {
+      const axiomBuy = await createAxiomBuyInstructions({
+        tokenMint,
+        user,
+        buyAmount,
+        slippage,
+        poolDetail,
+        tokenProgramId,
+        feeLamports: wallet.axiomFeeLamports,
+      });
+      wallet.extraSigners = axiomBuy.signers;
+      proxyBuyIxs = axiomBuy.instructions;
+    } else if (wallet.isProxyBuy) {
       const proxyBuyIx = await proxyPumpSwap.createBuyInstruction({
         tokenMint: tokenMint,
         user: user,
         buyAmount: buyAmount,
         slippage: slippage,
         poolDetail: poolDetail,
+        tokenProgramId,
       });
       proxyBuyIxs = [proxyBuyIx];
     } else {

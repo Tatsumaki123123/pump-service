@@ -7,6 +7,7 @@ const {
 
 const {
   getAssociatedTokenAddress,
+  getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -31,6 +32,16 @@ const {
 
 const PROXY_PROGRAM_ID = new PublicKey(
   "AveaiuA1emN71q9mS2QQ9BEWNAAHmp8sHSvwLFHQjufM"
+);
+
+const BUYBACK_FEE_RECIPIENT = new PublicKey(
+  "GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL",
+);
+const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = getAssociatedTokenAddressSync(
+  NATIVE_MINT,
+  BUYBACK_FEE_RECIPIENT,
+  true,
+  TOKEN_PROGRAM_ID,
 );
 
 const defaultBuyAccounts = {
@@ -242,12 +253,20 @@ const discriminator = new Uint8Array([114, 150, 13, 192, 140, 252, 221, 31]);
 
 class ProxyPumpSwapSDK {
   async createBuyInstruction(params) {
-    const { tokenMint, user, buyAmount, slippage = 0.1, poolDetail } = params;
+    const {
+      tokenMint,
+      user,
+      buyAmount,
+      slippage = 0.1,
+      poolDetail,
+      tokenProgramId = TOKEN_PROGRAM_ID,
+    } = params;
 
     const accounts = await this.getAccounts({
       poolDetail: poolDetail,
       tokenMint,
       user,
+      tokenProgramId,
     });
 
     const buyTokenAmount = getBuyTokenAmountBuyPoolDetail(
@@ -286,13 +305,16 @@ class ProxyPumpSwapSDK {
     user,
     type = "buy",
     sellNewAccount,
+    tokenProgramId = TOKEN_PROGRAM_ID,
   }) {
     const accountObj = { ...defaultBuyAccounts };
 
     // Get user's token accounts
     const userBaseTokenAccount = await getAssociatedTokenAddress(
       tokenMint,
-      user
+      user,
+      false,
+      tokenProgramId
     );
     const userQuoteTokenAccount =
       type === "buy"
@@ -327,19 +349,35 @@ class ProxyPumpSwapSDK {
     accountObj.base_mint_2.account = tokenMint;
     accountObj.pool_base_token_account.account = poolBaseTokenAccount;
     accountObj.pool_quote_token_account.account = poolQuoteTokenAccount;
+    accountObj.unknown_8.account = tokenProgramId;
 
     // new add
     accountObj.coin_creator_vault_ata.account = coin_creator_vault_ata[0];
     accountObj.coin_creator_vault_authority.account =
       coin_creator_vault_authority[0];
 
+    accountObj.buyback_fee_recipient = {
+      label: "buyback_fee_recipient",
+      order: 25,
+      account: BUYBACK_FEE_RECIPIENT,
+      signer: false,
+      writable: false,
+    };
+    accountObj.buyback_fee_recipient_token_account = {
+      label: "buyback_fee_recipient_token_account",
+      order: 26,
+      account: BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT,
+      signer: false,
+      writable: true,
+    };
+
     const accounts = Object.values(accountObj)
+      .sort((a, b) => a.order - b.order)
       .map((item) => ({
         pubkey: item.account,
         isSigner: item.signer,
         isWritable: item.writable,
-      }))
-      .sort((a, b) => a.order - b.order);
+      }));
 
     return accounts;
   }

@@ -109,7 +109,9 @@ class RaydiumCpmm extends Service {
             }
             if (wallet.isTrogan) {
               const troganTipIx = createTroProxyInstruction(user, jipAcc);
-              volumeIxs.push(troganTipIx);
+              if (troganTipIx) {
+                volumeIxs.push(troganTipIx);
+              }
             }
           }
           if (wallets.length > 1) {
