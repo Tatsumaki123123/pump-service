@@ -23,6 +23,7 @@ const JITO_RESUBMIT_INTERVAL_MS = Number(
   process.env.JITO_RESUBMIT_INTERVAL_MS || 2000,
 );
 const DEFAULT_BUNDLE_TIP_SOL = 0.00001;
+const HELIUS_MIN_TIP_LAMPORTS = 5000;
 const NEXTBLOCK_RPC_FALLBACK = process.env.NEXTBLOCK_RPC_FALLBACK !== "false";
 const RPC_FALLBACK_CONFIRM_MS = Number(
   process.env.RPC_FALLBACK_CONFIRM_MS || 30000,
@@ -38,8 +39,9 @@ const HELIUS_ENDPOINT =
 const HELIUS_BUNDLE_WAIT_MS = Number(
   process.env.HELIUS_BUNDLE_WAIT_MS || 30000,
 );
+const HELIUS_JITO_REGION = process.env.HELIUS_JITO_REGION || "";
 const HELIUS_JITO_FALLBACK_PROVIDER = (
-  process.env.HELIUS_JITO_FALLBACK_PROVIDER || "jito"
+  process.env.HELIUS_JITO_FALLBACK_PROVIDER || "disabled"
 ).toLowerCase();
 const QUICKNODE_RPC_URL = process.env.QUICKNODE_RPC_URL || process.env.RPC_URL;
 const QUICKNODE_REGION = process.env.QUICKNODE_REGION || "ny";
@@ -91,6 +93,19 @@ const tipAccounts = [
   "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
 ];
 
+const heliusTipAccounts = [
+  "4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE",
+  "D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ",
+  "9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta",
+  "5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn",
+  "2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD",
+  "2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ",
+  "wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF",
+  "3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT",
+  "4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey",
+  "4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or",
+];
+
 const SLOT_API_KEY = "";
 const slot0Connection = new Connection(
   `https://ny.0slot.trade?api-key=${SLOT_API_KEY}`,
@@ -115,13 +130,36 @@ function serializeTransactionBase64(transaction) {
   return Buffer.from(transaction.serialize()).toString("base64");
 }
 
-function bundleWritesJitoTipAccount(transactions) {
-  const tipSet = new Set(tipAccounts);
+function bundleWritesTipAccount(transactions, accounts) {
+  const tipSet = new Set(accounts);
   return transactions.some((tx) =>
     tx.message.staticAccountKeys.some(
       (key, index) => tipSet.has(key.toBase58()) && tx.message.isAccountWritable(index),
     ),
   );
+}
+
+function bundleWritesJitoTipAccount(transactions) {
+  return bundleWritesTipAccount(transactions, tipAccounts);
+}
+
+function bundleWritesHeliusTipAccount(transactions) {
+  return bundleWritesTipAccount(transactions, heliusTipAccounts);
+}
+
+function getBundleStatusError(status) {
+  const err = status?.err || status?.error;
+  if (!err) {
+    return null;
+  }
+  if (
+    typeof err === "object" &&
+    Object.prototype.hasOwnProperty.call(err, "Ok") &&
+    err.Ok === null
+  ) {
+    return null;
+  }
+  return err;
 }
 function getTransactionSignature(transaction) {
   if (!transaction.signatures?.[0]) {
@@ -227,6 +265,9 @@ class Jito extends Service {
     return sentSignatures;
   }
   async sendBundle(bundledTxns) {
+    if (bundledTxns.length === 1) {
+      return await this.sendTransactionsByRpc(bundledTxns);
+    }
     if (BUNDLE_PROVIDER === "helius_jito" || BUNDLE_PROVIDER === "helius") {
       return await this.sendBundleHeliusJito(bundledTxns);
     }
@@ -264,9 +305,10 @@ class Jito extends Service {
         console.log("Helius bundle status", status);
         const confirmationStatus =
           status.confirmation_status || status.confirmationStatus;
-        if (status.err || status.error) {
+        const bundleError = getBundleStatusError(status);
+        if (bundleError) {
           throw new Error(
-            `Helius bundle failed: ${JSON.stringify(status.err || status.error)}`,
+            `Helius bundle failed: ${JSON.stringify(bundleError)}`,
           );
         }
         if (
@@ -308,6 +350,11 @@ class Jito extends Service {
 
   async sendHeliusJitoFallback(bundledTxns) {
     if (HELIUS_JITO_FALLBACK_PROVIDER === "jito") {
+      if (!bundleWritesJitoTipAccount(bundledTxns)) {
+        throw new Error(
+          "Helius Jito is not available for this plan. Cannot fallback to Jito because this signed bundle tips a Helius account, not a Jito tip account.",
+        );
+      }
       console.log(
         chalk.yellow(
           "Helius Jito is not available for this plan; fallback to Jito Block Engine bundle.",
@@ -316,12 +363,9 @@ class Jito extends Service {
       return await this.sendBundleJito(bundledTxns);
     }
     if (HELIUS_JITO_FALLBACK_PROVIDER === "nextblock") {
-      console.log(
-        chalk.yellow(
-          "Helius Jito is not available for this plan; fallback to NextBlock bundle.",
-        ),
+      throw new Error(
+        "Helius Jito is not available for this plan. Cannot fallback to NextBlock with an already-signed Helius bundle because the tip account is provider-specific.",
       );
-      return await this.sendBundleNextBlock(bundledTxns);
     }
     throw new Error(
       `Helius Jito is not available for this plan and fallback is disabled: ${HELIUS_JITO_FALLBACK_PROVIDER}`,
@@ -332,6 +376,11 @@ class Jito extends Service {
       if (bundledTxns.length > 5) {
         throw new Error(
           `Helius Jito bundle supports up to 5 transactions, got ${bundledTxns.length}`,
+        );
+      }
+      if (!bundleWritesHeliusTipAccount(bundledTxns)) {
+        throw new Error(
+          "Helius bundle must include a SOL transfer to one of the Helius tip accounts.",
         );
       }
       const signatures = bundledTxns.map((tx) => getTransactionSignature(tx));
@@ -352,9 +401,13 @@ class Jito extends Service {
       );
       console.log("Bundle tx signatures", signatures);
 
+      const headers = { "Content-Type": "application/json" };
+      if (HELIUS_JITO_REGION) {
+        headers["jito-region"] = HELIUS_JITO_REGION;
+      }
       const resp = await fetch(HELIUS_ENDPOINT, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body,
       });
       const data = await resp.json();
@@ -430,6 +483,11 @@ class Jito extends Service {
           `Jito bundle supports up to 5 transactions, got ${bundledTxns.length}`,
         );
       }
+      if (!bundleWritesJitoTipAccount(bundledTxns)) {
+        throw new Error(
+          "Jito bundle must include a SOL transfer to one of the Jito tip accounts.",
+        );
+      }
 
       const signatures = bundledTxns.map((tx) => getTransactionSignature(tx));
       const transactions = bundledTxns.map((tx) => serializeTransaction(tx));
@@ -488,28 +546,7 @@ class Jito extends Service {
   }
 
   async sendTransaction(tx) {
-    if (
-      BUNDLE_PROVIDER === "quicknode" ||
-      BUNDLE_PROVIDER === "jito" ||
-      BUNDLE_PROVIDER === "helius_jito" ||
-      BUNDLE_PROVIDER === "helius" ||
-      BUNDLE_PROVIDER === "nextblock"
-    ) {
-      return await this.sendBundle([tx]);
-    }
-
-    const signature = getTransactionSignature(tx);
-    console.log(chalk.yellow(`Send single transaction via RPC: ${signature}`));
-    const sentSignature = await connection.sendRawTransaction(tx.serialize(), {
-      skipPreflight: true,
-      maxRetries: 0,
-      preflightCommitment: "confirmed",
-    });
-    await this.waitForBundleTransactions(
-      [sentSignature],
-      RPC_FALLBACK_CONFIRM_MS,
-    );
-    return sentSignature;
+    return await this.sendTransactionsByRpc([tx]);
   }
 
   async setQuickNodeBundle(bundledTxns) {
@@ -755,21 +792,26 @@ class Jito extends Service {
   }
 
   getTipAmount() {
-    return Math.floor(
+    const lamports = Math.floor(
       Number(
         process.env.BUNDLE_TIP_SOL ||
           process.env.NEXTBLOCK_TIP_SOL ||
           DEFAULT_BUNDLE_TIP_SOL,
       ) * LAMPORTS_PER_SOL,
     );
+    if (BUNDLE_PROVIDER === "helius_jito" || BUNDLE_PROVIDER === "helius") {
+      return Math.max(lamports, HELIUS_MIN_TIP_LAMPORTS);
+    }
+    return lamports;
   }
 
   getTipAcc() {
+    if (BUNDLE_PROVIDER === "helius_jito" || BUNDLE_PROVIDER === "helius") {
+      return this.getHeliusTipAcc();
+    }
     if (
       BUNDLE_PROVIDER === "jito" ||
-      BUNDLE_PROVIDER === "quicknode" ||
-      BUNDLE_PROVIDER === "helius_jito" ||
-      BUNDLE_PROVIDER === "helius"
+      BUNDLE_PROVIDER === "quicknode"
     ) {
       return this.getJitoTipAcc();
     }
@@ -779,6 +821,11 @@ class Jito extends Service {
   getJitoTipAcc() {
     const index = Math.floor(Math.random() * tipAccounts.length);
     return new PublicKey(tipAccounts[index]);
+  }
+
+  getHeliusTipAcc() {
+    const index = Math.floor(Math.random() * heliusTipAccounts.length);
+    return new PublicKey(heliusTipAccounts[index]);
   }
 
   getNextBlockTipAcc() {

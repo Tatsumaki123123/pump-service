@@ -104,8 +104,8 @@ class PumpFun extends Service {
 
     const tipIx = SystemProgram.transfer({
       fromPubkey: testWallet.publicKey,
-      toPubkey: new PublicKey("ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49"),
-      lamports: 0.0001 * LAMPORTS_PER_SOL,
+      toPubkey: ctx.service.jito.getTipAcc(),
+      lamports: ctx.service.jito.getTipAmount(),
     });
     const volumeIxs = [tipIx, ...buyTx.instructions];
 

@@ -225,7 +225,7 @@ class PumpAMM extends Service {
               }
             }
 
-            if (NEXTBLOCK_TIP_EVERY_TX || i === 0) {
+            if (wallets.length > 1 && (NEXTBLOCK_TIP_EVERY_TX || i === 0)) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: jipAcc,
@@ -234,7 +234,11 @@ class PumpAMM extends Service {
               volumeIxs.push(jitoTipIx);
             }
 
-          if (!jitoTipIx && (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)) {
+          if (
+            wallets.length > 1 &&
+            !jitoTipIx &&
+            (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
+          ) {
             jitoTipIx = SystemProgram.transfer({
               fromPubkey: user,
               toPubkey: jipAcc,
@@ -501,6 +505,7 @@ class PumpAMM extends Service {
           const { limit, price, fee } = wallet;
 
           let volumeIxs = [];
+          let jitoTipIx = null;
 
           // 1, setComputeUnitLimitIx
           const setComputeUnitLimitIx =
@@ -567,7 +572,7 @@ class PumpAMM extends Service {
             closeAccountIx,
           ];
           if (wallets.length > 1 && i === 0) {
-            const jitoTipIx = SystemProgram.transfer({
+            jitoTipIx = SystemProgram.transfer({
               fromPubkey: keypair.publicKey,
               toPubkey: jipAcc,
               lamports: tipAmount,
@@ -620,7 +625,7 @@ class PumpAMM extends Service {
             //   chalk.green("simulation success", keypair.publicKey.toString())
             // );
             sellTxns.push(tx);
-            if (shouldAddBundleTip) {
+            if (jitoTipIx) {
               bundleHasTip = true;
             }
           } catch (error) {
