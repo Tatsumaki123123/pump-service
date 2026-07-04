@@ -296,17 +296,7 @@ class ExecuteSwap extends Service {
       }
     });
     if (wallets && wallets.length > 0 && token) {
-      if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
-        await ctx.service.raydiumCpmm.batchBuyToken(token, wallets, type);
-      } else if (tokenInfo.amm === RAYDIUM_LANUCH_NAME) {
-        await ctx.service.raydiumLaunch.batchBuyToken(token, wallets, type);
-      } else if (tokenInfo.amm === PUMP_AMM_NAME) {
-        await ctx.service.pumpAMM.batchBuyToken(token, wallets, type);
-      } else if (tokenInfo.amm === PUMP_FUN_NAME) {
-        await ctx.service.pumpfun.batchBuyToken(token, wallets, type);
-      } else {
-        throw new Error("Not pump token");
-      }
+      await this.batchBuyTokenByAmm(tokenInfo.amm, token, wallets, type);
 
       await ctx.model.ExecuteToken.updateOne(
         { tid: tokenInfo.tid },
@@ -316,6 +306,102 @@ class ExecuteSwap extends Service {
     } else {
       throw new Error("There are not wallets to buy");
     }
+  }
+
+  async dispatchBatchBuyToken(amm, token, wallets, type) {
+    const { ctx } = this;
+    if (!wallets || wallets.length === 0) {
+      return true;
+    }
+
+    if (amm === RAYDIUM_CPMM_NAME) {
+      await ctx.service.raydiumCpmm.batchBuyToken(token, wallets, type);
+    } else if (amm === RAYDIUM_LANUCH_NAME) {
+      await ctx.service.raydiumLaunch.batchBuyToken(token, wallets, type);
+    } else if (amm === PUMP_AMM_NAME) {
+      await ctx.service.pumpAMM.batchBuyToken(token, wallets, type);
+    } else if (amm === PUMP_FUN_NAME) {
+      await ctx.service.pumpfun.batchBuyToken(token, wallets, type);
+    } else {
+      throw new Error("Not pump token");
+    }
+    return true;
+  }
+
+  getWalletBuyType(wallet) {
+    if (wallet.firstBuy) return "first";
+    if (wallet.multiBuy) return "multi";
+    if (wallet.secondBuy) return "second";
+    if (wallet.thirdBuy) return "third";
+    return "";
+  }
+
+  isStandaloneFirstWalletBuy(wallet) {
+    return wallet.isFirstWallet && wallet.isBundle === false;
+  }
+
+  async dispatchStandaloneWallets(amm, token, wallets, type) {
+    for (const wallet of wallets) {
+      await this.dispatchBatchBuyToken(amm, token, [wallet], type);
+      await sleep(0.5);
+    }
+  }
+
+  async batchBuyTokenByAmm(amm, token, wallets, type) {
+    const standaloneWallets = wallets.filter((wallet) =>
+      this.isStandaloneFirstWalletBuy(wallet),
+    );
+    if (standaloneWallets.length === 0) {
+      return this.dispatchBatchBuyToken(amm, token, wallets, type);
+    }
+
+    if (type !== "all") {
+      const bundledWallets = wallets.filter(
+        (wallet) => !this.isStandaloneFirstWalletBuy(wallet),
+      );
+      const beforeWallets = standaloneWallets.filter(
+        (wallet) => wallet.position !== "after",
+      );
+      const afterWallets = standaloneWallets.filter(
+        (wallet) => wallet.position === "after",
+      );
+
+      await this.dispatchStandaloneWallets(amm, token, beforeWallets, type);
+      await this.dispatchBatchBuyToken(amm, token, bundledWallets, type);
+      await this.dispatchStandaloneWallets(amm, token, afterWallets, type);
+      return true;
+    }
+
+    const stageTypes = ["first", "multi", "second", "third"];
+    for (const stageType of stageTypes) {
+      const stageWallets = wallets.filter(
+        (wallet) => this.getWalletBuyType(wallet) === stageType,
+      );
+      if (stageWallets.length === 0) {
+        continue;
+      }
+
+      const beforeWallets = stageWallets.filter(
+        (wallet) =>
+          this.isStandaloneFirstWalletBuy(wallet) &&
+          wallet.position !== "after",
+      );
+      const bundledWallets = stageWallets.filter(
+        (wallet) => !this.isStandaloneFirstWalletBuy(wallet),
+      );
+      const afterWallets = stageWallets.filter(
+        (wallet) =>
+          this.isStandaloneFirstWalletBuy(wallet) &&
+          wallet.position === "after",
+      );
+
+      await this.dispatchStandaloneWallets(amm, token, beforeWallets, stageType);
+      await this.dispatchBatchBuyToken(amm, token, bundledWallets, stageType);
+      await this.dispatchStandaloneWallets(amm, token, afterWallets, stageType);
+      await sleep(0.5);
+    }
+
+    return true;
   }
 
   async buyTokenArr(tid, types) {
@@ -549,7 +635,21 @@ class ExecuteSwap extends Service {
     }).lean();
     const { firstWallet, needFirstWallet } = lineData;
     if (firstWallet && needFirstWallet) {
-      const { type: firstType = "first" } = firstWallet;
+      const normalizeBuyType = (value = "first") => {
+        const normalized = String(value).toLowerCase();
+        const typeMap = {
+          first: "first",
+          firstbuy: "first",
+          second: "second",
+          secondbuy: "second",
+          third: "third",
+          thirdbuy: "third",
+          multi: "multi",
+          multibuy: "multi",
+        };
+        return typeMap[normalized] || normalized;
+      };
+      const firstType = normalizeBuyType(firstWallet.type);
       const typeKey = `${firstType}Buy`;
       if (type === firstType || type === "all") {
         const keypair = Keypair.fromSecretKey(
@@ -566,10 +666,22 @@ class ExecuteSwap extends Service {
           price: 0,
           fee: 0.00002,
           ...config,
+          isFirstWallet: true,
+          isBundle: firstWallet.isBundle !== false,
         };
         firstWalletConfig[typeKey] = true;
         if (firstWallet.position === "after") {
-          newWallets = [...newWallets, firstWalletConfig];
+          if (type === "all") {
+            const insertIndex =
+              newWallets.findLastIndex((wallet) => wallet[typeKey]) + 1;
+            newWallets = [
+              ...newWallets.slice(0, insertIndex),
+              firstWalletConfig,
+              ...newWallets.slice(insertIndex),
+            ];
+          } else {
+            newWallets = [...newWallets, firstWalletConfig];
+          }
         } else {
           newWallets = [firstWalletConfig, ...newWallets];
         }

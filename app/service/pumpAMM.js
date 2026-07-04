@@ -182,13 +182,11 @@ class PumpAMM extends Service {
             });
             volumeIxs = [...jupIxs];
           } else {
-            //  1: limit
             const setComputeUnitLimitIx =
               ComputeBudgetProgram.setComputeUnitLimit({
                 units: limit,
               });
 
-            //  2: price
             const setComputeUnitPriceIx =
               ComputeBudgetProgram.setComputeUnitPrice({
                 microLamports: price,
@@ -367,7 +365,9 @@ class PumpAMM extends Service {
             });
             if (simulationResult.value.err) {
               console.error("simulation", simulationResult.value);
-              throw new Error(simulationResult.value);
+              throw new Error(
+                `Simulation failed: ${JSON.stringify(simulationResult.value.err)} ${JSON.stringify(simulationResult.value.logs || [])}`,
+              );
             }
 
             console.log(

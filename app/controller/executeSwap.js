@@ -277,13 +277,23 @@ class ExecuteSwap extends BaseController {
         const res = await ctx.model.ExecuteLine.findOne({
           lineId: line,
         }).lean();
-        const firstWallet = res.firstWallet;
+        const hasFirstWallet = Object.prototype.hasOwnProperty.call(
+          parseData,
+          "firstWallet",
+        );
         const newData = {
           ...res,
           ...parseData,
-          firstWallet: { ...firstWallet, ...parseData.firstWallet },
         };
-        await ctx.model.ExecuteLine.updateOne({ lineId: line }, newData);
+        if (hasFirstWallet) {
+          const nextFirstWallet = { ...(parseData.firstWallet || {}) };
+          if (res.firstWallet?.privateKey && !nextFirstWallet.privateKey) {
+            nextFirstWallet.privateKey = res.firstWallet.privateKey;
+          }
+          newData.firstWallet = nextFirstWallet;
+        }
+        const { _id, __v, ...updateData } = newData;
+        await ctx.model.ExecuteLine.updateOne({ lineId: line }, updateData);
         this.success(true);
       } catch (error) {
         throw new Error("Date format error");
