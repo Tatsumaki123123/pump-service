@@ -12,13 +12,15 @@ const {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountIdempotentInstruction,
 } = require("@solana/spl-token");
+const { Program } = require("@coral-xyz/anchor");
+const PUMPSWAP_IDL = require("../IDL/pumpswap-idl.json");
+const { buyQuoteInputInternal } = require("./pumpfun/sdk/buy");
 
 const {
   PUMP_AMM_PROGRAM_ID,
   WSOL_TOKEN_ACCOUNT,
   connection,
 } = require("../constants");
-const { PumpAmmInternalSdk } = require("./pumpfun/sdk/pumpAmmInternal");
 const {
   getCoinCreatorVaultAuthorityPda,
   getCoinCreatorVaultAtaPda,
@@ -29,22 +31,22 @@ const AXIOM_PROGRAM_ID = new PublicKey(
   "FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9",
 );
 const AXIOM_CREATE_DATA_SUFFIX = 0xff;
-const AXIOM_BUY_DATA_SUFFIX = Buffer.from("00021f00323c", "hex");
+const AXIOM_BUY_DATA_SUFFIX = Buffer.from("00021f003200", "hex");
 const AXIOM_FEE_DESTINATION = new PublicKey(
-  process.env.AXIOM_FEE_DESTINATION || "4XjzLKgH5RHdf5qqSsze4dhTKs4e7CATDoGhckyzk16L",
+  process.env.AXIOM_FEE_DESTINATION || "4FobGn5ZWYquoJkxMzh2VUAWvV36xMgxQ3M7uG1pGGhd",
 );
-const AXIOM_DEFAULT_FEE_LAMPORTS = 143500;
+const AXIOM_DEFAULT_FEE_BPS = Number(process.env.AXIOM_PLATFORM_FEE_BPS || 100);
 const AXIOM_ACCOUNT_2 = new PublicKey(
   process.env.AXIOM_ACCOUNT_2 || "4FobGn5ZWYquoJkxMzh2VUAWvV36xMgxQ3M7uG1pGGhd",
 );
 const AXIOM_ACCOUNT_6 = new PublicKey(
-  process.env.AXIOM_ACCOUNT_6 || "K2x235UkVnVN6CxiXqWWsEdLrToWGAAMHeHfVmmpvaf",
+  process.env.AXIOM_ACCOUNT_6 || "69jz6t68WdWP2ZwuG8Vw2DauGqu4zbjRLq98sHvhjGQi",
 );
 const AXIOM_ACCOUNT_7 = new PublicKey(
-  process.env.AXIOM_ACCOUNT_7 || "FMyYa2FTMa5AJ2td9gaz54PnLhTCVtMeauaLjww5NtqW",
+  process.env.AXIOM_ACCOUNT_7 || "3vSKL1NnVM8P9bg3vkXMDpQ8m6JgL6hV7c4p4AJrWdVy",
 );
 const AXIOM_POOL_AUTHORITY = new PublicKey(
-  process.env.AXIOM_POOL_AUTHORITY || "CyJP99twrHW5iPfTo8zjr2wj6yyHUQrE6ERjD6obmz2Y",
+  process.env.AXIOM_POOL_AUTHORITY || "CoPK3EXuHC2hXPgqVW9CvF83kmzQ7YeHMZqELoFPfXFE",
 );
 const GLOBAL_CONFIG = new PublicKey(
   "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
@@ -55,28 +57,29 @@ const EVENT_AUTHORITY = new PublicKey(
 const FEE_CONFIG = new PublicKey("5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx");
 const FEE_PROGRAM = new PublicKey("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
 const BUYBACK_FEE_RECIPIENT = new PublicKey(
-  process.env.AXIOM_BUYBACK_FEE_RECIPIENT || "EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL",
+  process.env.AXIOM_BUYBACK_FEE_RECIPIENT || "5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6",
 );
 const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
-  process.env.AXIOM_BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT || "CA7v8gHfbquYXyDnDx6QxWW8hmL1H7X6Y2RYDrGLnuck",
+  process.env.AXIOM_BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT || "GYH1Gae1wJytMSvMvw8JVcv7nuAbxi8i9erNVbERnzXd",
 );
 const PROTOCOL_FEE_RECIPIENT = new PublicKey(
-  process.env.AXIOM_PROTOCOL_FEE_RECIPIENT || "G5UZAVbAf46s7cKWoyKu8kYTip9DGTpbLZ2qa9Aq69dP",
+  process.env.AXIOM_PROTOCOL_FEE_RECIPIENT || "JCRGumoE9Qi5BBgULTgdgTLjSgkCMSbF62ZZfGs84JeU",
 );
 const PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
-  process.env.AXIOM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT || "BWXT6RUhit9FfJQM3pBmqeFLPYmuxgmyhMGC5sGr8RbA",
+  process.env.AXIOM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT || "DWpvfqzGWuVy9jVSKSShdM2733nrEsnnhsUStYbkj6Nn",
 );
 const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey(
   "C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw",
 );
-const AXIOM_CASHBACK_RECIPIENT = new PublicKey(
-  process.env.AXIOM_CASHBACK_RECIPIENT || "2ApLdwLrGayEmxgpLX9BTR47Q2QprfMg5SpjrLeaK8s7",
-);
-const AXIOM_REFERRAL_RECIPIENT = new PublicKey(
-  process.env.AXIOM_REFERRAL_RECIPIENT || "4vxJwQxjit7D8TBneQuDQBdyNrSEQznnsx2gwtjRPaCD",
-);
+const pumpAmmProgram = new Program(PUMPSWAP_IDL, { connection });
 
-const pumpAmmInternal = new PumpAmmInternalSdk(connection);
+// Axiom itself sets an almost-zero min_base_amount_out on-chain (observed 256)
+// and relies on maxQuoteAmountIn + the jitodontfront anti-frontrun marker for
+// protection, not on the min-out. Match that behaviour with a tiny floor so the
+// buy never reverts with custom error 0x67 (103) because of dynamic pool fees.
+const AXIOM_MIN_BASE_AMOUNT_OUT = new BN(
+  process.env.AXIOM_MIN_BASE_AMOUNT_OUT || 256,
+);
 
 function encodeAxiomCreateData(maxQuoteAmountIn, bump) {
   const data = Buffer.alloc(10);
@@ -95,6 +98,51 @@ function encodeAxiomBuyData(maxQuoteAmountIn, baseAmountOut) {
   return data;
 }
 
+async function getAxiomBaseAmountOut({
+  quoteAmountIn,
+  slippage,
+  poolDetail,
+  poolBaseTokenAccount,
+  poolQuoteTokenAccount,
+}) {
+  const [baseBalance, quoteBalance, globalConfig, isCashback] = await Promise.all([
+    connection.getTokenAccountBalance(poolBaseTokenAccount),
+    connection.getTokenAccountBalance(poolQuoteTokenAccount),
+    pumpAmmProgram.account.globalConfig.fetch(GLOBAL_CONFIG),
+    getPoolCashbackFlag(poolDetail),
+  ]);
+  const poolBaseAmount = new BN(baseBalance.value.amount);
+  const poolQuoteAmount = new BN(quoteBalance.value.amount);
+  const quote = new BN(quoteAmountIn);
+  const result = buyQuoteInputInternal(
+    quote,
+    slippage,
+    poolBaseAmount,
+    poolQuoteAmount,
+    globalConfig.lpFeeBasisPoints,
+    globalConfig.protocolFeeBasisPoints,
+  );
+  return {
+    baseAmountOut: result.base,
+    poolBaseAmount,
+    poolQuoteAmount,
+    lpFeeBasisPoints: globalConfig.lpFeeBasisPoints,
+    protocolFeeBasisPoints: globalConfig.protocolFeeBasisPoints,
+    isCashback,
+  };
+}
+
+async function getPoolCashbackFlag(poolDetail) {
+  const accountInfo = await connection.getAccountInfo(poolDetail.address);
+  if (!accountInfo) {
+    if (typeof poolDetail.poolData.is_cashback === "boolean") {
+      return poolDetail.poolData.is_cashback;
+    }
+    throw new Error(`Cannot fetch pool account ${poolDetail.address.toBase58()}`);
+  }
+  return accountInfo.data[244] === 1;
+}
+
 async function createAxiomBuyInstructions({
   tokenMint,
   user,
@@ -102,7 +150,7 @@ async function createAxiomBuyInstructions({
   slippage = 0.1,
   poolDetail,
   tokenProgramId,
-  feeLamports = AXIOM_DEFAULT_FEE_LAMPORTS,
+  feeLamports,
 }) {
   const [tempWsol, tempWsolBump] = PublicKey.findProgramAddressSync(
     [Buffer.from("wrapped_sol_account"), user.toBuffer()],
@@ -130,47 +178,48 @@ async function createAxiomBuyInstructions({
     PUMP_AMM_PROGRAM_ID,
   );
   const userVolumeAccumulator = getUserVolumeAccumulatorPda(user);
+  const wsolUserAccumulatorAta = getAssociatedTokenAddressSync(
+    NATIVE_MINT,
+    userVolumeAccumulator,
+    true,
+    TOKEN_PROGRAM_ID,
+  );
   const quoteAmount = new BN(Math.trunc(buyAmount * LAMPORTS_PER_SOL));
-  const [baseBalance, quoteBalance] = await Promise.all([
-    connection.getTokenAccountBalance(poolBaseTokenAccount),
-    connection.getTokenAccountBalance(poolQuoteTokenAccount),
-  ]);
-  const { base, maxQuote } = await pumpAmmInternal.buyQuoteInputInternalNoPool(
-    quoteAmount,
+  const platformFeeLamports =
+    feeLamports == null
+      ? quoteAmount.mul(new BN(AXIOM_DEFAULT_FEE_BPS)).div(new BN(10000))
+      : new BN(Math.trunc(Number(feeLamports)));
+  const quoteAmountIn = quoteAmount.sub(platformFeeLamports);
+  if (quoteAmountIn.lte(new BN(0))) {
+    throw new Error(
+      `Axiom buy amount ${quoteAmount.toString()} is not enough for platform fee ${platformFeeLamports.toString()}`,
+    );
+  }
+  const quote = await getAxiomBaseAmountOut({
+    quoteAmountIn,
     slippage,
-    new BN(baseBalance.value.amount),
-    new BN(quoteBalance.value.amount),
-  );
-  const baseBufferBps = Math.max(
-    0,
-    Math.floor(Number(process.env.AXIOM_MIN_BASE_BUFFER_BPS || 100)),
-  );
-  const quoteReserve = new BN(quoteBalance.value.amount);
-  const priceImpactBps = quoteReserve.isZero()
-    ? 10000
-    : quoteAmount.mul(new BN(10000)).add(quoteReserve).subn(1).div(quoteReserve).toNumber();
-  const impactMultiplier = Math.max(
-    1,
-    Number(process.env.AXIOM_PRICE_IMPACT_BUFFER_MULTIPLIER || 3),
-  );
-  const dynamicBufferBps = Math.ceil(priceImpactBps * impactMultiplier);
-  const minBaseBufferBps = Math.min(
-    9000,
-    Math.max(baseBufferBps, dynamicBufferBps),
-  );
-  const slippageBps = Math.max(0, Math.floor(slippage * 100));
-  const minBaseBps = Math.max(0, 10000 - slippageBps - minBaseBufferBps);
-  const minBaseOut = base.mul(new BN(minBaseBps)).div(new BN(10000));
-  const maxQuoteAmountIn = maxQuote.toString();
-  const baseAmountOut = minBaseOut.toString();
+    poolDetail,
+    poolBaseTokenAccount,
+    poolQuoteTokenAccount,
+  });
+  const maxQuoteAmountIn = quoteAmountIn.toString();
+  // Match Axiom: pass a near-zero min_base_amount_out instead of the computed
+  // expected output. Protection comes from maxQuoteAmountIn (spend cap) and the
+  // jitodontfront marker, not from this floor. Never exceed the expected output.
+  const minBaseAmountOut = quote.baseAmountOut.lt(AXIOM_MIN_BASE_AMOUNT_OUT)
+    ? quote.baseAmountOut
+    : AXIOM_MIN_BASE_AMOUNT_OUT;
+  const baseAmountOut = minBaseAmountOut.toString();
   console.log("Axiom quote calc", {
     quoteAmount: quoteAmount.toString(),
-    quoteReserve: quoteReserve.toString(),
-    base: base.toString(),
-    maxQuote: maxQuote.toString(),
-    priceImpactBps,
-    minBaseBufferBps,
-    minBaseBps,
+    platformFeeLamports: platformFeeLamports.toString(),
+    quoteAmountIn: quoteAmountIn.toString(),
+    baseReserve: quote.poolBaseAmount.toString(),
+    quoteReserve: quote.poolQuoteAmount.toString(),
+    lpFeeBasisPoints: quote.lpFeeBasisPoints.toString(),
+    protocolFeeBasisPoints: quote.protocolFeeBasisPoints.toString(),
+    isCashback: quote.isCashback,
+    expectedBaseAmountOut: quote.baseAmountOut.toString(),
     baseAmountOut,
   });
 
@@ -229,6 +278,15 @@ async function createAxiomBuyInstructions({
       { pubkey: userVolumeAccumulator, isSigner: false, isWritable: true },
       { pubkey: FEE_CONFIG, isSigner: false, isWritable: false },
       { pubkey: FEE_PROGRAM, isSigner: false, isWritable: false },
+      ...(quote.isCashback
+        ? [
+            {
+              pubkey: wsolUserAccumulatorAta,
+              isSigner: false,
+              isWritable: true,
+            },
+          ]
+        : []),
       { pubkey: poolV2, isSigner: false, isWritable: false },
       { pubkey: BUYBACK_FEE_RECIPIENT, isSigner: false, isWritable: false },
       { pubkey: BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT, isSigner: false, isWritable: true },
@@ -236,19 +294,13 @@ async function createAxiomBuyInstructions({
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: tempWsol, isSigner: false, isWritable: true },
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: AXIOM_CASHBACK_RECIPIENT, isSigner: false, isWritable: true },
-      { pubkey: AXIOM_REFERRAL_RECIPIENT, isSigner: false, isWritable: true },
+      { pubkey: AXIOM_FEE_DESTINATION, isSigner: false, isWritable: true },
+      { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
     ],
     data: encodeAxiomBuyData(maxQuoteAmountIn, baseAmountOut),
-  });
-
-  const feeIx = SystemProgram.transfer({
-    fromPubkey: user,
-    toPubkey: AXIOM_FEE_DESTINATION,
-    lamports: Number(feeLamports),
   });
 
   console.log("Axiom instruction", {
@@ -261,7 +313,7 @@ async function createAxiomBuyInstructions({
   });
 
   return {
-    instructions: [createTokenAtaIx, createWsolIx, buyIx, feeIx],
+    instructions: [createTokenAtaIx, createWsolIx, buyIx],
     signers: [],
   };
 }

@@ -143,6 +143,24 @@ function bundleWritesJitoTipAccount(transactions) {
   return bundleWritesTipAccount(transactions, tipAccounts);
 }
 
+// Jito reserves accounts with these prefixes (e.g. Axiom's
+// "jitodontfront81111111TradeWithAxiomDotTrade" anti-frontrun marker). Third-party
+// relays such as QuickNode's Lil' JIT reject any transaction touching them
+// ("Transaction touching a jitonobundLe prefixed account is not permitted");
+// only Jito's own block engine understands the markers.
+const JITO_MAGIC_ACCOUNT_PREFIXES = ["jitodontfront", "jitonobundle"];
+
+function bundleTouchesJitoMagicAccount(transactions) {
+  return transactions.some((tx) =>
+    tx.message.staticAccountKeys.some((key) => {
+      const base58 = key.toBase58().toLowerCase();
+      return JITO_MAGIC_ACCOUNT_PREFIXES.some((prefix) =>
+        base58.startsWith(prefix),
+      );
+    }),
+  );
+}
+
 function bundleWritesHeliusTipAccount(transactions) {
   return bundleWritesTipAccount(transactions, heliusTipAccounts);
 }
@@ -264,9 +282,82 @@ class Jito extends Service {
     );
     return sentSignatures;
   }
+
+  // Fire every transaction at the RPC concurrently (not sequentially) so they hit
+  // the same leader in the same slot — this is how independent Axiom txns co-land
+  // in one block without a bundle. skipPreflight avoids the extra roundtrip; the
+  // caller has already simulated each tx before this point.
+  async sendTransactionsConcurrentlyByRpc(bundledTxns, signatures) {
+    signatures =
+      signatures || bundledTxns.map((tx) => getTransactionSignature(tx));
+    console.log(
+      chalk.yellow(
+        `Concurrent RPC broadcast (${bundledTxns.length} txns): ${signatures.join(", ")}`,
+      ),
+    );
+
+    const sentSignatures = await Promise.all(
+      bundledTxns.map(async (tx, i) => {
+        const signature = signatures[i] || getTransactionSignature(tx);
+        const base64Tx = Buffer.from(tx.serialize()).toString("base64");
+        try {
+          const rpcResult = await standardConnection._rpcRequest(
+            "sendTransaction",
+            [
+              base64Tx,
+              {
+                encoding: "base64",
+                skipPreflight: true,
+                maxRetries: 3,
+                preflightCommitment: "confirmed",
+              },
+            ],
+          );
+          if (rpcResult.error) {
+            throw new Error(
+              `sendTransaction RPC error: ${JSON.stringify(rpcResult.error)}`,
+            );
+          }
+          console.log(chalk.green(`RPC sent tx ${i}: ${rpcResult.result}`));
+          return rpcResult.result;
+        } catch (error) {
+          const statuses = await standardConnection.getSignatureStatuses(
+            [signature],
+            { searchTransactionHistory: true },
+          );
+          const status = statuses.value?.[0];
+          if (status && !status.err) {
+            console.log(chalk.green(`RPC tx ${i} already landed: ${signature}`));
+            return signature;
+          }
+          console.error(chalk.red(`RPC send tx ${i} failed:`), error.message);
+          throw error;
+        }
+      }),
+    );
+
+    await this.waitForBundleTransactions(
+      sentSignatures,
+      RPC_FALLBACK_CONFIRM_MS,
+    );
+    return sentSignatures;
+  }
   async sendBundle(bundledTxns) {
     if (bundledTxns.length === 1) {
       return await this.sendTransactionsByRpc(bundledTxns);
+    }
+    // Jito's magic accounts (e.g. Axiom's jitodontfront marker) explicitly opt a
+    // transaction OUT of bundling — every Jito relay (QuickNode included) rejects
+    // any bundle touching them ("jitonobundLe prefixed account is not permitted").
+    // These txns carry their own MEV tip (AXIOM_MEV_TIP_ACCOUNT), so broadcast
+    // them concurrently over normal RPC so they still co-land in the same block.
+    if (bundleTouchesJitoMagicAccount(bundledTxns)) {
+      console.log(
+        chalk.yellow(
+          "Bundle touches a Jito magic account (e.g. jitodontfront); these txns cannot be bundled — broadcasting concurrently via normal RPC.",
+        ),
+      );
+      return await this.sendTransactionsConcurrentlyByRpc(bundledTxns);
     }
     if (BUNDLE_PROVIDER === "helius_jito" || BUNDLE_PROVIDER === "helius") {
       return await this.sendBundleHeliusJito(bundledTxns);

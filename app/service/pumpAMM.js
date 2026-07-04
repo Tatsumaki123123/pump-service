@@ -66,6 +66,20 @@ const TRANSACTION_FEE = 5000;
 const MAX_TRANSACTION_SIZE = 1232;
 const DEFAULT_PROXY_PUMP_SWAP_LOOKUP_TABLE =
   "4j834PBihsChsKWF4SZCY4K9tVNHc5JFpw1vEDJgbW29";
+const AXIOM_COMPUTE_BUDGET_MARKER = new PublicKey(
+  process.env.AXIOM_COMPUTE_BUDGET_MARKER ||
+    "jitodontfront81111111TradeWithAxiomDotTrade",
+);
+const AXIOM_COMPUTE_UNIT_LIMIT = Number(
+  process.env.AXIOM_COMPUTE_UNIT_LIMIT || 275000,
+);
+const AXIOM_MEV_TIP_ACCOUNT = new PublicKey(
+  process.env.AXIOM_MEV_TIP_ACCOUNT ||
+    "DKbvWuh6NeDTAbeZ8stnMkobcZM4umbXmeAHXSzKXfsi",
+);
+const AXIOM_MEV_TIP_LAMPORTS = Number(
+  process.env.AXIOM_MEV_TIP_LAMPORTS || 100000,
+);
 
 const SLIPPAGE_BASIS_POINTS = 0.8;
 
@@ -184,8 +198,15 @@ class PumpAMM extends Service {
           } else {
             const setComputeUnitLimitIx =
               ComputeBudgetProgram.setComputeUnitLimit({
-                units: limit,
+                units: isAxiom ? AXIOM_COMPUTE_UNIT_LIMIT : limit,
               });
+            if (isAxiom) {
+              setComputeUnitLimitIx.keys.push({
+                pubkey: AXIOM_COMPUTE_BUDGET_MARKER,
+                isSigner: false,
+                isWritable: false,
+              });
+            }
 
             const setComputeUnitPriceIx =
               ComputeBudgetProgram.setComputeUnitPrice({
@@ -205,6 +226,15 @@ class PumpAMM extends Service {
               setComputeUnitPriceIx,
               ...proxyBuyIxs,
             ];
+            if (isAxiom && AXIOM_MEV_TIP_LAMPORTS > 0) {
+              volumeIxs.push(
+                SystemProgram.transfer({
+                  fromPubkey: user,
+                  toPubkey: AXIOM_MEV_TIP_ACCOUNT,
+                  lamports: AXIOM_MEV_TIP_LAMPORTS,
+                }),
+              );
+            }
 
             // 9, gmgn, trogan, jito
             if (wallet.isGmgn) {
@@ -360,6 +390,22 @@ class PumpAMM extends Service {
             }
 
             // 模拟交易
+            if (wallet.isAxiom) {
+              console.log(
+                "Axiom tx instructions",
+                volumeIxs.map((ix, index) => ({
+                  index,
+                  programId: ix.programId.toBase58(),
+                  data: Buffer.from(ix.data || []).toString("hex"),
+                  accounts: ix.keys.map((key) => ({
+                    pubkey: key.pubkey.toBase58(),
+                    signer: key.isSigner,
+                    writable: key.isWritable,
+                  })),
+                })),
+              );
+            }
+
             const simulationResult = await connection.simulateTransaction(tx, {
               commitment: "confirmed",
             });
