@@ -78,8 +78,12 @@ const AXIOM_MEV_TIP_ACCOUNT = new PublicKey(
     "DKbvWuh6NeDTAbeZ8stnMkobcZM4umbXmeAHXSzKXfsi",
 );
 const AXIOM_MEV_TIP_LAMPORTS = Number(
-  process.env.AXIOM_MEV_TIP_LAMPORTS || 100000,
+  process.env.AXIOM_MEV_TIP_LAMPORTS || 0,
 );
+// When true, drop the jitodontfront marker so Axiom txns can go through a Jito
+// bundle (co-land atomically) at the cost of losing anti-frontrun protection.
+// When false (default), keep the marker �?anti-frontrun + concurrent RPC send.
+const AXIOM_BUNDLE_MODE = process.env.AXIOM_BUNDLE_MODE === "true";
 
 const SLIPPAGE_BASIS_POINTS = 0.8;
 
@@ -200,7 +204,7 @@ class PumpAMM extends Service {
               ComputeBudgetProgram.setComputeUnitLimit({
                 units: isAxiom ? AXIOM_COMPUTE_UNIT_LIMIT : limit,
               });
-            if (isAxiom) {
+            if (isAxiom && !AXIOM_BUNDLE_MODE) {
               setComputeUnitLimitIx.keys.push({
                 pubkey: AXIOM_COMPUTE_BUDGET_MARKER,
                 isSigner: false,
@@ -773,7 +777,7 @@ class PumpAMM extends Service {
       tokenMint,
       tokenProgramId || TOKEN_PROGRAM_ID,
     );
-    // 指令 5: 转账 SOL �?wSOL ATA
+    // 指令 5: 转账 SOL �?wSOL ATA
     const transferLamportsWSOLIx = SystemProgram.transfer({
       fromPubkey: user,
       toPubkey: wSolATA,

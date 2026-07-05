@@ -33,9 +33,12 @@ const AXIOM_PROGRAM_ID = new PublicKey(
 const AXIOM_CREATE_DATA_SUFFIX = 0xff;
 const AXIOM_BUY_DATA_SUFFIX = Buffer.from("00021f003200", "hex");
 const AXIOM_FEE_DESTINATION = new PublicKey(
-  process.env.AXIOM_FEE_DESTINATION || "4FobGn5ZWYquoJkxMzh2VUAWvV36xMgxQ3M7uG1pGGhd",
+  process.env.AXIOM_FEE_DESTINATION ||
+    "4FobGn5ZWYquoJkxMzh2VUAWvV36xMgxQ3M7uG1pGGhd",
 );
-const AXIOM_DEFAULT_FEE_BPS = Number(process.env.AXIOM_PLATFORM_FEE_BPS || 100);
+const AXIOM_DEFAULT_FEE_LAMPORTS = Number(
+  process.env.AXIOM_PLATFORM_FEE_LAMPORTS || 0,
+);
 const AXIOM_ACCOUNT_2 = new PublicKey(
   process.env.AXIOM_ACCOUNT_2 || "4FobGn5ZWYquoJkxMzh2VUAWvV36xMgxQ3M7uG1pGGhd",
 );
@@ -46,7 +49,8 @@ const AXIOM_ACCOUNT_7 = new PublicKey(
   process.env.AXIOM_ACCOUNT_7 || "3vSKL1NnVM8P9bg3vkXMDpQ8m6JgL6hV7c4p4AJrWdVy",
 );
 const AXIOM_POOL_AUTHORITY = new PublicKey(
-  process.env.AXIOM_POOL_AUTHORITY || "CoPK3EXuHC2hXPgqVW9CvF83kmzQ7YeHMZqELoFPfXFE",
+  process.env.AXIOM_POOL_AUTHORITY ||
+    "CoPK3EXuHC2hXPgqVW9CvF83kmzQ7YeHMZqELoFPfXFE",
 );
 const GLOBAL_CONFIG = new PublicKey(
   "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
@@ -54,19 +58,27 @@ const GLOBAL_CONFIG = new PublicKey(
 const EVENT_AUTHORITY = new PublicKey(
   "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
 );
-const FEE_CONFIG = new PublicKey("5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx");
-const FEE_PROGRAM = new PublicKey("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
+const FEE_CONFIG = new PublicKey(
+  "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx",
+);
+const FEE_PROGRAM = new PublicKey(
+  "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+);
 const BUYBACK_FEE_RECIPIENT = new PublicKey(
-  process.env.AXIOM_BUYBACK_FEE_RECIPIENT || "5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6",
+  process.env.AXIOM_BUYBACK_FEE_RECIPIENT ||
+    "5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6",
 );
 const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
-  process.env.AXIOM_BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT || "GYH1Gae1wJytMSvMvw8JVcv7nuAbxi8i9erNVbERnzXd",
+  process.env.AXIOM_BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT ||
+    "GYH1Gae1wJytMSvMvw8JVcv7nuAbxi8i9erNVbERnzXd",
 );
 const PROTOCOL_FEE_RECIPIENT = new PublicKey(
-  process.env.AXIOM_PROTOCOL_FEE_RECIPIENT || "JCRGumoE9Qi5BBgULTgdgTLjSgkCMSbF62ZZfGs84JeU",
+  process.env.AXIOM_PROTOCOL_FEE_RECIPIENT ||
+    "JCRGumoE9Qi5BBgULTgdgTLjSgkCMSbF62ZZfGs84JeU",
 );
 const PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
-  process.env.AXIOM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT || "DWpvfqzGWuVy9jVSKSShdM2733nrEsnnhsUStYbkj6Nn",
+  process.env.AXIOM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT ||
+    "DWpvfqzGWuVy9jVSKSShdM2733nrEsnnhsUStYbkj6Nn",
 );
 const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey(
   "C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw",
@@ -105,12 +117,13 @@ async function getAxiomBaseAmountOut({
   poolBaseTokenAccount,
   poolQuoteTokenAccount,
 }) {
-  const [baseBalance, quoteBalance, globalConfig, isCashback] = await Promise.all([
-    connection.getTokenAccountBalance(poolBaseTokenAccount),
-    connection.getTokenAccountBalance(poolQuoteTokenAccount),
-    pumpAmmProgram.account.globalConfig.fetch(GLOBAL_CONFIG),
-    getPoolCashbackFlag(poolDetail),
-  ]);
+  const [baseBalance, quoteBalance, globalConfig, isCashback] =
+    await Promise.all([
+      connection.getTokenAccountBalance(poolBaseTokenAccount),
+      connection.getTokenAccountBalance(poolQuoteTokenAccount),
+      pumpAmmProgram.account.globalConfig.fetch(GLOBAL_CONFIG),
+      getPoolCashbackFlag(poolDetail),
+    ]);
   const poolBaseAmount = new BN(baseBalance.value.amount);
   const poolQuoteAmount = new BN(quoteBalance.value.amount);
   const quote = new BN(quoteAmountIn);
@@ -138,7 +151,9 @@ async function getPoolCashbackFlag(poolDetail) {
     if (typeof poolDetail.poolData.is_cashback === "boolean") {
       return poolDetail.poolData.is_cashback;
     }
-    throw new Error(`Cannot fetch pool account ${poolDetail.address.toBase58()}`);
+    throw new Error(
+      `Cannot fetch pool account ${poolDetail.address.toBase58()}`,
+    );
   }
   return accountInfo.data[244] === 1;
 }
@@ -187,7 +202,7 @@ async function createAxiomBuyInstructions({
   const quoteAmount = new BN(Math.trunc(buyAmount * LAMPORTS_PER_SOL));
   const platformFeeLamports =
     feeLamports == null
-      ? quoteAmount.mul(new BN(AXIOM_DEFAULT_FEE_BPS)).div(new BN(10000))
+      ? new BN(Math.trunc(AXIOM_DEFAULT_FEE_LAMPORTS))
       : new BN(Math.trunc(Number(feeLamports)));
   const quoteAmountIn = quoteAmount.sub(platformFeeLamports);
   if (quoteAmountIn.lte(new BN(0))) {
@@ -265,11 +280,19 @@ async function createAxiomBuyInstructions({
       { pubkey: poolBaseTokenAccount, isSigner: false, isWritable: true },
       { pubkey: poolQuoteTokenAccount, isSigner: false, isWritable: true },
       { pubkey: PROTOCOL_FEE_RECIPIENT, isSigner: false, isWritable: false },
-      { pubkey: PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT, isSigner: false, isWritable: true },
+      {
+        pubkey: PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT,
+        isSigner: false,
+        isWritable: true,
+      },
       { pubkey: tokenProgramId, isSigner: false, isWritable: false },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      {
+        pubkey: ASSOCIATED_TOKEN_PROGRAM_ID,
+        isSigner: false,
+        isWritable: false,
+      },
       { pubkey: EVENT_AUTHORITY, isSigner: false, isWritable: false },
       { pubkey: PUMP_AMM_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: coinCreatorVaultAta, isSigner: false, isWritable: true },
@@ -289,7 +312,11 @@ async function createAxiomBuyInstructions({
         : []),
       { pubkey: poolV2, isSigner: false, isWritable: false },
       { pubkey: BUYBACK_FEE_RECIPIENT, isSigner: false, isWritable: false },
-      { pubkey: BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT, isSigner: false, isWritable: true },
+      {
+        pubkey: BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT,
+        isSigner: false,
+        isWritable: true,
+      },
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: tempWsol, isSigner: false, isWritable: true },

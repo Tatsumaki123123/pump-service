@@ -24,20 +24,11 @@ const TROGAN_JITODONTFRONT = new PublicKey(
 const TROGAN_DISCRIMINATOR_HEX =
   process.env.TROGAN_DISCRIMINATOR_HEX || "4d4df51d1cf91bee";
 const TROGAN_PARAM_LAMPORTS = BigInt(
-  process.env.TROGAN_PARAM_LAMPORTS || "500000"
+  process.env.TROGAN_PARAM_LAMPORTS || "100000"
 );
 
-const JITO_BUNDLE_PROVIDERS = new Set(["quicknode", "jito", "helius", "helius_jito"]);
 
 const createTroProxyInstruction = (payer, _jipAcc, amount = 0.0001) => {
-  const bundleProvider = (process.env.BUNDLE_PROVIDER || "quicknode").toLowerCase();
-  if (JITO_BUNDLE_PROVIDERS.has(bundleProvider)) {
-    console.log(
-      `Skip Trojan instruction for ${bundleProvider} bundle because jitonobundle/jitodontfront accounts are not permitted.`,
-    );
-    return null;
-  }
-
   const accounts = [
     {
       pubkey: payer, // Account #1
