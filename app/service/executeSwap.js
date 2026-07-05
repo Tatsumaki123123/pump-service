@@ -37,6 +37,7 @@ const PUMP_FUN_NAME = "pump";
 
 const RAYDIUM_CPMM_NAME = "raydiumcpmm";
 const RAYDIUM_LANUCH_NAME = "raydiumlaunchlab";
+const AFTER_WALLET_DELAY_MS = Number(process.env.AFTER_WALLET_DELAY_MS || 0);
 
 class ExecuteSwap extends Service {
   constructor(props) {
@@ -308,7 +309,7 @@ class ExecuteSwap extends Service {
     }
   }
 
-  async dispatchBatchBuyToken(amm, token, wallets, type) {
+  async dispatchBatchBuyToken(amm, token, wallets, type, sendOptions = {}) {
     const { ctx } = this;
     if (!wallets || wallets.length === 0) {
       return true;
@@ -319,7 +320,12 @@ class ExecuteSwap extends Service {
     } else if (amm === RAYDIUM_LANUCH_NAME) {
       await ctx.service.raydiumLaunch.batchBuyToken(token, wallets, type);
     } else if (amm === PUMP_AMM_NAME) {
-      await ctx.service.pumpAMM.batchBuyToken(token, wallets, type);
+      await ctx.service.pumpAMM.batchBuyToken(
+        token,
+        wallets,
+        type,
+        sendOptions,
+      );
     } else if (amm === PUMP_FUN_NAME) {
       await ctx.service.pumpfun.batchBuyToken(token, wallets, type);
     } else {
@@ -340,11 +346,55 @@ class ExecuteSwap extends Service {
     return wallet.isFirstWallet && wallet.isBundle === false;
   }
 
-  async dispatchStandaloneWallets(amm, token, wallets, type) {
-    for (const wallet of wallets) {
-      await this.dispatchBatchBuyToken(amm, token, [wallet], type);
-      await sleep(0.5);
+  async waitForNextSlot(label = "after wallet") {
+    const startSlot = await connection.getSlot("processed");
+    let currentSlot = startSlot;
+    while (currentSlot <= startSlot) {
+      await sleep(0.05);
+      currentSlot = await connection.getSlot("processed");
     }
+    console.log(chalk.green(`${label}: slot ${startSlot} -> ${currentSlot}`));
+    return currentSlot;
+  }
+
+  async dispatchStandaloneWallets(amm, token, wallets, type, sendOptions = {}) {
+    for (const wallet of wallets) {
+      await this.dispatchBatchBuyToken(amm, token, [wallet], type, sendOptions);
+      if (sendOptions.sleepAfter !== false) {
+        await sleep(0.5);
+      }
+    }
+  }
+
+  async dispatchAfterWalletsNextSlot(
+    amm,
+    token,
+    bundledWallets,
+    afterWallets,
+    type,
+  ) {
+    const hasAfterWallets = afterWallets.length > 0;
+    await this.dispatchBatchBuyToken(amm, token, bundledWallets, type, {
+      waitForAnyLanding: hasAfterWallets,
+      waitForLanding: true,
+    });
+    if (
+      hasAfterWallets &&
+      bundledWallets.length > 0 &&
+      AFTER_WALLET_DELAY_MS > 0
+    ) {
+      console.log(
+        chalk.green(
+          `${type} after wallet: delay ${AFTER_WALLET_DELAY_MS}ms after first main tx landed`,
+        ),
+      );
+      await sleep(AFTER_WALLET_DELAY_MS / 1000);
+    }
+    await this.dispatchStandaloneWallets(amm, token, afterWallets, type, {
+      skipPreflight: true,
+      sleepAfter: false,
+      waitForLanding: false,
+    });
   }
 
   async batchBuyTokenByAmm(amm, token, wallets, type) {
@@ -367,8 +417,13 @@ class ExecuteSwap extends Service {
       );
 
       await this.dispatchStandaloneWallets(amm, token, beforeWallets, type);
-      await this.dispatchBatchBuyToken(amm, token, bundledWallets, type);
-      await this.dispatchStandaloneWallets(amm, token, afterWallets, type);
+      await this.dispatchAfterWalletsNextSlot(
+        amm,
+        token,
+        bundledWallets,
+        afterWallets,
+        type,
+      );
       return true;
     }
 
@@ -395,15 +450,24 @@ class ExecuteSwap extends Service {
           wallet.position === "after",
       );
 
-      await this.dispatchStandaloneWallets(amm, token, beforeWallets, stageType);
-      await this.dispatchBatchBuyToken(amm, token, bundledWallets, stageType);
-      await this.dispatchStandaloneWallets(amm, token, afterWallets, stageType);
+      await this.dispatchStandaloneWallets(
+        amm,
+        token,
+        beforeWallets,
+        stageType,
+      );
+      await this.dispatchAfterWalletsNextSlot(
+        amm,
+        token,
+        bundledWallets,
+        afterWallets,
+        stageType,
+      );
       await sleep(0.5);
     }
 
     return true;
   }
-
   async buyTokenArr(tid, types) {
     for (const type of types) {
       await this.buyToken(tid, type);
@@ -951,7 +1015,7 @@ class ExecuteSwap extends Service {
       },
       {
         address: "8qvNUZf5p4Q15WNc64xZ5cLrLZU1ZDecKVpSDBkU3vbz",
-        name: "L1最慢",
+        name: "L1 slow",
       },
       {
         address: "8J5GUAf7hr3LTPHJSkwrKFDNJPtAXtLHhnNHq6XxTLrW",
@@ -1066,3 +1130,6 @@ class ExecuteSwap extends Service {
 }
 
 module.exports = ExecuteSwap;
+
+
+

@@ -50,6 +50,7 @@ const QUICKNODE_PARAM_STYLE = (
   process.env.QUICKNODE_PARAM_STYLE || "both"
 ).toLowerCase();
 const QUICKNODE_WAIT_MS = Number(process.env.QUICKNODE_WAIT_MS || 30000);
+const BUNDLE_STATUS_POLL_MS = Number(process.env.BUNDLE_STATUS_POLL_MS || 50);
 const quickNodeConnection = QUICKNODE_RPC_URL
   ? new Connection(QUICKNODE_RPC_URL, "confirmed")
   : connection;
@@ -74,7 +75,7 @@ const NEXTBLOCK_ENDPOINTS = (
   .map((endpoint) => endpoint.trim())
   .filter(Boolean);
 
-// Jito Block Engine REST 端点（多地区�?
+// Jito Block Engine REST 端点（多地区�?
 const JITO_BUNDLE_ENDPOINTS = [
   "https://mainnet.block-engine.jito.wtf/api/v1/bundles",
   "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles",
@@ -187,13 +188,78 @@ function getTransactionSignature(transaction) {
 }
 
 class Jito extends Service {
-  async waitForBundleTransactions(signatures, timeoutMs = 30000) {
+  async waitForAnySignatureProcessed(signatures, timeoutMs, statusConnections) {
+    return await new Promise((resolve, reject) => {
+      let settled = false;
+      const listenerIds = [];
+      const cleanup = () => {
+        clearTimeout(timer);
+        listenerIds.forEach(({ conn, listenerId }) => {
+          Promise.resolve(conn.removeSignatureListener(listenerId)).catch(() => {});
+        });
+      };
+      const finish = (error, value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve(value);
+      };
+      const timer = setTimeout(
+        () => finish(new Error(`Signature websocket timed out: ${signatures.join(", ")}`)),
+        timeoutMs,
+      );
+
+      for (const conn of statusConnections) {
+        for (const signature of signatures) {
+          try {
+            const listenerId = conn.onSignature(
+              signature,
+              (result, context) => {
+                if (result?.err) {
+                  finish(
+                    new Error(`Bundle transaction failed: ${JSON.stringify(result.err)}`),
+                  );
+                  return;
+                }
+                console.log(
+                  chalk.green(
+                    `Bundle first processed: ${signature} slot ${context?.slot || ""}`,
+                  ),
+                );
+                finish(null, [{ signature, context, confirmationStatus: "processed" }]);
+              },
+              "processed",
+            );
+            listenerIds.push({ conn, listenerId });
+          } catch (error) {
+            console.log(
+              chalk.yellow(
+                `Failed to subscribe signature ${signature}: ${error.message}`,
+              ),
+            );
+          }
+        }
+      }
+
+      if (listenerIds.length === 0) {
+        finish(new Error("No signature websocket listeners registered"));
+      }
+    });
+  }
+
+  async pollBundleTransactions(signatures, timeoutMs, options, statusConnections) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const statuses = await connection.getSignatureStatuses(signatures, {
-        searchTransactionHistory: true,
-      });
-      const values = statuses.value || [];
+      const results = await Promise.allSettled(
+        statusConnections.map((conn) =>
+          conn.getSignatureStatuses(signatures, { searchTransactionHistory: true }),
+        ),
+      );
+      const valuesByRpc = results
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => result.value?.value || []);
+      const values = valuesByRpc.flat();
       const landed = values.filter(Boolean);
       const failed = landed.find((status) => status.err);
       if (failed) {
@@ -201,16 +267,51 @@ class Jito extends Service {
           `Bundle transaction failed: ${JSON.stringify(failed.err)}`,
         );
       }
-      if (landed.length === signatures.length) {
-        console.log(chalk.green(`Bundle landed: ${signatures.join(", ")}`));
+      if (landed.length > 0 && options.any === true) {
+        console.log(chalk.green(`Bundle first landed: ${signatures.join(", ")}`));
         return values;
       }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const completeValues = valuesByRpc.find(
+        (rpcValues) => rpcValues.filter(Boolean).length === signatures.length,
+      );
+      if (completeValues) {
+        console.log(chalk.green(`Bundle landed: ${signatures.join(", ")}`));
+        return completeValues;
+      }
+      await new Promise((resolve) => setTimeout(resolve, BUNDLE_STATUS_POLL_MS));
     }
 
     throw new Error(
       `Bundle accepted but not landed within ${timeoutMs}ms: ${signatures.join(", ")}`,
     );
+  }
+
+  async waitForBundleTransactions(signatures, timeoutMs = 30000, options = {}) {
+    const statusConnections = [
+      connection,
+      standardConnection,
+      quickNodeConnection,
+    ].filter((item, index, arr) => item && arr.indexOf(item) === index);
+    const pollPromise = this.pollBundleTransactions(
+      signatures,
+      timeoutMs,
+      options,
+      statusConnections,
+    );
+
+    if (options.any === true && options.useWebsocket !== false) {
+      const websocketPromise = this.waitForAnySignatureProcessed(
+        signatures,
+        timeoutMs,
+        statusConnections,
+      ).catch((error) => {
+        console.log(chalk.yellow(error.message));
+        return new Promise(() => {});
+      });
+      return await Promise.race([websocketPromise, pollPromise]);
+    }
+
+    return await pollPromise;
   }
 
   isBundleNotLandedError(error) {
@@ -219,7 +320,7 @@ class Jito extends Service {
     );
   }
 
-  async sendTransactionsByRpc(bundledTxns, signatures) {
+  async sendTransactionsByRpc(bundledTxns, signatures, options = {}) {
     signatures = signatures || bundledTxns.map((tx) => getTransactionSignature(tx));
     console.log(
       chalk.yellow(
@@ -246,7 +347,7 @@ class Jito extends Service {
             base64Tx,
             {
               encoding: "base64",
-              skipPreflight: false,
+              skipPreflight: options.skipPreflight === true,
               maxRetries: 3,
               preflightCommitment: "confirmed",
             },
@@ -276,18 +377,20 @@ class Jito extends Service {
       }
     }
 
-    await this.waitForBundleTransactions(
-      sentSignatures,
-      RPC_FALLBACK_CONFIRM_MS,
-    );
+    if (options.waitForLanding !== false) {
+      await this.waitForBundleTransactions(
+        sentSignatures,
+        RPC_FALLBACK_CONFIRM_MS,
+      );
+    }
     return sentSignatures;
   }
 
   // Fire every transaction at the RPC concurrently (not sequentially) so they hit
-  // the same leader in the same slot — this is how independent Axiom txns co-land
+  // the same leader in the same slot �?this is how independent Axiom txns co-land
   // in one block without a bundle. skipPreflight avoids the extra roundtrip; the
   // caller has already simulated each tx before this point.
-  async sendTransactionsConcurrentlyByRpc(bundledTxns, signatures) {
+  async sendTransactionsConcurrentlyByRpc(bundledTxns, signatures, options = {}) {
     signatures =
       signatures || bundledTxns.map((tx) => getTransactionSignature(tx));
     console.log(
@@ -336,42 +439,44 @@ class Jito extends Service {
       }),
     );
 
-    await this.waitForBundleTransactions(
-      sentSignatures,
-      RPC_FALLBACK_CONFIRM_MS,
-    );
+    if (options.waitForLanding !== false) {
+      await this.waitForBundleTransactions(
+        sentSignatures,
+        RPC_FALLBACK_CONFIRM_MS,
+      );
+    }
     return sentSignatures;
   }
-  async sendBundle(bundledTxns) {
+  async sendBundle(bundledTxns, options = {}) {
     if (bundledTxns.length === 1) {
-      return await this.sendTransactionsByRpc(bundledTxns);
+      return await this.sendTransactionsByRpc(bundledTxns, undefined, options);
     }
     // Jito's magic accounts (e.g. Axiom's jitodontfront marker) explicitly opt a
-    // transaction OUT of bundling — every Jito relay (QuickNode included) rejects
+    // transaction OUT of bundling �?every Jito relay (QuickNode included) rejects
     // any bundle touching them ("jitonobundLe prefixed account is not permitted").
     // These txns carry their own MEV tip (AXIOM_MEV_TIP_ACCOUNT), so broadcast
     // them concurrently over normal RPC so they still co-land in the same block.
     if (bundleTouchesJitoMagicAccount(bundledTxns)) {
       console.log(
         chalk.yellow(
-          "Bundle touches a Jito magic account (e.g. jitodontfront); these txns cannot be bundled — broadcasting concurrently via normal RPC.",
+          "Bundle touches a Jito magic account (e.g. jitodontfront); these txns cannot be bundled �?broadcasting concurrently via normal RPC.",
         ),
       );
-      return await this.sendTransactionsConcurrentlyByRpc(bundledTxns);
+      return await this.sendTransactionsConcurrentlyByRpc(bundledTxns, undefined, options);
     }
     if (BUNDLE_PROVIDER === "helius_jito" || BUNDLE_PROVIDER === "helius") {
-      return await this.sendBundleHeliusJito(bundledTxns);
+      return await this.sendBundleHeliusJito(bundledTxns, options);
     }
     if (BUNDLE_PROVIDER === "jito") {
-      return await this.sendBundleJito(bundledTxns);
+      return await this.sendBundleJito(bundledTxns, options);
     }
     if (BUNDLE_PROVIDER === "quicknode") {
-      return await this.setQuickNodeBundle(bundledTxns);
+      return await this.setQuickNodeBundle(bundledTxns, options);
     }
-    return await this.sendBundleNextBlock(bundledTxns);
+    return await this.sendBundleNextBlock(bundledTxns, options);
   }
 
-  async waitForHeliusBundle(bundleId, signatures, timeoutMs = 30000) {
+  async waitForHeliusBundle(bundleId, signatures, timeoutMs = 30000, options = {}) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const resp = await fetch(HELIUS_ENDPOINT, {
@@ -420,6 +525,10 @@ class Jito extends Service {
           `Helius bundle transaction failed: ${JSON.stringify(failed.err)}`,
         );
       }
+      if (landed.length > 0 && options.any === true) {
+        console.log(chalk.green(`Bundle first landed: ${signatures.join(", ")}`));
+        return values;
+      }
       if (landed.length === signatures.length) {
         console.log(
           chalk.green(`Helius bundle landed: ${signatures.join(", ")}`),
@@ -427,7 +536,7 @@ class Jito extends Service {
         return values;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, BUNDLE_STATUS_POLL_MS));
     }
 
     throw new Error(
@@ -451,7 +560,7 @@ class Jito extends Service {
           "Helius Jito is not available for this plan; fallback to Jito Block Engine bundle.",
         ),
       );
-      return await this.sendBundleJito(bundledTxns);
+      return await this.sendBundleJito(bundledTxns, options);
     }
     if (HELIUS_JITO_FALLBACK_PROVIDER === "nextblock") {
       throw new Error(
@@ -462,7 +571,7 @@ class Jito extends Service {
       `Helius Jito is not available for this plan and fallback is disabled: ${HELIUS_JITO_FALLBACK_PROVIDER}`,
     );
   }
-  async sendBundleHeliusJito(bundledTxns) {
+  async sendBundleHeliusJito(bundledTxns, options = {}) {
     try {
       if (bundledTxns.length > 5) {
         throw new Error(
@@ -565,9 +674,9 @@ class Jito extends Service {
   }
 
   /**
-   * 使用 Jito Block Engine REST API 发�?bundle（最便宜，min tip ~1000 lamports�?
+   * 使用 Jito Block Engine REST API 发�?bundle（最便宜，min tip ~1000 lamports�?
    */
-  async sendBundleJito(bundledTxns) {
+  async sendBundleJito(bundledTxns, options = {}) {
     try {
       if (bundledTxns.length > 5) {
         throw new Error(
@@ -636,11 +745,11 @@ class Jito extends Service {
     }
   }
 
-  async sendTransaction(tx) {
-    return await this.sendTransactionsByRpc([tx]);
+  async sendTransaction(tx, options = {}) {
+    return await this.sendTransactionsByRpc([tx], undefined, options);
   }
 
-  async setQuickNodeBundle(bundledTxns) {
+  async setQuickNodeBundle(bundledTxns, options = {}) {
     console.log(chalk.green("Send bundle quick node"));
     if (bundledTxns.length > 5) {
       throw new Error(
@@ -716,7 +825,7 @@ class Jito extends Service {
               "QuickNode could not decode transaction with any known parameter style; falling back to normal RPC broadcast.",
             ),
           );
-          return await this.sendTransactionsByRpc(bundledTxns, signatures);
+          return await this.sendTransactionsByRpc(bundledTxns, signatures, options);
         }
         throw error;
       }
@@ -741,7 +850,7 @@ class Jito extends Service {
           "QuickNode could not decode transaction with any known parameter style; falling back to normal RPC broadcast.",
         ),
       );
-      return await this.sendTransactionsByRpc(bundledTxns, signatures);
+      return await this.sendTransactionsByRpc(bundledTxns, signatures, options);
     }
 
     if (result.error) {
@@ -756,16 +865,20 @@ class Jito extends Service {
       throw new Error(`QuickNode sendBundle missing bundle id: ${JSON.stringify(result)}`);
     }
     console.log(chalk.green(`QuickNode bundle accepted, id: ${bundleId}`));
-    await this.waitForBundleTransactions(signatures, QUICKNODE_WAIT_MS);
+    if (options.waitForLanding !== false) {
+      await this.waitForBundleTransactions(signatures, QUICKNODE_WAIT_MS, {
+        any: options.waitForAnyLanding === true,
+      });
+    }
     return bundleId;
   }
 
   /**
-   * 使用 NextBlock API 发�?bundle，兼容官方文档格�?
+   * 使用 NextBlock API 发�?bundle，兼容官方文档格�?
    * @param {Array<Transaction|VersionedTransaction>} bundledTxns
    * @returns {Promise<string>} bundleId
    */
-  async sendBundleNextBlock(bundledTxns) {
+  async sendBundleNextBlock(bundledTxns, options = {}) {
     try {
       const apiKey =
         process.env.NEXTBLOCK_API_KEY ||
@@ -953,3 +1066,9 @@ class Jito extends Service {
   }
 }
 module.exports = Jito;
+
+
+
+
+
+

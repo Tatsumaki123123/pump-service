@@ -154,7 +154,7 @@ class PumpAMM extends Service {
    * @param {*} token
    * @param {*} wallets [{keypair: keypair, amount: 0.1}]
    */
-  async batchBuyToken(token, wallets, type = "") {
+  async batchBuyToken(token, wallets, type = "", sendOptions = {}) {
     const { ctx } = this;
     console.log(chalk.green("\npump amm batchBuyToken----", wallets.length));
 
@@ -456,12 +456,13 @@ class PumpAMM extends Service {
         }
         // return;
         if (buyTxns.length > 1) {
-          const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
+          const bundleResult = await ctx.service.jito.sendBundle(buyTxns, sendOptions);
           console.log(bundleResult);
           console.log(chalk.green("Buy transactions completed."));
         } else if (buyTxns.length === 1) {
           const bundleResult = await ctx.service.jito.sendTransaction(
             buyTxns[0],
+            sendOptions,
           );
           console.log(bundleResult);
           console.log(chalk.green("Buy transactions completed."));
