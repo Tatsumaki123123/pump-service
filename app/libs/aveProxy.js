@@ -502,18 +502,19 @@ class AvePumpSwapSDK {
         isWritable: item.writable,
       }));
 
-    if (poolDetail.poolData.is_cashback) {
-      accounts.splice(accounts.length - 2, 0, {
-        pubkey: getAssociatedTokenAddressSync(
-          WSOL_TOKEN_ACCOUNT,
-          userVolumeAccumulator,
-          true,
-          TOKEN_PROGRAM_ID,
-        ),
-        isSigner: false,
-        isWritable: true,
-      });
-    }
+    // AVE RouteSwap 转发给 pump AMM 的账户数是固定的（21 个），
+    // user_volume_accumulator 的 WSOL ATA 这一槽位必须始终存在，
+    // 与 pool 是否 cashback 无关（原来的 is_cashback 条件会漏插并触发错误 6022）。
+    accounts.splice(accounts.length - 2, 0, {
+      pubkey: getAssociatedTokenAddressSync(
+        WSOL_TOKEN_ACCOUNT,
+        userVolumeAccumulator,
+        true,
+        TOKEN_PROGRAM_ID,
+      ),
+      isSigner: false,
+      isWritable: true,
+    });
 
     return accounts;
   }
