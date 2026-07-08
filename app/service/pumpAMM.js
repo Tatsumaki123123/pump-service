@@ -82,7 +82,7 @@ const AXIOM_MEV_TIP_LAMPORTS = Number(
 );
 // When true, drop the jitodontfront marker so Axiom txns can go through a Jito
 // bundle (co-land atomically) at the cost of losing anti-frontrun protection.
-// When false (default), keep the marker �?anti-frontrun + concurrent RPC send.
+// When false (default), keep the marker �?anti-frontrun + concurrent RPC send.
 const AXIOM_BUNDLE_MODE = process.env.AXIOM_BUNDLE_MODE === "true";
 
 const SLIPPAGE_BASIS_POINTS = 0.8;
@@ -476,7 +476,19 @@ class PumpAMM extends Service {
           secondBuy: [],
           thirdBuy: [],
         };
+        // 分离 firstWallet 和其他钱包
+        const firstWallets = [];
+        const regularWallets = [];
+
         wallets.forEach((wallet) => {
+          if (wallet.isFirstWallet) {
+            firstWallets.push(wallet);
+          } else {
+            regularWallets.push(wallet);
+          }
+        });
+
+        regularWallets.forEach((wallet) => {
           if (wallet.firstBuy) {
             buyAllObj.firstBuy.push(wallet);
           } else if (wallet.secondBuy) {
@@ -488,12 +500,21 @@ class PumpAMM extends Service {
           }
         });
 
+        // 执行普通钱包，各阶段之间无延迟
         for (const wallets of Object.values(buyAllObj)) {
           if (wallets.length > 0) {
             await func(wallets);
-            await sleep(0.5);
           }
         }
+
+        // 如果有 firstWallet，等待 1 个 slot 时间后执行
+        if (firstWallets.length > 0) {
+          await sleep(0.4); // Solana slot 时间约 400ms，等待恰好 1 个 block
+          for (const wallet of firstWallets) {
+            await func([wallet]);
+          }
+        }
+
         return true;
       } else {
         return func(wallets);
@@ -778,7 +799,7 @@ class PumpAMM extends Service {
       tokenMint,
       tokenProgramId || TOKEN_PROGRAM_ID,
     );
-    // 指令 5: 转账 SOL �?wSOL ATA
+    // 指令 5: 转账 SOL �?wSOL ATA
     const transferLamportsWSOLIx = SystemProgram.transfer({
       fromPubkey: user,
       toPubkey: wSolATA,
