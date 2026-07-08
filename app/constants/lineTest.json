@@ -1,4 +1,4 @@
-[
+﻿[
   {
     "transferAmount": 2,
     "buyAmount": [1.48],
@@ -17,7 +17,7 @@
     "firstBuy": false,
     "multiBuy": true,
     "isGmgn": true,
-    "isProxyBuy2": true
+    "isAve": true
   },
   {
     "transferAmount": 0.5,
@@ -31,3 +31,4 @@
     "isProxy2": true
   }
 ]
+

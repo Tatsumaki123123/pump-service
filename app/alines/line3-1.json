@@ -1,4 +1,4 @@
-[
+﻿[
   {
     "transferAmount": 1,
     "buyAmount": [0.7],
@@ -7,7 +7,7 @@
     "fee": 0.000001,
     "firstBuy": true,
     "secondBuy": false,
-    "isProxyBuy": true
+    "isAve": true
   },
   {
     "transferAmount": 1,
@@ -75,3 +75,4 @@
     "isTrogan": true
   }
 ]
+

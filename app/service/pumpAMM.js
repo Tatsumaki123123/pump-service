@@ -1,4 +1,4 @@
-const { Service } = require("egg");
+﻿const { Service } = require("egg");
 const {
   Connection,
   Keypair,
@@ -34,7 +34,7 @@ const {
   BLOCK_RAZOR_1,
 } = require("../constants");
 const PumpSwapSDK = require("../libs/pumpSwap");
-const ProxyPumpSwapSDK = require("../libs/proxyPumpSwap");
+const AvePumpSwapSDK = require("../libs/aveProxy");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
 const { createAxiomBuyInstructions } = require("../libs/axiom");
@@ -73,6 +73,9 @@ const AXIOM_COMPUTE_BUDGET_MARKER = new PublicKey(
 const AXIOM_COMPUTE_UNIT_LIMIT = Number(
   process.env.AXIOM_COMPUTE_UNIT_LIMIT || 275000,
 );
+const AVE_COMPUTE_UNIT_LIMIT = Number(
+  process.env.AVE_COMPUTE_UNIT_LIMIT || 500000,
+);
 const AXIOM_MEV_TIP_ACCOUNT = new PublicKey(
   process.env.AXIOM_MEV_TIP_ACCOUNT ||
     "DKbvWuh6NeDTAbeZ8stnMkobcZM4umbXmeAHXSzKXfsi",
@@ -82,13 +85,13 @@ const AXIOM_MEV_TIP_LAMPORTS = Number(
 );
 // When true, drop the jitodontfront marker so Axiom txns can go through a Jito
 // bundle (co-land atomically) at the cost of losing anti-frontrun protection.
-// When false (default), keep the marker �?anti-frontrun + concurrent RPC send.
+// When false (default), keep the marker 锟?anti-frontrun + concurrent RPC send.
 const AXIOM_BUNDLE_MODE = process.env.AXIOM_BUNDLE_MODE === "true";
 
 const SLIPPAGE_BASIS_POINTS = 0.8;
 
 const pSwap = new PumpSwapSDK();
-const proxyPumpSwap = new ProxyPumpSwapSDK();
+const avePumpSwap = new AvePumpSwapSDK();
 // const pSwap = new PumpAmmSdk(connection);
 
 const okxSwap = new OKXSwapSDK();
@@ -178,7 +181,7 @@ class PumpAMM extends Service {
           const wallet = wallets[i];
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
-          const { buyAmount, limit, price, fee, isAxiom } = wallet;
+          const { buyAmount, limit, price, fee, isAxiom, isAve } = wallet;
           let volumeIxs = [];
           let jitoTipIx = null;
           console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
@@ -202,7 +205,11 @@ class PumpAMM extends Service {
           } else {
             const setComputeUnitLimitIx =
               ComputeBudgetProgram.setComputeUnitLimit({
-                units: isAxiom ? AXIOM_COMPUTE_UNIT_LIMIT : limit,
+                units: isAxiom
+                  ? AXIOM_COMPUTE_UNIT_LIMIT
+                  : isAve
+                    ? AVE_COMPUTE_UNIT_LIMIT
+                    : limit,
               });
             if (isAxiom && !AXIOM_BUNDLE_MODE) {
               setComputeUnitLimitIx.keys.push({
@@ -393,7 +400,7 @@ class PumpAMM extends Service {
               );
             }
 
-            // 模拟交易
+            // 妯℃嫙浜ゆ槗
             if (wallet.isAxiom) {
               console.log(
                 "Axiom tx instructions",
@@ -476,7 +483,7 @@ class PumpAMM extends Service {
           secondBuy: [],
           thirdBuy: [],
         };
-        // 分离 firstWallet 和其他钱包
+        // 鍒嗙 firstWallet 鍜屽叾浠栭挶鍖?
         const firstWallets = [];
         const regularWallets = [];
 
@@ -500,16 +507,16 @@ class PumpAMM extends Service {
           }
         });
 
-        // 执行普通钱包，各阶段之间无延迟
+        // 鎵ц鏅€氶挶鍖咃紝鍚勯樁娈典箣闂存棤寤惰繜
         for (const wallets of Object.values(buyAllObj)) {
           if (wallets.length > 0) {
             await func(wallets);
           }
         }
 
-        // 如果有 firstWallet，等待 1 个 slot 时间后执行
+        // 濡傛灉鏈?firstWallet锛岀瓑寰?1 涓?slot 鏃堕棿鍚庢墽琛?
         if (firstWallets.length > 0) {
-          await sleep(0.4); // Solana slot 时间约 400ms，等待恰好 1 个 block
+          await sleep(0.4); // Solana slot 鏃堕棿绾?400ms锛岀瓑寰呮伆濂?1 涓?block
           for (const wallet of firstWallets) {
             await func([wallet]);
           }
@@ -684,7 +691,7 @@ class PumpAMM extends Service {
               );
             }
 
-            // 模拟交易
+            // 妯℃嫙浜ゆ槗
             // const simulationResult = await connection.simulateTransaction(tx, {
             //   commitment: "confirmed",
             // });
@@ -791,7 +798,7 @@ class PumpAMM extends Service {
       WSOL_TOKEN_ACCOUNT,
     );
 
-    // 指令 4: 创建 tokenA ATA
+    // 鎸囦护 4: 鍒涘缓 tokenA ATA
     const createTokenAtaIx = createAssociatedTokenAccountIdempotentInstruction(
       user,
       tokenAta,
@@ -799,7 +806,7 @@ class PumpAMM extends Service {
       tokenMint,
       tokenProgramId || TOKEN_PROGRAM_ID,
     );
-    // 指令 5: 转账 SOL �?wSOL ATA
+    // 鎸囦护 5: 杞处 SOL 锟?wSOL ATA
     const transferLamportsWSOLIx = SystemProgram.transfer({
       fromPubkey: user,
       toPubkey: wSolATA,
@@ -809,10 +816,10 @@ class PumpAMM extends Service {
       //   ATA_RENT * 2 +
       //   TRANSACTION_FEE,
     });
-    // 指令 6: 同步 wSOL ATA
+    // 鎸囦护 6: 鍚屾 wSOL ATA
     const syncNativeIx = createSyncNativeInstruction(wSolATA, TOKEN_PROGRAM_ID);
 
-    // 指令 7: Pump AMM buy
+    // 鎸囦护 7: Pump AMM buy
     let swapIxs = await pSwap.createBuyInstruction({
       tokenMint: tokenMint,
       user: user,
@@ -823,7 +830,7 @@ class PumpAMM extends Service {
       isAxiom,
     });
 
-    // 指令 8: 关闭 wSOL ATA
+    // 鎸囦护 8: 鍏抽棴 wSOL ATA
     const closeWSOLAtaIx = createCloseAccountInstruction(wSolATA, user, user);
 
     const Ixs = [
@@ -851,7 +858,7 @@ class PumpAMM extends Service {
 
     const keypair = wallet.keypair;
     const user = keypair.publicKey;
-    console.log(chalk.green("Proxy buy:", user.toBase58()));
+    console.log(chalk.green("Build buy:", user.toBase58()));
     const { buyAmount } = wallet;
     if (isAxiom) {
       const axiomBuy = await createAxiomBuyInstructions({
@@ -865,14 +872,16 @@ class PumpAMM extends Service {
       });
       wallet.extraSigners = axiomBuy.signers;
       proxyBuyIxs = axiomBuy.instructions;
-    } else if (wallet.isProxyBuy) {
-      const proxyBuyIx = await proxyPumpSwap.createBuyInstruction({
+    } else if (wallet.isAve) {
+      console.log(chalk.green("AVE buy:", user.toBase58()));
+      const proxyBuyIx = await avePumpSwap.createBuyInstruction({
         tokenMint: tokenMint,
         user: user,
         buyAmount: buyAmount,
         slippage: slippage,
         poolDetail: poolDetail,
         tokenProgramId,
+        aveFeeBps: wallet.aveFeeBps,
       });
       proxyBuyIxs = [proxyBuyIx];
     } else {
@@ -892,3 +901,7 @@ class PumpAMM extends Service {
 }
 
 module.exports = PumpAMM;
+
+
+
+
