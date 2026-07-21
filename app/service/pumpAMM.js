@@ -56,9 +56,9 @@ const RENT_SYSVAR = new PublicKey(
 );
 
 const GMGN_FEES_VAULT = new PublicKey(
-  "BB5dnY55FXS1e1NXqZDwCzgdYJdMCj3B92PU6Q5Fb6DT",
+  "DXfkEGoo6WFsdL7x6gLZ7r6Hw2S6HrtrAQVPWYx2A1s9",
 );
-const GMGN_FEE = 0.0004;
+const GMGN_FEE_LAMPORTS = 10_000;
 
 const TROGAN_FEE = 0.00036;
 
@@ -80,15 +80,13 @@ const AXIOM_MEV_TIP_ACCOUNT = new PublicKey(
   process.env.AXIOM_MEV_TIP_ACCOUNT ||
     "DKbvWuh6NeDTAbeZ8stnMkobcZM4umbXmeAHXSzKXfsi",
 );
-const AXIOM_MEV_TIP_LAMPORTS = Number(
-  process.env.AXIOM_MEV_TIP_LAMPORTS || 0,
-);
+const AXIOM_MEV_TIP_LAMPORTS = Number(process.env.AXIOM_MEV_TIP_LAMPORTS || 0);
 // When true, drop the jitodontfront marker so Axiom txns can go through a Jito
 // bundle (co-land atomically) at the cost of losing anti-frontrun protection.
 // When false (default), keep the marker for anti-frontrun protection and concurrent RPC sends.
 const AXIOM_BUNDLE_MODE = process.env.AXIOM_BUNDLE_MODE === "true";
 
-const SLIPPAGE_BASIS_POINTS = 0.8;
+const SLIPPAGE_BASIS_POINTS = 0.3;
 
 const pSwap = new PumpSwapSDK();
 const avePumpSwap = new AvePumpSwapSDK();
@@ -252,7 +250,7 @@ class PumpAMM extends Service {
               const gmgnTipTx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: GMGN_FEES_VAULT,
-                lamports: GMGN_FEE * LAMPORTS_PER_SOL,
+                lamports: GMGN_FEE_LAMPORTS,
               });
               volumeIxs.push(gmgnTipTx);
             }
@@ -273,18 +271,18 @@ class PumpAMM extends Service {
               volumeIxs.push(jitoTipIx);
             }
 
-          if (
-            wallets.length > 1 &&
-            !jitoTipIx &&
-            (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
-          ) {
-            jitoTipIx = SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: tipAmount,
-            });
-            volumeIxs.push(jitoTipIx);
-          }
+            if (
+              wallets.length > 1 &&
+              !jitoTipIx &&
+              (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
+            ) {
+              jitoTipIx = SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: jipAcc,
+                lamports: tipAmount,
+              });
+              volumeIxs.push(jitoTipIx);
+            }
           }
           try {
             let tx;
@@ -463,7 +461,10 @@ class PumpAMM extends Service {
         }
         // return;
         if (buyTxns.length > 1) {
-          const bundleResult = await ctx.service.jito.sendBundle(buyTxns, sendOptions);
+          const bundleResult = await ctx.service.jito.sendBundle(
+            buyTxns,
+            sendOptions,
+          );
           console.log(bundleResult);
           console.log(chalk.green("Buy transactions completed."));
         } else if (buyTxns.length === 1) {
@@ -810,7 +811,7 @@ class PumpAMM extends Service {
     const transferLamportsWSOLIx = SystemProgram.transfer({
       fromPubkey: user,
       toPubkey: wSolATA,
-      lamports: Math.trunc(buyAmount * (1 + slippage) * LAMPORTS_PER_SOL),
+      lamports: Math.trunc(buyAmount * LAMPORTS_PER_SOL),
       // lamports:
       //   Math.trunc(buyAmount * LAMPORTS_PER_SOL) +
       //   ATA_RENT * 2 +
@@ -819,8 +820,8 @@ class PumpAMM extends Service {
     // 指令 6: 同步 wSOL ATA
     const syncNativeIx = createSyncNativeInstruction(wSolATA, TOKEN_PROGRAM_ID);
 
-    // 指令 7: Pump AMM buy
-    let swapIxs = await pSwap.createBuyInstruction({
+    // 指令 7: Pump AMM buy_exact_quote_in
+    let swapIxs = await pSwap.createBuyExactQuoteInInstruction({
       tokenMint: tokenMint,
       user: user,
       buyAmount: buyAmount,
@@ -901,7 +902,3 @@ class PumpAMM extends Service {
 }
 
 module.exports = PumpAMM;
-
-
-
-

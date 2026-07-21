@@ -221,6 +221,9 @@ const defaultBuyAccounts = {
 };
 
 const BUY_DISCRIMINATOR = new Uint8Array([102, 6, 61, 18, 1, 218, 235, 234]);
+const BUY_EXACT_QUOTE_IN_DISCRIMINATOR = new Uint8Array([
+  198, 46, 21, 82, 180, 217, 232, 112,
+]);
 const SELL_DISCRIMINATOR = new Uint8Array([
   51, 230, 133, 164, 1, 127, 131, 173,
 ]);
@@ -282,6 +285,58 @@ class PumpSwapSDK {
         data: data,
       });
     }
+  }
+
+  async createBuyExactQuoteInInstruction(params) {
+    const {
+      tokenMint,
+      user,
+      buyAmount,
+      slippage = 0.1,
+      poolDetail,
+      tokenProgramId,
+    } = params;
+
+    const normalizedBuyAmount = Number(buyAmount);
+    const normalizedSlippage = Number(slippage);
+    if (!Number.isFinite(normalizedBuyAmount) || normalizedBuyAmount <= 0) {
+      throw new Error("buyAmount must be a positive number");
+    }
+    if (
+      !Number.isFinite(normalizedSlippage) ||
+      normalizedSlippage < 0 ||
+      normalizedSlippage > 1
+    ) {
+      throw new Error("slippage must be between 0 and 1");
+    }
+
+    const accounts = await this.getAccounts({
+      poolDetail,
+      tokenMint,
+      user,
+      tokenProgramId,
+    });
+    const quoteAmountIn = BigInt(
+      Math.floor(normalizedBuyAmount * LAMPORTS_PER_SOL),
+    );
+    const expectedBaseAmountOut = getBuyTokenAmountBuyPoolDetail(
+      normalizedBuyAmount,
+      poolDetail,
+    );
+    const slippageBps = BigInt(Math.floor(normalizedSlippage * 10000));
+    const minBaseAmountOut =
+      (expectedBaseAmountOut * (10000n - slippageBps)) / 10000n;
+
+    const data = Buffer.alloc(8 + 8 + 8);
+    data.set(BUY_EXACT_QUOTE_IN_DISCRIMINATOR, 0);
+    data.writeBigUInt64LE(quoteAmountIn, 8);
+    data.writeBigUInt64LE(minBaseAmountOut, 16);
+
+    return new TransactionInstruction({
+      keys: accounts,
+      programId: PUMP_AMM_PROGRAM_ID,
+      data,
+    });
   }
 
   async createSellInstruction(params) {
