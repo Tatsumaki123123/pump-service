@@ -37,6 +37,9 @@ module.exports = (app) => {
     controller.executeSwap.updateLineData
   );
 
+  router.post("/v1/appdata/getXAuth", controller.appData.getXAuth);
+  router.post("/v1/appdata/updateXAuth", controller.appData.updateXAuth);
+
   router.post("/v1/executetoken/tokenList", controller.executeToken.tokenList);
   router.post(
     "/v1/executetoken/initTokenList",

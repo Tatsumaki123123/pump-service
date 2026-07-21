@@ -85,7 +85,7 @@ const AXIOM_MEV_TIP_LAMPORTS = Number(
 );
 // When true, drop the jitodontfront marker so Axiom txns can go through a Jito
 // bundle (co-land atomically) at the cost of losing anti-frontrun protection.
-// When false (default), keep the marker 锟?anti-frontrun + concurrent RPC send.
+// When false (default), keep the marker for anti-frontrun protection and concurrent RPC sends.
 const AXIOM_BUNDLE_MODE = process.env.AXIOM_BUNDLE_MODE === "true";
 
 const SLIPPAGE_BASIS_POINTS = 0.8;
@@ -400,7 +400,7 @@ class PumpAMM extends Service {
               );
             }
 
-            // 妯℃嫙浜ゆ槗
+            // 模拟交易
             if (wallet.isAxiom) {
               console.log(
                 "Axiom tx instructions",
@@ -483,7 +483,7 @@ class PumpAMM extends Service {
           secondBuy: [],
           thirdBuy: [],
         };
-        // 鍒嗙 firstWallet 鍜屽叾浠栭挶鍖?
+        // 分离 firstWallet 和其他钱包
         const firstWallets = [];
         const regularWallets = [];
 
@@ -507,16 +507,16 @@ class PumpAMM extends Service {
           }
         });
 
-        // 鎵ц鏅€氶挶鍖咃紝鍚勯樁娈典箣闂存棤寤惰繜
+        // 执行普通钱包，各阶段之间无延迟
         for (const wallets of Object.values(buyAllObj)) {
           if (wallets.length > 0) {
             await func(wallets);
           }
         }
 
-        // 濡傛灉鏈?firstWallet锛岀瓑寰?1 涓?slot 鏃堕棿鍚庢墽琛?
+        // 如果有 firstWallet，等待 1 个 slot 后执行
         if (firstWallets.length > 0) {
-          await sleep(0.4); // Solana slot 鏃堕棿绾?400ms锛岀瓑寰呮伆濂?1 涓?block
+          await sleep(0.4); // Solana slot 约 400ms，等待约 1 个区块
           for (const wallet of firstWallets) {
             await func([wallet]);
           }
@@ -691,7 +691,7 @@ class PumpAMM extends Service {
               );
             }
 
-            // 妯℃嫙浜ゆ槗
+            // 模拟交易
             // const simulationResult = await connection.simulateTransaction(tx, {
             //   commitment: "confirmed",
             // });
@@ -798,7 +798,7 @@ class PumpAMM extends Service {
       WSOL_TOKEN_ACCOUNT,
     );
 
-    // 鎸囦护 4: 鍒涘缓 tokenA ATA
+    // 指令 4: 创建 tokenA ATA
     const createTokenAtaIx = createAssociatedTokenAccountIdempotentInstruction(
       user,
       tokenAta,
@@ -806,7 +806,7 @@ class PumpAMM extends Service {
       tokenMint,
       tokenProgramId || TOKEN_PROGRAM_ID,
     );
-    // 鎸囦护 5: 杞处 SOL 锟?wSOL ATA
+    // 指令 5: 转账 SOL 到 wSOL ATA
     const transferLamportsWSOLIx = SystemProgram.transfer({
       fromPubkey: user,
       toPubkey: wSolATA,
@@ -816,10 +816,10 @@ class PumpAMM extends Service {
       //   ATA_RENT * 2 +
       //   TRANSACTION_FEE,
     });
-    // 鎸囦护 6: 鍚屾 wSOL ATA
+    // 指令 6: 同步 wSOL ATA
     const syncNativeIx = createSyncNativeInstruction(wSolATA, TOKEN_PROGRAM_ID);
 
-    // 鎸囦护 7: Pump AMM buy
+    // 指令 7: Pump AMM buy
     let swapIxs = await pSwap.createBuyInstruction({
       tokenMint: tokenMint,
       user: user,
@@ -830,7 +830,7 @@ class PumpAMM extends Service {
       isAxiom,
     });
 
-    // 鎸囦护 8: 鍏抽棴 wSOL ATA
+    // 指令 8: 关闭 wSOL ATA
     const closeWSOLAtaIx = createCloseAccountInstruction(wSolATA, user, user);
 
     const Ixs = [

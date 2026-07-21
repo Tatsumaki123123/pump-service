@@ -32,9 +32,9 @@ class ExecuteSwap extends BaseController {
 
   async end() {
     const { ctx } = this;
-    const { line } = ctx.request.body;
+    const { line, force = false } = ctx.request.body;
     if (line) {
-      const res = await ctx.service.executeSwap.end(line);
+      const res = await ctx.service.executeSwap.end(line, force);
       this.success(res);
     } else {
       throw new Error("Params error");

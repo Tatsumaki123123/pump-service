@@ -24,7 +24,6 @@ const {
   createCloseAccountInstruction,
   createSyncNativeInstruction,
   createAssociatedTokenAccountInstruction,
-  getOrCreateAssociatedTokenAccount,
 } = require("@solana/spl-token");
 
 const { WSOL_TOKEN_ACCOUNT, connection } = require("../constants/index");
@@ -75,15 +74,6 @@ async function getSPLBalanceAmount(
   return 0;
 }
 
-/**
- * to addr: CX5QxTvRJJnLBQT8ppFhRW5jscuTUBqeTKGeLcRaFcEd
- * @param {*} connection
- * @param {*} keypair
- * @returns
- */
-const closeTokenRecAddress = new PublicKey(
-  "914ieyzsV2wG4DDwqTTZ6be8TxZJ1s3cpRrz7LaviSrC",
-);
 async function closeAllTokenAccounts(connection, keypair, force = false) {
   try {
     const wallet = keypair;
@@ -113,6 +103,7 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
     let transaction = new Transaction();
     let len = 0;
     const minAmount = 100 * 10 ** 6;
+    let skippedWithBalance = 0;
     for (const account of tokenAccounts.value) {
       const accountPubkey = account.pubkey;
       // 判断所属 program（Token 或 Token-2022）
@@ -124,54 +115,24 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
         ownerProgram,
       );
 
+      if (force && accountInfo.amount > 0) {
+        skippedWithBalance++;
+        console.log(
+          chalk.yellow("Force recycle skip token account with balance:"),
+          accountPubkey.toBase58(),
+          accountInfo.amount.toString(),
+        );
+        continue;
+      }
+
       if (accountInfo.amount >= minAmount) {
-        if (force) {
-          let transferred = false;
-          try {
-            console.log(accountInfo);
-            const dAccount = await getOrCreateAssociatedTokenAccount(
-              connection,
-              wallet,
-              accountInfo.mint,
-              closeTokenRecAddress,
-              false,
-              "confirmed",
-              undefined,
-              ownerProgram,
-            );
-            const signature = await transfer(
-              connection,
-              wallet,
-              accountInfo.address,
-              dAccount.address,
-              wallet.publicKey,
-              accountInfo.amount,
-              [],
-              undefined,
-              ownerProgram,
-            );
-            await connection.confirmTransaction(signature, "confirmed");
-            transferred = true;
-          } catch (error) {
-            console.log(
-              chalk.red("Transfer failed, skip close:"),
-              error.message,
-            );
-          }
-          if (!transferred) continue; // 转账失败不关闭
-        } else {
-          throw new Error(
-            `Token account ${wallet.publicKey.toBase58()} has balance ${
-              accountInfo.amount
-            }`,
-          );
-        }
+        throw new Error(
+          `Token account ${accountPubkey.toBase58()} has balance ${accountInfo.amount}`,
+        );
       } else if (accountInfo.amount > 0 && accountInfo.amount < minAmount) {
         console.log(
           chalk.red(
-            `Token account ${wallet.publicKey.toBase58()} has balance ${
-              accountInfo.amount
-            }`,
+            `Token account ${accountPubkey.toBase58()} has balance ${accountInfo.amount}`,
           ),
         );
         const topHolder = await getTopLPTokenHolder(
@@ -216,6 +177,12 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
     }
     const transactionArr = [];
     console.log(chalk.green("Account need close :", volumeIxs.length));
+    if (skippedWithBalance > 0) {
+      console.log(
+        chalk.yellow("Force recycle skipped token accounts:"),
+        skippedWithBalance,
+      );
+    }
     for (let index = 0; index < volumeIxs.length; index++) {
       const ix = volumeIxs[index];
       transaction.add(ix);
@@ -227,14 +194,41 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
     for (let index = 0; index < transactionArr.length; index++) {
       console.log(chalk.green("Close account: ", index, index + 1 + 10));
       const transaction = transactionArr[index];
-      const signature = await connection.sendTransaction(
-        transaction,
-        [wallet],
-        {
-          skipPreflight: false,
-        },
-      );
-      await connection.confirmTransaction(signature, "confirmed");
+      try {
+        const signature = await connection.sendTransaction(
+          transaction,
+          [wallet],
+          {
+            skipPreflight: false,
+          },
+        );
+        await connection.confirmTransaction(signature, "confirmed");
+      } catch (error) {
+        if (!force) throw error;
+        console.log(
+          chalk.yellow("Close account batch failed, retry one by one:"),
+          error.message,
+        );
+        for (const ix of transaction.instructions) {
+          try {
+            const singleTx = new Transaction().add(ix);
+            const signature = await connection.sendTransaction(
+              singleTx,
+              [wallet],
+              {
+                skipPreflight: false,
+              },
+            );
+            await connection.confirmTransaction(signature, "confirmed");
+          } catch (singleError) {
+            console.log(
+              chalk.yellow("Force recycle skip close failed account:"),
+              ix.keys[0].pubkey.toBase58(),
+              singleError.message,
+            );
+          }
+        }
+      }
     }
 
     console.log("all token account closed");

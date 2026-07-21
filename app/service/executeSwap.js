@@ -69,9 +69,9 @@ class ExecuteSwap extends Service {
     await this.generateBoss(lastExecuteData);
   }
 
-  async end(line) {
+  async end(line, force = false) {
     // await this.transferSolToWallets(line);
-    await this.recycleSol(line);
+    await this.recycleSol(line, force);
     return true;
   }
 
@@ -235,7 +235,7 @@ class ExecuteSwap extends Service {
   }
 
   // Boss回收sol
-  async recycleSol(line) {
+  async recycleSol(line, force = false) {
     console.log(chalk.green("Ended：recycle"));
     const { ctx } = this;
     const wallets = await this.getWallets(line, true);
@@ -243,7 +243,7 @@ class ExecuteSwap extends Service {
 
     if (wallets && executeData) {
       const fun = async (wallet) => {
-        const res = await closeAllTokenAccounts(connection, wallet.keypair);
+        const res = await closeAllTokenAccounts(connection, wallet.keypair, force);
 
         console.log(
           chalk.green("transfer sol", wallet.address, executeData.bossAddress),
