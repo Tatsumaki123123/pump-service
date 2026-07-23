@@ -59,6 +59,7 @@ class RaydiumCpmm extends Service {
             microLamports: price,
           };
           let volumeIxs = [];
+          let lookupTableAccounts;
           console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
 
           if (wallet.isOkx) {
@@ -70,13 +71,15 @@ class RaydiumCpmm extends Service {
             });
             volumeIxs = [...okxIxs];
           } else if (wallet.isJup) {
-            const jupIxs = await jupSwap.getBuyInstructions(ctx, {
+            const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
               user,
               tokenMint,
-              buyAmount: buyAmount,
-              slippage: slippage,
+              buyAmount,
+              slippage,
+              connection,
             });
-            volumeIxs = [...jupIxs];
+            volumeIxs = [...jupSwapData.instructions];
+            lookupTableAccounts = jupSwapData.lookupTableAccounts;
           } else if (wallet.isRayRouter) {
             const routerIxs = await rayRouterSwap.getBuyInstructions(ctx, {
               user,
@@ -122,7 +125,7 @@ class RaydiumCpmm extends Service {
             });
             volumeIxs.push(jitoTipIx);
           } else {
-            await sendV0Transaction(keypair, volumeIxs);
+            await sendV0Transaction(keypair, volumeIxs, lookupTableAccounts);
             return true;
           }
 
@@ -131,7 +134,7 @@ class RaydiumCpmm extends Service {
               payerKey: user,
               recentBlockhash: blockhash,
               instructions: volumeIxs,
-            }).compileToV0Message();
+            }).compileToV0Message(lookupTableAccounts);
 
             const tx = new VersionedTransaction(messageV0);
             tx.sign([keypair]);
@@ -241,6 +244,7 @@ class RaydiumCpmm extends Service {
           const { limit, price, fee } = wallet;
 
           let volumeIxs = [];
+          let lookupTableAccounts;
           const computeBudgetConfig = {
             units: limit,
             microLamports: price,
@@ -254,13 +258,15 @@ class RaydiumCpmm extends Service {
             });
             volumeIxs = [...okxIxs];
           } else if (wallet.isJup && i === 0) {
-            const jupIxs = await jupSwap.getSellInstructions(ctx, {
+            const jupSwapData = await jupSwap.getSellInstructions(ctx, {
               user,
               tokenMint,
-              tokenAmount: tokenAmount,
-              slippage: slippage,
+              tokenAmount,
+              slippage,
+              connection,
             });
-            volumeIxs = [...jupIxs];
+            volumeIxs = [...jupSwapData.instructions];
+            lookupTableAccounts = jupSwapData.lookupTableAccounts;
           } else {
             const sellIxs = await getSwapInstructions({
               tokenMint,
@@ -281,7 +287,7 @@ class RaydiumCpmm extends Service {
             });
             volumeIxs.push(jitoTipIx);
           } else {
-            await sendV0Transaction(keypair, volumeIxs);
+            await sendV0Transaction(keypair, volumeIxs, lookupTableAccounts);
             return true;
           }
           try {
@@ -289,7 +295,7 @@ class RaydiumCpmm extends Service {
               payerKey: keypair.publicKey,
               recentBlockhash: blockhash,
               instructions: volumeIxs,
-            }).compileToV0Message();
+            }).compileToV0Message(lookupTableAccounts);
 
             const tx = new VersionedTransaction(messageV0);
             tx.sign([keypair]);

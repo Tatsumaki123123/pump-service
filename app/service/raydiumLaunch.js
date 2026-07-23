@@ -52,6 +52,7 @@ class RaydiumLaunch extends Service {
         const { buyAmount, limit, price, fee } = wallet;
 
         let volumeIxs = [];
+        let lookupTableAccounts;
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
 
         if (wallet.isOkx) {
@@ -63,13 +64,15 @@ class RaydiumLaunch extends Service {
           });
           volumeIxs = [...okxIxs];
         } else if (wallet.isJup) {
-          const jupIxs = await jupSwap.getBuyInstructions(ctx, {
+          const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
             user,
             tokenMint,
-            buyAmount: buyAmount,
-            slippage: slippage,
+            buyAmount,
+            slippage,
+            connection,
           });
-          volumeIxs = [...jupIxs];
+          volumeIxs = [...jupSwapData.instructions];
+          lookupTableAccounts = jupSwapData.lookupTableAccounts;
         } else {
           const computeBudgetConfig = {
             units: limit,
@@ -102,7 +105,7 @@ class RaydiumLaunch extends Service {
           }
         }
         if (wallets.length === 1) {
-          await sendV0Transaction(keypair, volumeIxs);
+          await sendV0Transaction(keypair, volumeIxs, lookupTableAccounts);
           // await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
           return;
         } else {
@@ -121,7 +124,7 @@ class RaydiumLaunch extends Service {
             payerKey: user,
             recentBlockhash: blockhash,
             instructions: volumeIxs,
-          }).compileToV0Message();
+          }).compileToV0Message(lookupTableAccounts);
 
           const tx = new VersionedTransaction(messageV0);
           tx.sign([keypair]);

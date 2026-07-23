@@ -134,6 +134,18 @@ function getMinBaseAmountOut(baseAmountOut, slippage) {
   };
 }
 
+function mergeLookupTableAccounts(...lookupTableGroups) {
+  const lookupTableMap = new Map();
+  lookupTableGroups
+    .flat()
+    .filter(Boolean)
+    .forEach((lookupTable) => {
+      lookupTableMap.set(lookupTable.key.toBase58(), lookupTable);
+    });
+  const lookupTables = [...lookupTableMap.values()];
+  return lookupTables.length ? lookupTables : undefined;
+}
+
 const pSwap = new PumpSwapSDK();
 const avePumpSwap = new AvePumpSwapSDK();
 // const pSwap = new PumpAmmSdk(connection);
@@ -228,6 +240,7 @@ class PumpAMM extends Service {
           const { buyAmount, limit, price, fee, isAxiom, isAve } = wallet;
           let volumeIxs = [];
           let jitoTipIx = null;
+          let walletLookupTables = lookupTables;
           console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
           if (wallet.isOkx) {
             const okxIxs = await okxSwap.getBuyInstructions(ctx, {
@@ -239,13 +252,26 @@ class PumpAMM extends Service {
             });
             volumeIxs = [...okxIxs];
           } else if (wallet.isJup) {
-            const jupIxs = await jupSwap.getBuyInstructions(ctx, {
+            const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
               user,
               tokenMint,
-              buyAmount: buyAmount,
+              buyAmount,
               slippage,
+              connection,
             });
-            volumeIxs = [...jupIxs];
+            volumeIxs = [...jupSwapData.instructions];
+            walletLookupTables = mergeLookupTableAccounts(
+              lookupTables,
+              jupSwapData.lookupTableAccounts,
+            );
+            if (NEXTBLOCK_TIP_EVERY_TX || i === 0) {
+              jitoTipIx = SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: jipAcc,
+                lamports: tipAmount,
+              });
+              volumeIxs.push(jitoTipIx);
+            }
           } else {
             const setComputeUnitLimitIx =
               ComputeBudgetProgram.setComputeUnitLimit({
@@ -357,7 +383,7 @@ class PumpAMM extends Service {
                 payerKey: user,
                 recentBlockhash: blockhash,
                 instructions: volumeIxs,
-              }).compileToV0Message(lookupTables);
+              }).compileToV0Message(walletLookupTables);
 
               tx = new VersionedTransaction(messageV0);
               tx.sign([keypair, ...(wallet.extraSigners || [])]);
@@ -387,7 +413,7 @@ class PumpAMM extends Service {
                   payerKey: user,
                   recentBlockhash: blockhash,
                   instructions: swapIxs,
-                }).compileToV0Message(lookupTables);
+                }).compileToV0Message(walletLookupTables);
               } catch (splitError) {
                 if (!/encoding overruns Uint8Array/.test(splitError.message)) {
                   throw splitError;
@@ -400,7 +426,7 @@ class PumpAMM extends Service {
                   payerKey: user,
                   recentBlockhash: blockhash,
                   instructions: swapIxs,
-                }).compileToV0Message(lookupTables);
+                }).compileToV0Message(walletLookupTables);
                 console.log(
                   chalk.yellow(
                     "Removed compute budget instructions because swap tx is still too large.",
@@ -428,7 +454,7 @@ class PumpAMM extends Service {
                   payerKey: user,
                   recentBlockhash: blockhash,
                   instructions: swapIxs,
-                }).compileToV0Message(lookupTables);
+                }).compileToV0Message(walletLookupTables);
                 tx = new VersionedTransaction(compactMessageV0);
                 tx.sign([keypair, ...(wallet.extraSigners || [])]);
                 assertTxSize(tx, "compact swap tx");
@@ -498,7 +524,7 @@ class PumpAMM extends Service {
                   payerKey: user,
                   recentBlockhash: blockhash,
                   instructions: txInstructions,
-                }).compileToV0Message(lookupTables);
+                }).compileToV0Message(walletLookupTables);
                 tx = new VersionedTransaction(quotedMessageV0);
                 tx.sign([keypair, ...(wallet.extraSigners || [])]);
                 assertTxSize(tx, "chain-quoted swap tx");

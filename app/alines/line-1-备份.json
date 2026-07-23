@@ -1,0 +1,170 @@
+{
+  "lineName": "1-2 copy",
+  "walletConfig": [
+    {
+      "transferAmount": 2,
+      "limit": 200000,
+      "price": 0,
+      "fee": 0.00001,
+      "firstBuy": {
+        "enable": true,
+        "isTrogan": true,
+        "buyAmount": 0.33
+      },
+      "thirdBuy": {
+        "enable": true,
+        "buyAmount": 0.715,
+        "isGmgn": true,
+        "isAve": false
+      }
+    },
+    {
+      "transferAmount": 0.5,
+      "limit": 200000,
+      "price": 0,
+      "fee": 0.00001,
+      "multiBuy": {
+        "enable": true,
+        "isAxiom": true,
+        "buyAmount": 0.045
+      }
+    },
+    {
+      "transferAmount": 0.5,
+      "limit": 200000,
+      "price": 0,
+      "fee": 0.00001,
+      "secondBuy": {
+        "enable": true,
+        "buyAmount": 0.06,
+        "isTrogan": true
+      }
+    },
+    {
+      "transferAmount": 1.5,
+      "limit": 200000,
+      "price": 0,
+      "fee": 0.00001,
+      "thirdBuy": {
+        "enable": true,
+        "buyAmount": 0.775,
+        "isGmgn": true,
+        "isAve": false
+      }
+    }
+  ],
+  "firstWallet": {
+    "address": "Hx26qyRVpsUig1uDju54g93HoXhY3j1k6AxX6VJXbNWY",
+    "buyAmount": 0.01,
+    "position": "after",
+    "type": "thirdBuy",
+    "isTrogan": true,
+    "isBundle": false
+  },
+  "needFirstWallet": false,
+  "sourceWeb": "ave",
+  "groupSort": {
+    "sort_field": "created_at",
+    "sort_order": "desc",
+    "wallet_count": 1,
+    "mcp_min": 1600,
+    "mcp_max": 3000,
+    "create_day": 3,
+    "category": "pump_out_new",
+    "address": ["AdVXffXLe1RRTRjL1A2Nuz7PUdDUHcGdQovW2zjwmzur"],
+    "favId": 87660,
+    "groupId": 117024,
+    "duration": 2
+  },
+  "autoStep": [
+    {
+      "method": "buy",
+      "type": "first",
+      "sleep": 1
+    },
+    {
+      "method": "sell",
+      "type": "all",
+      "sleep": 1
+    },
+    {
+      "method": "nextWallet",
+      "type": "multi",
+      "sleep": 0
+    }
+  ],
+  "lineBots": [
+    {
+      "address": "2NuAgVk3hcb7s4YvP4GjV5fD8eDvZQv5wuN6ZC8igRfV",
+      "name": "套利--2NU"
+    },
+    {
+      "address": "5aLY85pyxiuX3fd4RgM3Yc1e3MAL6b7UgaZz6MS3JUfG",
+      "name": "套利--5aLY"
+    },
+    {
+      "address": "8avtb3GZapmpYWUjXoJYCXfATRBhH8SGQkyDSoqF6CPC",
+      "name": "套利--8avt"
+    },
+    {
+      "address": "DZbgq3yE3r41EFszV3XastvyS8j8QnmNT37nsq7sxR66",
+      "name": "套利--DZbg"
+    },
+    {
+      "address": "H5d8DMkLywD7UJ7gkEM2aSsrGEcbQ9DqhmZ3LjPQdM7V",
+      "name": "套利--H5d8"
+    },
+    {
+      "address": "Ar2Y6o1QmrRAskjii1cRfijeKugHH13ycxW5cd7rro1x",
+      "name": "套利--Ar2Y"
+    },
+    {
+      "address": "57Mqgry42Sg6CMKSd2AdpCBVCT8XYrvfnjPfuYQLGEk9",
+      "name": "套利--57Mq"
+    },
+    {
+      "address": "BV66b15pZ8vUJV86MVopcDW5uY26mnvnkFnQ8XyUpiHv",
+      "name": "套利--BV66"
+    },
+    {
+      "address": "7BNaxx6KdUYrjACNQZ9He26NBFoFxujQMAfNLnArLGH5",
+      "name": "套利--7BNa"
+    },
+    {
+      "address": "BGzLYcFcUZkW5GPZZAYK4Jxyf1W7aigyHQbvmKsQeeuq",
+      "name": "套利--BG"
+    },
+    {
+      "address": "2Zhd5xxv6mnLwkThX8EdRrWTSL5BSJumBrT97xUytSB1",
+      "name": "割人--2Zhd"
+    },
+    {
+      "address": "GXbeWCdcsnC1PPtLuVEX9kWw2WQnRg3dMytA3t5ZpczR",
+      "name": "割人--GXbe"
+    },
+    {
+      "address": "63qvkqR6wdtqzMM89oySxo3AR5VqtyJGd4Rdppf7BFfJ",
+      "name": "割人--63QV"
+    },
+    {
+      "address": "62qEWURTpb8RNqoPCrjaoRcfU4PneigVKbiuGtin2Wb4",
+      "name": "割人--62Q"
+    },
+    {
+      "address": "ELKAeLLjmLgSemkB1EdytqtZtZ5yRbqvfUhiQH11pWPY",
+      "name": "割人--ELK"
+    },
+    {
+      "address": "C7NYGoY3bdCgZaeH2ia4Abxzr15RofgyTrv4zKN7dChb",
+      "name": "割人--C7N"
+    },
+    {
+      "address": "1aDerPKk87xJHCAqTY5bGxF5Xet2MG476y4Zmq2WJ8Y",
+      "name": "割人--1A"
+    },
+    {
+      "address": "26b966MheUKjyRTes8vLbpH1qV6pVY7cNzAiyZuyrB9W",
+      "name": "割人--26b966"
+    }
+  ]
+}
