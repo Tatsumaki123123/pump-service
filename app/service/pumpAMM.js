@@ -73,6 +73,13 @@ const AXIOM_COMPUTE_BUDGET_MARKER = new PublicKey(
 const AXIOM_COMPUTE_UNIT_LIMIT = Number(
   process.env.AXIOM_COMPUTE_UNIT_LIMIT || 275000,
 );
+const BUNDLE_PROVIDER = (process.env.BUNDLE_PROVIDER || "quicknode").toLowerCase();
+const PUMP_AMM_DONT_FRONT = process.env.PUMP_AMM_DONT_FRONT !== "false";
+const PUMP_AMM_DONT_FRONT_PROVIDERS = new Set(["jito"]);
+const PUMP_AMM_DONT_FRONT_MARKER = new PublicKey(
+  process.env.PUMP_AMM_DONT_FRONT_MARKER ||
+    "jitodontfront81111111TradeWithAxiomDotTrade",
+);
 const AVE_COMPUTE_UNIT_LIMIT = Number(
   process.env.AVE_COMPUTE_UNIT_LIMIT || 500000,
 );
@@ -87,6 +94,45 @@ const AXIOM_MEV_TIP_LAMPORTS = Number(process.env.AXIOM_MEV_TIP_LAMPORTS || 0);
 const AXIOM_BUNDLE_MODE = process.env.AXIOM_BUNDLE_MODE === "true";
 
 const SLIPPAGE_BASIS_POINTS = 0.3;
+const BUY_SLIPPAGE_ERROR = "BuySlippageBelowMinBaseAmountOut";
+const BASIS_POINTS_DENOMINATOR = 10000n;
+
+function getChainBuyBaseAmountOut(logs) {
+  if (
+    !Array.isArray(logs) ||
+    !logs.some((log) => log.includes(BUY_SLIPPAGE_ERROR))
+  ) {
+    return null;
+  }
+
+  for (let i = logs.length - 1; i >= 0; i--) {
+    const match = logs[i].match(/Program log: Left:\s*(\d+)/);
+    if (match) {
+      return BigInt(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function getMinBaseAmountOut(baseAmountOut, slippage) {
+  const normalizedSlippage = Number(slippage);
+  if (
+    !Number.isFinite(normalizedSlippage) ||
+    normalizedSlippage < 0 ||
+    normalizedSlippage > 1
+  ) {
+    throw new Error("slippage must be between 0 and 1");
+  }
+
+  const slippageBps = BigInt(Math.floor(normalizedSlippage * 10000));
+  return {
+    slippageBps,
+    minBaseAmountOut:
+      (baseAmountOut * (BASIS_POINTS_DENOMINATOR - slippageBps)) /
+      BASIS_POINTS_DENOMINATOR,
+  };
+}
 
 const pSwap = new PumpSwapSDK();
 const avePumpSwap = new AvePumpSwapSDK();
@@ -209,9 +255,18 @@ class PumpAMM extends Service {
                     ? AVE_COMPUTE_UNIT_LIMIT
                     : limit,
               });
-            if (isAxiom && !AXIOM_BUNDLE_MODE) {
+            const shouldAddAxiomDontFront = isAxiom && !AXIOM_BUNDLE_MODE;
+            const shouldAddPumpAmmDontFront =
+              !isAxiom &&
+              !isAve &&
+              wallets.length === 1 &&
+              PUMP_AMM_DONT_FRONT &&
+              PUMP_AMM_DONT_FRONT_PROVIDERS.has(BUNDLE_PROVIDER);
+            if (shouldAddAxiomDontFront || shouldAddPumpAmmDontFront) {
               setComputeUnitLimitIx.keys.push({
-                pubkey: AXIOM_COMPUTE_BUDGET_MARKER,
+                pubkey: shouldAddAxiomDontFront
+                  ? AXIOM_COMPUTE_BUDGET_MARKER
+                  : PUMP_AMM_DONT_FRONT_MARKER,
                 isSigner: false,
                 isWritable: false,
               });
@@ -262,7 +317,7 @@ class PumpAMM extends Service {
               }
             }
 
-            if (wallets.length > 1 && (NEXTBLOCK_TIP_EVERY_TX || i === 0)) {
+            if (NEXTBLOCK_TIP_EVERY_TX || i === 0) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: jipAcc,
@@ -287,6 +342,7 @@ class PumpAMM extends Service {
           try {
             let tx;
             let splitTipTx = null;
+            let txInstructions = volumeIxs;
             const assertTxSize = (transaction, label) => {
               const size = transaction.serialize().length;
               if (size > MAX_TRANSACTION_SIZE) {
@@ -383,6 +439,8 @@ class PumpAMM extends Service {
                 );
               }
 
+              txInstructions = swapIxs;
+
               const tipMessageV0 = new TransactionMessage({
                 payerKey: user,
                 recentBlockhash: blockhash,
@@ -415,16 +473,61 @@ class PumpAMM extends Service {
               );
             }
 
-            const simulationResult = await connection.simulateTransaction(tx, {
+            let simulationResult = await connection.simulateTransaction(tx, {
               commitment: "confirmed",
             });
+
+            if (simulationResult.value.err) {
+              const chainBaseAmountOut = getChainBuyBaseAmountOut(
+                simulationResult.value.logs,
+              );
+              const buyExactQuoteInIx =
+                pSwap.getBuyExactQuoteInInstruction(txInstructions);
+
+              if (chainBaseAmountOut !== null && buyExactQuoteInIx) {
+                const { slippageBps, minBaseAmountOut } = getMinBaseAmountOut(
+                  chainBaseAmountOut,
+                  slippage,
+                );
+                pSwap.setBuyExactQuoteInMinBaseAmountOut(
+                  buyExactQuoteInIx,
+                  minBaseAmountOut,
+                );
+
+                const quotedMessageV0 = new TransactionMessage({
+                  payerKey: user,
+                  recentBlockhash: blockhash,
+                  instructions: txInstructions,
+                }).compileToV0Message(lookupTables);
+                tx = new VersionedTransaction(quotedMessageV0);
+                tx.sign([keypair, ...(wallet.extraSigners || [])]);
+                assertTxSize(tx, "chain-quoted swap tx");
+
+                console.log("PUMP_AMM_CHAIN_QUOTE_V2", {
+                  user: user.toBase58(),
+                  quoteAmountIn: Math.trunc(
+                    Number(buyAmount) * LAMPORTS_PER_SOL,
+                  ).toString(),
+                  chainBaseAmountOut: chainBaseAmountOut.toString(),
+                  minBaseAmountOut: minBaseAmountOut.toString(),
+                  slippageBps: slippageBps.toString(),
+                });
+
+                simulationResult = await connection.simulateTransaction(tx, {
+                  commitment: "confirmed",
+                });
+              }
+            }
+
             if (simulationResult.value.err) {
               console.error("simulation", simulationResult.value);
               throw new Error(
-                `Simulation failed: ${JSON.stringify(simulationResult.value.err)} ${JSON.stringify(simulationResult.value.logs || [])}`,
+                "Simulation failed: " +
+                  JSON.stringify(simulationResult.value.err) +
+                  " " +
+                  JSON.stringify(simulationResult.value.logs || []),
               );
             }
-
             console.log(
               chalk.green("simulation success", keypair.publicKey.toString()),
             );
@@ -460,16 +563,9 @@ class PumpAMM extends Service {
           }
         }
         // return;
-        if (buyTxns.length > 1) {
+        if (buyTxns.length > 0) {
           const bundleResult = await ctx.service.jito.sendBundle(
             buyTxns,
-            sendOptions,
-          );
-          console.log(bundleResult);
-          console.log(chalk.green("Buy transactions completed."));
-        } else if (buyTxns.length === 1) {
-          const bundleResult = await ctx.service.jito.sendTransaction(
-            buyTxns[0],
             sendOptions,
           );
           console.log(bundleResult);

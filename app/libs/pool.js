@@ -33,8 +33,28 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
   });
   if (dbData && dbData.poolObj) {
     const poolData = reverseBnLayoutFormatter(dbData.poolObj);
+    const poolAddress = new PublicKey(dbData.pool);
+
+    try {
+      const accountInfo = await connection.getAccountInfo(
+        poolAddress,
+        "confirmed",
+      );
+      if (accountInfo && accountInfo.data.length > 244) {
+        poolData.is_mayhem = accountInfo.data[243] === 1;
+        poolData.is_cashback = accountInfo.data[244] === 1;
+      }
+    } catch (error) {
+      console.log(
+        "Failed to refresh Pump AMM pool flags " +
+          poolAddress.toBase58() +
+          ": " +
+          error.message,
+      );
+    }
+
     return {
-      address: new PublicKey(dbData.pool),
+      address: poolAddress,
       is_native_base: false,
       poolData,
     };

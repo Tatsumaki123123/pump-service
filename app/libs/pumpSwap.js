@@ -42,7 +42,8 @@ const GLOBAL_CONFIG = new PublicKey(
 );
 
 const BUYBACK_FEE_RECIPIENT = new PublicKey(
-  "GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL",
+  process.env.PUMP_AMM_BUYBACK_FEE_RECIPIENT ||
+    "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD",
 );
 const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = getAssociatedTokenAddressSync(
   NATIVE_MINT,
@@ -52,19 +53,15 @@ const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = getAssociatedTokenAddressSync(
 );
 
 const PUMP_AMM_FEE = new PublicKey(
-  "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
-); // 3
+  process.env.PUMP_AMM_PROTOCOL_FEE_RECIPIENT ||
+    "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
+);
 const PUMP_AMM_FEE_TOKEN_ACCOUNT = new PublicKey(
-  "X5QPJcpph4mBAJDzc4hRziFftSbcygV59kRb2Fu6Je1",
+  process.env.PUMP_AMM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT ||
+    "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
 );
 const EVENT_AUTHORITY = new PublicKey(
   "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
-);
-const feeRecipient = new PublicKey(
-  "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
-);
-const feeRecipientAta = new PublicKey(
-  "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
 );
 const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey(
   "C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw",
@@ -224,6 +221,7 @@ const BUY_DISCRIMINATOR = new Uint8Array([102, 6, 61, 18, 1, 218, 235, 234]);
 const BUY_EXACT_QUOTE_IN_DISCRIMINATOR = new Uint8Array([
   198, 46, 21, 82, 180, 217, 232, 112,
 ]);
+const U64_MAX = (1n << 64n) - 1n;
 const SELL_DISCRIMINATOR = new Uint8Array([
   51, 230, 133, 164, 1, 127, 131, 173,
 ]);
@@ -292,22 +290,22 @@ class PumpSwapSDK {
       tokenMint,
       user,
       buyAmount,
-      slippage = 0.1,
       poolDetail,
       tokenProgramId,
+      minBaseAmountOut = U64_MAX,
     } = params;
 
     const normalizedBuyAmount = Number(buyAmount);
-    const normalizedSlippage = Number(slippage);
     if (!Number.isFinite(normalizedBuyAmount) || normalizedBuyAmount <= 0) {
       throw new Error("buyAmount must be a positive number");
     }
+
+    const normalizedMinBaseAmountOut = BigInt(minBaseAmountOut);
     if (
-      !Number.isFinite(normalizedSlippage) ||
-      normalizedSlippage < 0 ||
-      normalizedSlippage > 1
+      normalizedMinBaseAmountOut < 0n ||
+      normalizedMinBaseAmountOut > U64_MAX
     ) {
-      throw new Error("slippage must be between 0 and 1");
+      throw new Error("minBaseAmountOut must fit in a u64");
     }
 
     const accounts = await this.getAccounts({
@@ -319,24 +317,44 @@ class PumpSwapSDK {
     const quoteAmountIn = BigInt(
       Math.floor(normalizedBuyAmount * LAMPORTS_PER_SOL),
     );
-    const expectedBaseAmountOut = getBuyTokenAmountBuyPoolDetail(
-      normalizedBuyAmount,
-      poolDetail,
-    );
-    const slippageBps = BigInt(Math.floor(normalizedSlippage * 10000));
-    const minBaseAmountOut =
-      (expectedBaseAmountOut * (10000n - slippageBps)) / 10000n;
 
     const data = Buffer.alloc(8 + 8 + 8);
     data.set(BUY_EXACT_QUOTE_IN_DISCRIMINATOR, 0);
     data.writeBigUInt64LE(quoteAmountIn, 8);
-    data.writeBigUInt64LE(minBaseAmountOut, 16);
+    data.writeBigUInt64LE(normalizedMinBaseAmountOut, 16);
 
     return new TransactionInstruction({
       keys: accounts,
       programId: PUMP_AMM_PROGRAM_ID,
       data,
     });
+  }
+
+  getBuyExactQuoteInInstruction(instructions) {
+    return instructions.find((instruction) => {
+      if (
+        !instruction.programId.equals(PUMP_AMM_PROGRAM_ID) ||
+        instruction.data.length !== 24
+      ) {
+        return false;
+      }
+
+      return Buffer.from(instruction.data.subarray(0, 8)).equals(
+        Buffer.from(BUY_EXACT_QUOTE_IN_DISCRIMINATOR),
+      );
+    });
+  }
+
+  setBuyExactQuoteInMinBaseAmountOut(instruction, minBaseAmountOut) {
+    const normalizedMinBaseAmountOut = BigInt(minBaseAmountOut);
+    if (
+      normalizedMinBaseAmountOut < 0n ||
+      normalizedMinBaseAmountOut > U64_MAX
+    ) {
+      throw new Error("minBaseAmountOut must fit in a u64");
+    }
+
+    instruction.data.writeBigUInt64LE(normalizedMinBaseAmountOut, 16);
   }
 
   async createSellInstruction(params) {

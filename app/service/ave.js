@@ -2,21 +2,37 @@ const { Service } = require("egg");
 
 const AVE_API_URL = "https://api.gejbckf.com/";
 const AVE_TOKEN_INFO_API_URL = "https://cyjm22.com/";
+const AVE_TREASURE_API_URL =
+  process.env.AVE_TREASURE_API_URL || "https://jyhkdyf.com/";
+const AVE_LOGO_URL = process.env.AVE_LOGO_URL || "https://www.iconaves.com/";
+
+function getAveLogoUrl(logoUrl) {
+  if (!logoUrl || typeof logoUrl !== "string") {
+    return "";
+  }
+  if (/^https?:\/\//i.test(logoUrl)) {
+    return logoUrl;
+  }
+  return AVE_LOGO_URL + logoUrl.replace(/^\/+/, "");
+}
 
 function aveTokenToDB(item) {
   const {
     target_token,
     token0_address,
+    token0_logo_url,
     token0_symbol,
     token1_address,
+    token1_logo_url,
     token1_symbol,
   } = item;
-  const symbol =
-    target_token === token0_address ? token0_symbol : token1_symbol;
+  const isToken0 = target_token === token0_address;
+  const symbol = isToken0 ? token0_symbol : token1_symbol;
+  const logoUrl = isToken0 ? token0_logo_url : token1_logo_url;
   return {
     token: item.target_token,
     symbol: symbol,
-    logo_url: item.logo_url,
+    icon: getAveLogoUrl(logoUrl || item.logo_url),
     mkt_cap: item.market_cap,
     create_time: item.created_at,
     amm: item.amm,
@@ -168,7 +184,7 @@ class Ave extends Service {
     const create_min =
       Math.round(new Date().getTime() / 1000) - create_day * 24 * 3600;
     const holder_min = 10;
-    const uri = `${AVE_API_URL}v1api/v4/tokens/treasure/list?chain=solana&sort=${sort_field}&sort_dir=${sort_order}&created_at_min=${create_min}&marketcap_min=${mcp_min}&marketcap_max=${mcp_max}&holder_min=${holder_min}&pageNO=1&pageSize=500&category=${category}`;
+    const uri = `${AVE_TREASURE_API_URL}v1api/v4/tokens/treasure/list?chain=solana&sort=${sort_field}&sort_dir=${sort_order}&created_at_min=${create_min}&marketcap_min=${mcp_min}&marketcap_max=${mcp_max}&holder_min=${holder_min}&pageNO=1&pageSize=500&category=${category}`;
 
     const X_AUTH = await this.getXAuth();
 
@@ -196,7 +212,7 @@ class Ave extends Service {
       Math.round(new Date().getTime() / 1000) - create_day * 24 * 3600;
     const holder_min = 50;
     const category = "pump_out_hot";
-    const uri = `${AVE_API_URL}v1api/v4/tokens/treasure/list?chain=solana&sort=${sort_field}&sort_dir=${sort_order}&created_at_min=${create_min}&marketcap_min=${mcp_min}&marketcap_max=${mcp_max}&holder_min=${holder_min}&pageNO=1&pageSize=500&category=${category}`;
+    const uri = `${AVE_TREASURE_API_URL}v1api/v4/tokens/treasure/list?chain=solana&sort=${sort_field}&sort_dir=${sort_order}&created_at_min=${create_min}&marketcap_min=${mcp_min}&marketcap_max=${mcp_max}&holder_min=${holder_min}&pageNO=1&pageSize=500&category=${category}`;
 
     const X_AUTH = await this.getXAuth();
 

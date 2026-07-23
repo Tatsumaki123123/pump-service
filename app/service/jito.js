@@ -24,7 +24,11 @@ const JITO_RESUBMIT_INTERVAL_MS = Number(
 );
 const DEFAULT_BUNDLE_TIP_SOL = 0.00001;
 const HELIUS_MIN_TIP_LAMPORTS = 5000;
-const NEXTBLOCK_RPC_FALLBACK = process.env.NEXTBLOCK_RPC_FALLBACK !== "false";
+const NEXTBLOCK_RPC_FALLBACK = process.env.NEXTBLOCK_RPC_FALLBACK === "true";
+const RPC_FALLBACK_ENABLED =
+  process.env.BUNDLE_RPC_FALLBACK === "true" ||
+  process.env.ALLOW_RPC_FALLBACK === "true" ||
+  NEXTBLOCK_RPC_FALLBACK;
 const RPC_FALLBACK_CONFIRM_MS = Number(
   process.env.RPC_FALLBACK_CONFIRM_MS || 30000,
 );
@@ -75,7 +79,7 @@ const NEXTBLOCK_ENDPOINTS = (
   .map((endpoint) => endpoint.trim())
   .filter(Boolean);
 
-// Jito Block Engine REST 端点（多地区�?
+// Jito Block Engine REST endpoints across multiple regions.
 const JITO_BUNDLE_ENDPOINTS = [
   "https://mainnet.block-engine.jito.wtf/api/v1/bundles",
   "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles",
@@ -144,22 +148,79 @@ function bundleWritesJitoTipAccount(transactions) {
   return bundleWritesTipAccount(transactions, tipAccounts);
 }
 
-// Jito reserves accounts with these prefixes (e.g. Axiom's
-// "jitodontfront81111111TradeWithAxiomDotTrade" anti-frontrun marker). Third-party
-// relays such as QuickNode's Lil' JIT reject any transaction touching them
-// ("Transaction touching a jitonobundLe prefixed account is not permitted");
-// only Jito's own block engine understands the markers.
-const JITO_MAGIC_ACCOUNT_PREFIXES = ["jitodontfront", "jitonobundle"];
+const JITO_DONT_FRONT_PREFIX = "jitodontfront";
+const JITO_NO_BUNDLE_PREFIX = "jitonobundle";
 
-function bundleTouchesJitoMagicAccount(transactions) {
-  return transactions.some((tx) =>
-    tx.message.staticAccountKeys.some((key) => {
-      const base58 = key.toBase58().toLowerCase();
-      return JITO_MAGIC_ACCOUNT_PREFIXES.some((prefix) =>
-        base58.startsWith(prefix),
-      );
-    }),
+function rpcFallbackAllowed(options = {}) {
+  return options.allowRpcFallback === true || RPC_FALLBACK_ENABLED;
+}
+
+function transactionTouchesAccountPrefix(tx, prefix) {
+  return tx.message.staticAccountKeys.some((key) => {
+    const base58 = key.toBase58().toLowerCase();
+    return base58.startsWith(prefix);
+  });
+}
+
+function bundleTouchesAccountPrefix(transactions, prefix) {
+  return transactions.some((tx) => transactionTouchesAccountPrefix(tx, prefix));
+}
+
+function bundleTouchesJitoDontFrontAccount(transactions) {
+  return bundleTouchesAccountPrefix(transactions, JITO_DONT_FRONT_PREFIX);
+}
+
+function bundleTouchesJitoNoBundleAccount(transactions) {
+  return bundleTouchesAccountPrefix(transactions, JITO_NO_BUNDLE_PREFIX);
+}
+
+function getTransactionSigners(tx) {
+  return tx.message.staticAccountKeys
+    .filter((_, index) => tx.message.isAccountSigner(index))
+    .map((key) => key.toBase58());
+}
+
+function validateDontFrontBundle(transactions) {
+  const markedIndexes = transactions
+    .map((tx, index) =>
+      transactionTouchesAccountPrefix(tx, JITO_DONT_FRONT_PREFIX) ? index : -1,
+    )
+    .filter((index) => index !== -1);
+
+  if (!markedIndexes.length) {
+    return;
+  }
+
+  if (markedIndexes[0] !== 0) {
+    throw new Error(
+      "Bundle contains jitodontfront, but the first protected transaction is not at index 0.",
+    );
+  }
+
+  const continuousAtFront = markedIndexes.every(
+    (index, position) => index === position,
   );
+  if (!continuousAtFront) {
+    throw new Error(
+      "Bundle contains jitodontfront transactions that are not continuous at the front of the bundle.",
+    );
+  }
+
+  if (markedIndexes.length <= 1) {
+    return;
+  }
+
+  const firstSigners = new Set(getTransactionSigners(transactions[0]));
+  for (const index of markedIndexes.slice(1)) {
+    const hasOverlappingSigner = getTransactionSigners(transactions[index]).some(
+      (signer) => firstSigners.has(signer),
+    );
+    if (!hasOverlappingSigner) {
+      throw new Error(
+        "Multiple jitodontfront transactions must share at least one signer with the first protected transaction.",
+      );
+    }
+  }
 }
 
 function bundleWritesHeliusTipAccount(transactions) {
@@ -387,7 +448,7 @@ class Jito extends Service {
   }
 
   // Fire every transaction at the RPC concurrently (not sequentially) so they hit
-  // the same leader in the same slot �?this is how independent Axiom txns co-land
+  // the same leader in the same slot; this is how independent Axiom txns co-land
   // in one block without a bundle. skipPreflight avoids the extra roundtrip; the
   // caller has already simulated each tx before this point.
   async sendTransactionsConcurrentlyByRpc(bundledTxns, signatures, options = {}) {
@@ -448,22 +509,32 @@ class Jito extends Service {
     return sentSignatures;
   }
   async sendBundle(bundledTxns, options = {}) {
-    if (bundledTxns.length === 1) {
-      return await this.sendTransactionsByRpc(bundledTxns, undefined, options);
+    if (!Array.isArray(bundledTxns) || bundledTxns.length === 0) {
+      throw new Error("sendBundle requires at least one signed transaction");
     }
-    // Jito's magic accounts (e.g. Axiom's jitodontfront marker) explicitly opt a
-    // transaction OUT of bundling �?every Jito relay (QuickNode included) rejects
-    // any bundle touching them ("jitonobundLe prefixed account is not permitted").
-    // These txns carry their own MEV tip (AXIOM_MEV_TIP_ACCOUNT), so broadcast
-    // them concurrently over normal RPC so they still co-land in the same block.
-    if (bundleTouchesJitoMagicAccount(bundledTxns)) {
-      console.log(
-        chalk.yellow(
-          "Bundle touches a Jito magic account (e.g. jitodontfront); these txns cannot be bundled �?broadcasting concurrently via normal RPC.",
-        ),
+
+    if (bundleTouchesJitoNoBundleAccount(bundledTxns)) {
+      if (rpcFallbackAllowed(options)) {
+        console.log(
+          chalk.yellow(
+            "Bundle touches jitonobundle; explicit RPC fallback is enabled, broadcasting concurrently via normal RPC.",
+          ),
+        );
+        return await this.sendTransactionsConcurrentlyByRpc(
+          bundledTxns,
+          undefined,
+          options,
+        );
+      }
+      throw new Error(
+        "Bundle touches jitonobundle; refusing to leak it through normal RPC. Set BUNDLE_RPC_FALLBACK=true only if you accept sandwich risk.",
       );
-      return await this.sendTransactionsConcurrentlyByRpc(bundledTxns, undefined, options);
     }
+
+    if (bundleTouchesJitoDontFrontAccount(bundledTxns)) {
+      validateDontFrontBundle(bundledTxns);
+    }
+
     if (BUNDLE_PROVIDER === "helius_jito" || BUNDLE_PROVIDER === "helius") {
       return await this.sendBundleHeliusJito(bundledTxns, options);
     }
@@ -475,7 +546,6 @@ class Jito extends Service {
     }
     return await this.sendBundleNextBlock(bundledTxns, options);
   }
-
   async waitForHeliusBundle(bundleId, signatures, timeoutMs = 30000, options = {}) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -674,7 +744,7 @@ class Jito extends Service {
   }
 
   /**
-   * 使用 Jito Block Engine REST API 发�?bundle（最便宜，min tip ~1000 lamports�?
+   * Send bundles through the Jito Block Engine REST API.
    */
   async sendBundleJito(bundledTxns, options = {}) {
     try {
@@ -746,7 +816,7 @@ class Jito extends Service {
   }
 
   async sendTransaction(tx, options = {}) {
-    return await this.sendTransactionsByRpc([tx], undefined, options);
+    return await this.sendBundle([tx], options);
   }
 
   async setQuickNodeBundle(bundledTxns, options = {}) {
@@ -820,12 +890,17 @@ class Jito extends Service {
           continue;
         }
         if (isDecodeError(error)) {
-          console.log(
-            chalk.yellow(
-              "QuickNode could not decode transaction with any known parameter style; falling back to normal RPC broadcast.",
-            ),
+          if (rpcFallbackAllowed(options)) {
+            console.log(
+              chalk.yellow(
+                "QuickNode could not decode transaction with any known parameter style; explicit RPC fallback is enabled.",
+              ),
+            );
+            return await this.sendTransactionsByRpc(bundledTxns, signatures, options);
+          }
+          throw new Error(
+            "QuickNode could not decode transaction with any known parameter style; refusing normal RPC fallback. Set BUNDLE_RPC_FALLBACK=true only if you accept sandwich risk.",
           );
-          return await this.sendTransactionsByRpc(bundledTxns, signatures, options);
         }
         throw error;
       }
@@ -845,12 +920,17 @@ class Jito extends Service {
     }
     console.log(result);
     if (result.error && isDecodeError(result.error)) {
-      console.log(
-        chalk.yellow(
-          "QuickNode could not decode transaction with any known parameter style; falling back to normal RPC broadcast.",
-        ),
+      if (rpcFallbackAllowed(options)) {
+        console.log(
+          chalk.yellow(
+            "QuickNode could not decode transaction with any known parameter style; explicit RPC fallback is enabled.",
+          ),
+        );
+        return await this.sendTransactionsByRpc(bundledTxns, signatures, options);
+      }
+      throw new Error(
+        "QuickNode could not decode transaction with any known parameter style; refusing normal RPC fallback. Set BUNDLE_RPC_FALLBACK=true only if you accept sandwich risk.",
       );
-      return await this.sendTransactionsByRpc(bundledTxns, signatures, options);
     }
 
     if (result.error) {
@@ -874,7 +954,7 @@ class Jito extends Service {
   }
 
   /**
-   * 使用 NextBlock API 发�?bundle，兼容官方文档格�?
+   * Send bundles through the NextBlock API using the documented request format.
    * @param {Array<Transaction|VersionedTransaction>} bundledTxns
    * @returns {Promise<string>} bundleId
    */
@@ -956,6 +1036,7 @@ class Jito extends Service {
       } catch (waitError) {
         if (
           !NEXTBLOCK_RPC_FALLBACK ||
+          !rpcFallbackAllowed(options) ||
           !this.isBundleNotLandedError(waitError)
         ) {
           throw waitError;
