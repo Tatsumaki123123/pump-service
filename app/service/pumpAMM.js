@@ -509,16 +509,24 @@ class PumpAMM extends Service {
               );
               const buyExactQuoteInIx =
                 pSwap.getBuyExactQuoteInInstruction(txInstructions);
+              const aveBuyIx = buyExactQuoteInIx
+                ? null
+                : avePumpSwap.getBuyInstruction(txInstructions);
+              const quotePatchIx = buyExactQuoteInIx || aveBuyIx;
 
-              if (chainBaseAmountOut !== null && buyExactQuoteInIx) {
+              if (chainBaseAmountOut !== null && quotePatchIx) {
                 const { slippageBps, minBaseAmountOut } = getMinBaseAmountOut(
                   chainBaseAmountOut,
                   slippage,
                 );
-                pSwap.setBuyExactQuoteInMinBaseAmountOut(
-                  buyExactQuoteInIx,
-                  minBaseAmountOut,
-                );
+                if (buyExactQuoteInIx) {
+                  pSwap.setBuyExactQuoteInMinBaseAmountOut(
+                    buyExactQuoteInIx,
+                    minBaseAmountOut,
+                  );
+                } else {
+                  avePumpSwap.setBuyMinBaseAmountOut(aveBuyIx, minBaseAmountOut);
+                }
 
                 const quotedMessageV0 = new TransactionMessage({
                   payerKey: user,
@@ -530,6 +538,7 @@ class PumpAMM extends Service {
                 assertTxSize(tx, "chain-quoted swap tx");
 
                 console.log("PUMP_AMM_CHAIN_QUOTE_V2", {
+                  route: buyExactQuoteInIx ? "pump_amm" : "ave",
                   user: user.toBase58(),
                   quoteAmountIn: Math.trunc(
                     Number(buyAmount) * LAMPORTS_PER_SOL,

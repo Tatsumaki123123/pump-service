@@ -949,6 +949,31 @@ class ExecuteSwap extends Service {
       line: executeData.line,
       status: "pending",
     };
+
+    const followStates = await ctx.service.ave.getFollowAggregateStates(token);
+    if (Number(followStates.all || 0) <= 0) {
+      const reserveToken = await ctx.model.ReserveToken.findOne({
+        token: tokenInfo.token,
+        line: tokenInfo.line,
+      });
+      if (!reserveToken) {
+        await ctx.model.ReserveToken.create({
+          ...tokenInfo,
+          tid: tokenDb?.tid || tokenInfo.tid,
+          type: "bad",
+        });
+      } else {
+        await ctx.model.ReserveToken.updateOne(
+          {
+            token: tokenInfo.token,
+            line: tokenInfo.line,
+          },
+          { type: "bad" },
+        );
+      }
+      throw new Error("\u6ca1\u6709\u5173\u6ce8\u5730\u5740");
+    }
+
     if (!tokenDb) {
       await ctx.model.ExecuteToken.create(tokenInfo);
     } else {

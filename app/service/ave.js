@@ -4,6 +4,8 @@ const AVE_API_URL = "https://api.gejbckf.com/";
 const AVE_TOKEN_INFO_API_URL = "https://cyjm22.com/";
 const AVE_TREASURE_API_URL =
   process.env.AVE_TREASURE_API_URL || "https://jyhkdyf.com/";
+const AVE_FOLLOW_API_URL =
+  process.env.AVE_FOLLOW_API_URL || AVE_TREASURE_API_URL;
 const AVE_LOGO_URL = process.env.AVE_LOGO_URL || "https://www.iconaves.com/";
 
 function getAveLogoUrl(logoUrl) {
@@ -163,6 +165,26 @@ class Ave extends Service {
     } else {
       throw new Error("Cannot get token dev by AVE");
     }
+  }
+
+  async getFollowAggregateStates(tokenAddress) {
+    const X_AUTH = await this.getXAuth();
+    const tokenId = `${tokenAddress}-solana`;
+    const uri = `${AVE_FOLLOW_API_URL}v1api/v3/stats/follows/aggregatestates?token_id=${encodeURIComponent(tokenId)}&self_address=0xa65ad9201b6d48519822a3a1972ee68ec0437e1b`;
+
+    const res = await this.ctx.curl(uri, {
+      dataType: "json",
+      headers: {
+        "x-auth": X_AUTH,
+      },
+    });
+    const data = res.data?.data;
+    if (String(res.data?.status) === "1" && data) {
+      return data;
+    }
+    throw new Error(
+      `Cannot get token follow states by AVE: status=${res.data?.status ?? "unknown"} msg=${res.data?.msg || "unknown"}`,
+    );
   }
 
   async getList(groupSort) {

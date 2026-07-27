@@ -318,6 +318,9 @@ const defaultBuyAccounts = {
 };
 
 const discriminator = new Uint8Array([114, 150, 13, 192, 140, 252, 221, 31]);
+const BUY_MIN_BASE_AMOUNT_OUT_OFFSET = 20;
+const BUY_MIN_DATA_LENGTH = BUY_MIN_BASE_AMOUNT_OUT_OFFSET + 8;
+const U64_MAX = (1n << 64n) - 1n;
 
 function encodeAveExtraField(feeBps) {
   const normalizedFeeBps = Math.max(0, Math.trunc(Number(feeBps)));
@@ -411,7 +414,9 @@ class AvePumpSwapSDK {
 
     const instructionData = Buffer.concat([
       Buffer.from(discriminator),
-      Buffer.from(new Uint8Array(new BigUint64Array([maxQuoteAmountIn]).buffer)),
+      Buffer.from(
+        new Uint8Array(new BigUint64Array([maxQuoteAmountIn]).buffer),
+      ),
       Buffer.from(new Uint8Array(new Uint32Array([swapType]).buffer)),
       Buffer.from(new Uint8Array(new BigUint64Array([baseAmountOut]).buffer)),
       encodeAveExtraField(aveFeeBps),
@@ -439,6 +444,36 @@ class AvePumpSwapSDK {
       programId: AVE_PROGRAM_ID,
       data: instructionData,
     });
+  }
+
+  getBuyInstruction(instructions) {
+    return instructions.find((instruction) => {
+      if (
+        !instruction.programId.equals(AVE_PROGRAM_ID) ||
+        instruction.data.length < BUY_MIN_DATA_LENGTH
+      ) {
+        return false;
+      }
+
+      return Buffer.from(instruction.data.subarray(0, 8)).equals(
+        Buffer.from(discriminator),
+      );
+    });
+  }
+
+  setBuyMinBaseAmountOut(instruction, minBaseAmountOut) {
+    const normalizedMinBaseAmountOut = BigInt(minBaseAmountOut);
+    if (
+      normalizedMinBaseAmountOut < 0n ||
+      normalizedMinBaseAmountOut > U64_MAX
+    ) {
+      throw new Error("minBaseAmountOut must fit in a u64");
+    }
+
+    instruction.data.writeBigUInt64LE(
+      normalizedMinBaseAmountOut,
+      BUY_MIN_BASE_AMOUNT_OUT_OFFSET,
+    );
   }
 
   async getAccounts({
@@ -521,7 +556,3 @@ class AvePumpSwapSDK {
 }
 
 module.exports = AvePumpSwapSDK;
-
-
-
-
