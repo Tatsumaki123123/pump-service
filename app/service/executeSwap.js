@@ -862,6 +862,9 @@ class ExecuteSwap extends Service {
       );
     }
     const executeData = await ctx.model.ExecuteData.findOne({ eid: eid });
+    const lineData = await ctx.model.ExecuteLine.findOne({
+      lineId: executeData.line,
+    }).lean();
 
     if (!forceCheck) {
       const otherData = await ctx.model.ExecuteToken.findOne({
@@ -951,7 +954,8 @@ class ExecuteSwap extends Service {
     };
 
     const followStates = await ctx.service.ave.getFollowAggregateStates(token);
-    if (Number(followStates.all || 0) <= 0) {
+    const minFollowStates = Number(lineData?.minFollowStates || 0);
+    if (Number(followStates.all || 0) <= minFollowStates) {
       const reserveToken = await ctx.model.ReserveToken.findOne({
         token: tokenInfo.token,
         line: tokenInfo.line,

@@ -34,24 +34,20 @@ async function getSPLBalance(
   connection,
   tokenMint,
   owner,
-  allowOffCurve = false,
-  tokenProgramId,
 ) {
   try {
-    let tokenProId = TOKEN_PROGRAM_ID;
-    if (!tokenProgramId) {
-      const mintInfo = await connection.getParsedAccountInfo(tokenMint);
-      tokenProId = mintInfo.value?.owner || TOKEN_PROGRAM_ID;
-    }
-
-    let ata = getAssociatedTokenAddressSync(
-      tokenMint,
+    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
       owner,
-      allowOffCurve,
-      tokenProId,
+      { mint: tokenMint },
+      "confirmed",
     );
-    const balance = await connection.getTokenAccountBalance(ata, "confirmed");
-    return balance.value.uiAmount || 0;
+
+    return tokenAccounts.value.reduce((total, { account }) => {
+      const uiAmountString =
+        account.data?.parsed?.info?.tokenAmount?.uiAmountString;
+      const uiAmount = Number(uiAmountString);
+      return Number.isFinite(uiAmount) ? total + uiAmount : total;
+    }, 0);
   } catch (e) {
     // console.error(e);
   }

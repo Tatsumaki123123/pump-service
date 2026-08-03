@@ -16,6 +16,7 @@ module.exports = (app) => {
     autoSwap: { type: Boolean },
     firstWallet: { type: Object },
     needFirstWallet: { type: Boolean, default: false },
+    minFollowStates: { type: Number, default: 0 },
   });
 
   return mongoose.model("ExecuteLine", schema);
