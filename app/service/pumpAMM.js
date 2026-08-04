@@ -73,7 +73,9 @@ const AXIOM_COMPUTE_BUDGET_MARKER = new PublicKey(
 const AXIOM_COMPUTE_UNIT_LIMIT = Number(
   process.env.AXIOM_COMPUTE_UNIT_LIMIT || 275000,
 );
-const BUNDLE_PROVIDER = (process.env.BUNDLE_PROVIDER || "quicknode").toLowerCase();
+const BUNDLE_PROVIDER = (
+  process.env.BUNDLE_PROVIDER || "quicknode"
+).toLowerCase();
 const PUMP_AMM_DONT_FRONT = process.env.PUMP_AMM_DONT_FRONT !== "false";
 const PUMP_AMM_DONT_FRONT_PROVIDERS = new Set(["jito"]);
 const PUMP_AMM_DONT_FRONT_MARKER = new PublicKey(
@@ -233,7 +235,7 @@ class PumpAMM extends Service {
           : undefined;
         let bundleHasTip = false;
         for (let i = 0; i < wallets.length; i++) {
-          const slippage = i === 0 ? 0.1 : SLIPPAGE_BASIS_POINTS;
+          const slippage = i === 0 ? 0.05 : SLIPPAGE_BASIS_POINTS;
           const wallet = wallets[i];
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
@@ -525,7 +527,10 @@ class PumpAMM extends Service {
                     minBaseAmountOut,
                   );
                 } else {
-                  avePumpSwap.setBuyMinBaseAmountOut(aveBuyIx, minBaseAmountOut);
+                  avePumpSwap.setBuyMinBaseAmountOut(
+                    aveBuyIx,
+                    minBaseAmountOut,
+                  );
                 }
 
                 const quotedMessageV0 = new TransactionMessage({

@@ -187,7 +187,7 @@ class Ave extends Service {
     );
   }
 
-  async getList(groupSort) {
+  async getList(groupSort = {}) {
     const { ctx } = this;
 
     const category = groupSort.category || "pump_out_new";
@@ -197,19 +197,66 @@ class Ave extends Service {
       return list;
     }
 
-    const sort_field = groupSort.sort_field || "created_at";
-    const sort_order = groupSort.sort_order || "asc";
-    const mcp_min = groupSort.mcp_min || 4000;
-    const mcp_max = groupSort.mcp_max || 20000;
-    const create_day = groupSort.create_day || 10;
-    const create_min =
-      Math.round(new Date().getTime() / 1000) - create_day * 24 * 3600;
-    const holder_min = groupSort.holder_min || 30;
-    const uri = `${AVE_TREASURE_API_URL}v1api/v4/tokens/treasure/list?chain=solana&sort=${sort_field}&sort_dir=${sort_order}&created_at_min=${create_min}&marketcap_min=${mcp_min}&marketcap_max=${mcp_max}&holder_min=${holder_min}&pageNO=1&pageSize=500&category=${category}`;
+    const sortField = groupSort.sort_field || "created_at";
+    const sortOrder = groupSort.sort_order || "asc";
+    const marketCapMin = groupSort.mcp_min ?? 4000;
+    const marketCapMax = groupSort.mcp_max ?? 20000;
+    const holderMin = groupSort.holder_min ?? 30;
+    const createDay = Number(groupSort.create_day ?? 10);
+    const createDayEnd = Number(groupSort.create_day_end ?? 0);
+    const pageNo = Number(groupSort.page_no ?? 1);
+    const pageSize = Number(groupSort.page_size ?? 500);
+
+    if (
+      !Number.isFinite(createDay) ||
+      !Number.isFinite(createDayEnd) ||
+      createDay < 0 ||
+      createDayEnd < 0 ||
+      createDay < createDayEnd
+    ) {
+      throw new Error(
+        "create_day and create_day_end must be non-negative, and create_day must be greater than or equal to create_day_end",
+      );
+    }
+    if (
+      !Number.isInteger(pageNo) ||
+      !Number.isInteger(pageSize) ||
+      pageNo < 1 ||
+      pageSize < 1
+    ) {
+      throw new Error("page_no and page_size must be positive integers");
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const params = new URLSearchParams({
+      chain: "solana",
+      sort: sortField,
+      sort_dir: sortOrder,
+      created_at_min: String(Math.floor(now - createDay * 24 * 3600)),
+      created_at_max: String(Math.floor(now - createDayEnd * 24 * 3600)),
+      marketcap_min: String(marketCapMin),
+      marketcap_max: String(marketCapMax),
+      holder_min: String(holderMin),
+      pageNO: String(pageNo),
+      pageSize: String(pageSize),
+      category,
+    });
+    if (groupSort.amm) {
+      params.set("amm", groupSort.amm);
+    }
+    if (groupSort.self_address) {
+      params.set("self_address", groupSort.self_address);
+    }
+
+    const uri = new URL(
+      "v1api/v4/tokens/treasure/list",
+      AVE_TREASURE_API_URL,
+    );
+    uri.search = params.toString();
 
     const X_AUTH = await this.getXAuth();
 
-    const res = await ctx.curl(uri, {
+    const res = await ctx.curl(uri.toString(), {
       dataType: "json",
       headers: {
         "x-auth": X_AUTH,
