@@ -64,18 +64,19 @@ class ExecuteSwap extends BaseController {
 
   async sellToken() {
     const { ctx } = this;
-    const { tid, type, walletAddress } = ctx.request.body;
+    const { tid, type, walletAddress, percent } = ctx.request.body;
     if (tid && type) {
       let res;
       if (walletAddress) {
         res = await ctx.service.executeSwap.sellTokenByWallet(
           tid,
           walletAddress,
+          percent,
         );
       } else if (Array.isArray(type)) {
-        res = await ctx.service.executeSwap.sellTokenArr(tid, type);
+        res = await ctx.service.executeSwap.sellTokenArr(tid, type, percent);
       } else {
-        res = await ctx.service.executeSwap.sellToken(tid, type);
+        res = await ctx.service.executeSwap.sellToken(tid, type, percent);
       }
       this.success(res);
     } else {

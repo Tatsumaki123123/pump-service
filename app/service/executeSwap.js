@@ -476,7 +476,7 @@ class ExecuteSwap extends Service {
   }
 
   // sell token
-  async sellToken(tid, type = "all") {
+  async sellToken(tid, type = "all", percent = 100) {
     const { ctx } = this;
     const tokenInfo = await ctx.model.ExecuteToken.findOne({ tid: tid });
     if (!tokenInfo) {
@@ -492,7 +492,7 @@ class ExecuteSwap extends Service {
       } else if (tokenInfo.amm === RAYDIUM_LANUCH_NAME) {
         await ctx.service.raydiumLaunch.batchSellToken(token, wallets, type);
       } else if (tokenInfo.amm === PUMP_AMM_NAME) {
-        await ctx.service.pumpAMM.batchSellToken(token, wallets, type);
+        await ctx.service.pumpAMM.batchSellToken(token, wallets, type, percent);
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
         await ctx.service.pumpfun.batchSellToken(token, wallets, type);
       } else {
@@ -539,7 +539,7 @@ class ExecuteSwap extends Service {
     }
   }
 
-  async sellTokenByWallet(tid, walletAddress) {
+  async sellTokenByWallet(tid, walletAddress, percent = 100) {
     const { ctx } = this;
     const tokenInfo = await ctx.model.ExecuteToken.findOne({ tid: tid });
     if (!tokenInfo) {
@@ -559,7 +559,12 @@ class ExecuteSwap extends Service {
           wallets,
         );
       } else if (tokenInfo.amm === PUMP_AMM_NAME) {
-        const res = await ctx.service.pumpAMM.batchSellToken(token, wallets);
+        const res = await ctx.service.pumpAMM.batchSellToken(
+          token,
+          wallets,
+          "",
+          percent,
+        );
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
         const res = await ctx.service.pumpfun.batchSellToken(token, wallets);
       } else {
@@ -571,9 +576,9 @@ class ExecuteSwap extends Service {
     }
   }
 
-  async sellTokenArr(tid, types) {
+  async sellTokenArr(tid, types, percent = 100) {
     for (const type of types) {
-      await this.sellToken(tid, type);
+      await this.sellToken(tid, type, percent);
     }
     return true;
   }

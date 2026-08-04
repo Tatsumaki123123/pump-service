@@ -668,11 +668,19 @@ class PumpAMM extends Service {
     }
   }
 
-  async batchSellToken(token, wallets, type = "") {
+  async batchSellToken(token, wallets, type = "", percent = 100) {
     const { ctx } = this;
     console.log(chalk.green("\n batch sell Token----"));
 
     if (token && wallets) {
+      percent = Number(percent);
+      if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+        throw new Error(
+          "percent must be greater than 0 and less than or equal to 100",
+        );
+      }
+      const percentBasisPoints = BigInt(Math.round(percent * 100));
+
       const tokenMint = new PublicKey(token);
       const tokenProgramId = await getTokenProgramId(tokenMint);
 
@@ -682,15 +690,20 @@ class PumpAMM extends Service {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
-        const tokenAmount = await getSPLBalance(
+        const balance = await getSPLBalance(
           connection,
           tokenMint,
           keypair.publicKey,
           tokenProgramId,
         );
+        const balanceRaw = BigInt(Math.trunc(balance * 10 ** 6));
+        const tokenAmountRaw = (balanceRaw * percentBasisPoints) / 10000n;
+        const tokenAmount = Number(tokenAmountRaw) / 10 ** 6;
 
-        console.log(`${user.toBase58()} sell ${tokenAmount} ${token}`);
-        if (tokenAmount >= 100) {
+        console.log(
+          `${user.toBase58()} sell ${tokenAmount} (${percent}%) ${token}`,
+        );
+        if (balance >= 100 && tokenAmountRaw > 0n) {
           const walletAddress = user.toBase58();
           if (seenSellWallets.has(walletAddress)) {
             console.log(
