@@ -22,6 +22,7 @@ const { createTroProxyInstruction } = require("../libs/trogan");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
 const { sendAstralaneTransaction } = require("../utils/astralane");
+const { splitIntoBundles } = require("../utils/utils");
 
 const okxSwap = new OKXSwapSDK();
 const jupSwap = new JupSDK();
@@ -159,11 +160,40 @@ class RaydiumLaunch extends Service {
     }
   }
 
-  async batchSellToken(token, wallets) {
+  async batchSellToken(token, wallets, type = "", percent = 100) {
     const { ctx } = this;
     console.log(chalk.green("\n Raydium cpmm batch sell Token----"));
 
     if (token && wallets) {
+      const bundles = splitIntoBundles(wallets);
+      if (bundles.length > 1) {
+        for (const bundleWallets of bundles) {
+          await this.batchSellToken(token, bundleWallets, type, percent);
+        }
+        return true;
+      }
+
+      const sellAll = String(type).toLowerCase() === "all";
+      const getWalletSellPercent = (wallet) => {
+        const walletPercent =
+          sellAll
+            ? 100
+            : typeof wallet.sellRatio === "number"
+            ? wallet.sellRatio * 100
+            : percent;
+        const normalizedPercent = Number(walletPercent);
+        if (
+          !Number.isFinite(normalizedPercent) ||
+          normalizedPercent <= 0 ||
+          normalizedPercent > 100
+        ) {
+          throw new Error(
+            "sell percent must be greater than 0 and less than or equal to 100"
+          );
+        }
+        return normalizedPercent;
+      };
+
       const tokenMint = new PublicKey(token);
       const { blockhash } = await connection.getLatestBlockhash();
       const sellTxns = [];
@@ -173,14 +203,18 @@ class RaydiumLaunch extends Service {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
-        const tokenAmount = await getSPLBalanceAmount(
-          connection,
-          tokenMint,
-          keypair.publicKey
+        const balanceRaw = BigInt(
+          await getSPLBalanceAmount(connection, tokenMint, keypair.publicKey)
         );
+        const sellPercent = getWalletSellPercent(wallet);
+        const percentBasisPoints = BigInt(Math.round(sellPercent * 100));
+        const tokenAmountRaw = (balanceRaw * percentBasisPoints) / 10000n;
+        const tokenAmount = tokenAmountRaw.toString();
 
-        console.log(`${user.toBase58()} sell ${tokenAmount} ${token}`);
-        if (tokenAmount >= 100) {
+        console.log(
+          `${user.toBase58()} sell ${tokenAmount} (${sellPercent}%) ${token}`
+        );
+        if ((sellAll ? balanceRaw > 0n : balanceRaw >= 100n) && tokenAmountRaw > 0n) {
           newWallets.push({ ...wallet, tokenAmount });
         }
       }

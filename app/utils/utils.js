@@ -16,6 +16,28 @@ function sleep(s) {
   return new Promise((resolve) => setTimeout(resolve, s * 1000));
 }
 
+function splitIntoBundles(items, maxSize = 5) {
+  if (!Array.isArray(items)) {
+    throw new TypeError("items must be an array");
+  }
+  if (!Number.isInteger(maxSize) || maxSize < 2) {
+    throw new RangeError("maxSize must be an integer greater than 1");
+  }
+
+  const bundles = [];
+  let index = 0;
+  while (index < items.length) {
+    const remaining = items.length - index;
+    let size = Math.min(maxSize, remaining);
+    if (remaining - size === 1) {
+      size -= 1;
+    }
+    bundles.push(items.slice(index, index + size));
+    index += size;
+  }
+  return bundles;
+}
+
 function retry(func, maxAttempts = 3) {
   let attempts = 0;
   while (attempts < maxAttempts) {
@@ -94,6 +116,7 @@ function reverseBnLayoutFormatter(obj, options = {}) {
 module.exports = {
   retrieveEnvVariable,
   sleep,
+  splitIntoBundles,
   retry,
   retryAsync,
   bnLayoutFormatter,

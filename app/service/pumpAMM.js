@@ -45,7 +45,7 @@ const {
 } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const moment = require("moment");
-const { sleep } = require("../utils/utils");
+const { sleep, splitIntoBundles } = require("../utils/utils");
 const { getRandomAccount } = require("../utils/slot0trade");
 
 const NEXTBLOCK_TIP_EVERY_TX = process.env.NEXTBLOCK_TIP_EVERY_TX === "true";
@@ -673,13 +673,33 @@ class PumpAMM extends Service {
     console.log(chalk.green("\n batch sell Token----"));
 
     if (token && wallets) {
-      percent = Number(percent);
+      const sellAll = String(type).toLowerCase() === "all";
+      const getWalletSellPercent = (wallet) => {
+        const walletPercent =
+          sellAll
+            ? 100
+            : typeof wallet.sellRatio === "number"
+            ? wallet.sellRatio * 100
+            : percent;
+        const normalizedPercent = Number(walletPercent);
+        if (
+          !Number.isFinite(normalizedPercent) ||
+          normalizedPercent <= 0 ||
+          normalizedPercent > 100
+        ) {
+          throw new Error(
+            "sell percent must be greater than 0 and less than or equal to 100",
+          );
+        }
+        return normalizedPercent;
+      };
+
+      percent = sellAll ? 100 : Number(percent);
       if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
         throw new Error(
           "percent must be greater than 0 and less than or equal to 100",
         );
       }
-      const percentBasisPoints = BigInt(Math.round(percent * 100));
 
       const tokenMint = new PublicKey(token);
       const tokenProgramId = await getTokenProgramId(tokenMint);
@@ -696,14 +716,16 @@ class PumpAMM extends Service {
           keypair.publicKey,
           tokenProgramId,
         );
+        const sellPercent = getWalletSellPercent(wallet);
+        const percentBasisPoints = BigInt(Math.round(sellPercent * 100));
         const balanceRaw = BigInt(Math.trunc(balance * 10 ** 6));
         const tokenAmountRaw = (balanceRaw * percentBasisPoints) / 10000n;
         const tokenAmount = Number(tokenAmountRaw) / 10 ** 6;
 
         console.log(
-          `${user.toBase58()} sell ${tokenAmount} (${percent}%) ${token}`,
+          `${user.toBase58()} sell ${tokenAmount} (${sellPercent}%) ${token}`,
         );
-        if (balance >= 100 && tokenAmountRaw > 0n) {
+        if ((sellAll ? balance > 0 : balance >= 100) && tokenAmountRaw > 0n) {
           const walletAddress = user.toBase58();
           if (seenSellWallets.has(walletAddress)) {
             console.log(
@@ -718,8 +740,8 @@ class PumpAMM extends Service {
 
       newWallets.reverse();
 
-      const { blockhash } = await connection.getLatestBlockhash();
       const func = async (wallets) => {
+        const { blockhash } = await connection.getLatestBlockhash();
         const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
         const sellTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
@@ -880,38 +902,14 @@ class PumpAMM extends Service {
         }
         return true;
       };
-      if (type === "all") {
-        let sellAllObj = {
-          thirdBuy: [],
-          secondBuy: [],
-          multiBuy: [],
-          firstBuy: [],
-          otherBuy: [],
-        };
-        newWallets.forEach((wallet) => {
-          if (wallet.firstBuy) {
-            sellAllObj.firstBuy.push(wallet);
-          } else if (wallet.secondBuy) {
-            sellAllObj.secondBuy.push(wallet);
-          } else if (wallet.multiBuy) {
-            sellAllObj.multiBuy.push(wallet);
-          } else if (wallet.thirdBuy) {
-            sellAllObj.thirdBuy.push(wallet);
-          } else {
-            sellAllObj.otherBuy.push(wallet);
-          }
-        });
-
-        for (const wallets of Object.values(sellAllObj)) {
-          if (wallets.length > 0) {
-            await func(wallets);
-            await sleep(0.5);
-          }
+      const bundles = splitIntoBundles(newWallets);
+      for (let i = 0; i < bundles.length; i++) {
+        await func(bundles[i]);
+        if (i < bundles.length - 1) {
+          await sleep(0.5);
         }
-        return true;
-      } else {
-        return func(newWallets);
       }
+      return true;
     } else {
       throw new Error("batch sell Token: param error");
     }

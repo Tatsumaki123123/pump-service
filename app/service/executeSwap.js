@@ -484,21 +484,47 @@ class ExecuteSwap extends Service {
     }
     const token = tokenInfo.token;
     const line = tokenInfo.line;
-    console.log(chalk.green(`Step 4: Selling ${token}, ${type}`));
-    const wallets = await this.getWalletsWithLineFirstWallet(line, type);
+    const sellType = String(type).toLowerCase();
+    const sellPercent = sellType === "all" ? 100 : percent;
+    console.log(chalk.green(`Step 4: Selling ${token}, ${sellType}`));
+    const wallets = await this.getWalletsWithSellConfig(
+      line,
+      sellType,
+      sellPercent,
+    );
     if (wallets && wallets.length > 0 && token) {
       if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
-        await ctx.service.raydiumCpmm.batchSellToken(token, wallets, type);
+        await ctx.service.raydiumCpmm.batchSellToken(
+          token,
+          wallets,
+          sellType,
+          sellPercent,
+        );
       } else if (tokenInfo.amm === RAYDIUM_LANUCH_NAME) {
-        await ctx.service.raydiumLaunch.batchSellToken(token, wallets, type);
+        await ctx.service.raydiumLaunch.batchSellToken(
+          token,
+          wallets,
+          sellType,
+          sellPercent,
+        );
       } else if (tokenInfo.amm === PUMP_AMM_NAME) {
-        await ctx.service.pumpAMM.batchSellToken(token, wallets, type, percent);
+        await ctx.service.pumpAMM.batchSellToken(
+          token,
+          wallets,
+          sellType,
+          sellPercent,
+        );
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
-        await ctx.service.pumpfun.batchSellToken(token, wallets, type);
+        await ctx.service.pumpfun.batchSellToken(
+          token,
+          wallets,
+          sellType,
+          sellPercent,
+        );
       } else {
         throw new Error("Not pump token");
       }
-      if (type === "all") {
+      if (sellType === "all") {
         await ctx.model.ExecuteToken.updateOne(
           { tid: tokenInfo.tid },
           { status: "sell" },
@@ -583,14 +609,56 @@ class ExecuteSwap extends Service {
     return true;
   }
 
-  getBuyStageConfig(config, type = "all") {
-    const keyMap = {
-      first: "firstBuy",
-      second: "secondBuy",
-      third: "thirdBuy",
-      multi: "multiBuy",
+  normalizeStageType(value = "first") {
+    const normalized = String(value).toLowerCase();
+    const typeMap = {
+      first: "first",
+      firstbuy: "first",
+      firstsell: "first",
+      second: "second",
+      secondbuy: "second",
+      secondsell: "second",
+      third: "third",
+      thirdbuy: "third",
+      thirdsell: "third",
+      multi: "multi",
+      multibuy: "multi",
+      multisell: "multi",
     };
-    const stageKey = keyMap[type];
+    return typeMap[normalized] || normalized;
+  }
+
+  getStageKey(type, action) {
+    const stageType = this.normalizeStageType(type);
+    const keyMap = {
+      first: `first${action}`,
+      second: `second${action}`,
+      third: `third${action}`,
+      multi: `multi${action}`,
+    };
+    return keyMap[stageType];
+  }
+
+  normalizeSellRatio(value, defaultRatio = 1) {
+    const rawRatio =
+      typeof value === "undefined" || value === null ? defaultRatio : value;
+    const ratio = Number(rawRatio);
+    if (!Number.isFinite(ratio) || ratio <= 0) {
+      throw new Error("sellRatio must be greater than 0");
+    }
+    if (ratio <= 1) {
+      return ratio;
+    }
+    if (ratio <= 100) {
+      return ratio / 100;
+    }
+    throw new Error(
+      "sellRatio must be between 0 and 1, or between 0 and 100 percent",
+    );
+  }
+
+  getBuyStageConfig(config, type = "all") {
+    const stageKey = this.getStageKey(type, "Buy");
     const stageConfig = stageKey ? config[stageKey] : null;
     const buyAmountArr = Array.isArray(config.buyAmount)
       ? config.buyAmount
@@ -635,6 +703,48 @@ class ExecuteSwap extends Service {
         ...stageFlags,
         buyAmount: defaultBuyAmount,
         buyAmountArr,
+      },
+    };
+  }
+
+  getSellStageConfig(config, type = "all", percent = 100) {
+    const stageKey = this.getStageKey(type, "Sell");
+    const stageConfig = stageKey ? config[stageKey] : null;
+    const defaultSellRatio = this.normalizeSellRatio(percent);
+    const stageFlags = {
+      firstSell: false,
+      secondSell: false,
+      thirdSell: false,
+      multiSell: false,
+    };
+    if (stageKey) {
+      stageFlags[stageKey] = true;
+    }
+
+    if (stageConfig && typeof stageConfig === "object") {
+      const { enable = false, ...stageOverrides } = stageConfig;
+      const sellRatio = this.normalizeSellRatio(
+        stageOverrides.sellRatio,
+        defaultSellRatio,
+      );
+      return {
+        enable,
+        config: {
+          ...config,
+          ...stageFlags,
+          ...stageOverrides,
+          sellRatio,
+          [stageKey]: enable,
+        },
+      };
+    }
+
+    return {
+      enable: stageConfig === true,
+      config: {
+        ...config,
+        ...stageFlags,
+        sellRatio: defaultSellRatio,
       },
     };
   }
@@ -697,6 +807,35 @@ class ExecuteSwap extends Service {
     return newWallets;
   }
 
+  async getWalletsWithSellConfig(line, type = "all", percent = 100) {
+    console.log(chalk.green("getWalletsWithSellConfig:", line, type));
+    const wallets = await this.getWallets(line);
+    const walletConfigs = await this.getWalletConfig(line);
+    if (String(type).toLowerCase() === "all") {
+      return wallets.map((wallet, index) => ({
+        ...wallet,
+        ...(walletConfigs[index] || {}),
+        sellRatio: 1,
+        stageEnable: true,
+      }));
+    }
+
+    const stageTypes = [type];
+    const data = walletConfigs.flatMap((config, index) => {
+      const wallet = wallets[index];
+      return stageTypes
+        .map((stageType) => this.getSellStageConfig(config, stageType, percent))
+        .filter((stage) => stage.enable)
+        .map((stage) => ({
+          ...wallet,
+          ...stage.config,
+          stageEnable: true,
+        }));
+    });
+
+    return data.filter((wallet) => wallet.stageEnable);
+  }
+
   async getWalletsWithLineFirstWallet(line, type = "all") {
     let newWallets = await this.getWalletsWithConfig(line, type);
     const lineData = await this.ctx.model.ExecuteLine.findOne({
@@ -704,21 +843,7 @@ class ExecuteSwap extends Service {
     }).lean();
     const { firstWallet, needFirstWallet } = lineData;
     if (firstWallet && needFirstWallet) {
-      const normalizeBuyType = (value = "first") => {
-        const normalized = String(value).toLowerCase();
-        const typeMap = {
-          first: "first",
-          firstbuy: "first",
-          second: "second",
-          secondbuy: "second",
-          third: "third",
-          thirdbuy: "third",
-          multi: "multi",
-          multibuy: "multi",
-        };
-        return typeMap[normalized] || normalized;
-      };
-      const firstType = normalizeBuyType(firstWallet.type);
+      const firstType = this.normalizeStageType(firstWallet.type);
       const typeKey = `${firstType}Buy`;
       if (type === firstType || type === "all") {
         const keypair = Keypair.fromSecretKey(

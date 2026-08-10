@@ -22,7 +22,7 @@ const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
 const RaydiumRouterSDK = require("../libs/raydiumRouter");
 const { sendAstralaneTransaction } = require("../utils/astralane");
-const { sleep } = require("../utils/utils");
+const { sleep, splitIntoBundles } = require("../utils/utils");
 
 const okxSwap = new OKXSwapSDK();
 const jupSwap = new JupSDK();
@@ -206,11 +206,32 @@ class RaydiumCpmm extends Service {
     }
   }
 
-  async batchSellToken(token, wallets, type = "") {
+  async batchSellToken(token, wallets, type = "", percent = 100) {
     const { ctx } = this;
     console.log(chalk.green("\n Raydium cpmm batch sell Token----"));
 
     if (token && wallets) {
+      const sellAll = String(type).toLowerCase() === "all";
+      const getWalletSellPercent = (wallet) => {
+        const walletPercent =
+          sellAll
+            ? 100
+            : typeof wallet.sellRatio === "number"
+            ? wallet.sellRatio * 100
+            : percent;
+        const normalizedPercent = Number(walletPercent);
+        if (
+          !Number.isFinite(normalizedPercent) ||
+          normalizedPercent <= 0 ||
+          normalizedPercent > 100
+        ) {
+          throw new Error(
+            "sell percent must be greater than 0 and less than or equal to 100"
+          );
+        }
+        return normalizedPercent;
+      };
+
       const tokenMint = new PublicKey(token);
       const newWallets = [];
       const slippage = wallets.length === 1 ? 0.01 : SLIPPAGE_BASIS_POINTS;
@@ -218,14 +239,18 @@ class RaydiumCpmm extends Service {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
-        const tokenAmount = await getSPLBalanceAmount(
-          connection,
-          tokenMint,
-          keypair.publicKey
+        const balanceRaw = BigInt(
+          await getSPLBalanceAmount(connection, tokenMint, keypair.publicKey)
         );
+        const sellPercent = getWalletSellPercent(wallet);
+        const percentBasisPoints = BigInt(Math.round(sellPercent * 100));
+        const tokenAmountRaw = (balanceRaw * percentBasisPoints) / 10000n;
+        const tokenAmount = tokenAmountRaw.toString();
 
-        console.log(`${user.toBase58()} sell ${tokenAmount} ${token}`);
-        if (tokenAmount >= 100) {
+        console.log(
+          `${user.toBase58()} sell ${tokenAmount} (${sellPercent}%) ${token}`
+        );
+        if ((sellAll ? balanceRaw > 0n : balanceRaw >= 100n) && tokenAmountRaw > 0n) {
           newWallets.push({ ...wallet, tokenAmount });
         }
       }
@@ -339,35 +364,14 @@ class RaydiumCpmm extends Service {
         return true;
       };
 
-      if (type === "all") {
-        let sellAllObj = {
-          thirdBuy: [],
-          secondBuy: [],
-          multiBuy: [],
-          firstBuy: [],
-        };
-        newWallets.forEach((wallet) => {
-          if (wallet.firstBuy) {
-            sellAllObj.firstBuy.push(wallet);
-          } else if (wallet.secondBuy) {
-            sellAllObj.secondBuy.push(wallet);
-          } else if (wallet.multiBuy) {
-            sellAllObj.multiBuy.push(wallet);
-          } else if (wallet.thirdBuy) {
-            sellAllObj.thirdBuy.push(wallet);
-          }
-        });
-
-        for (const wallets of Object.values(sellAllObj)) {
-          if (wallets.length > 0) {
-            await func(wallets);
-            await sleep(0.5);
-          }
+      const bundles = splitIntoBundles(newWallets);
+      for (let i = 0; i < bundles.length; i++) {
+        await func(bundles[i]);
+        if (i < bundles.length - 1) {
+          await sleep(0.5);
         }
-        return true;
-      } else {
-        return func(newWallets);
       }
+      return true;
     } else {
       throw new Error("batch sell Token: param error");
     }
