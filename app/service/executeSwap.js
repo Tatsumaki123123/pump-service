@@ -657,6 +657,27 @@ class ExecuteSwap extends Service {
     );
   }
 
+  resolveStageBuyAmount(value, defaultBuyAmount, stageKey) {
+    const rawValue = value ?? defaultBuyAmount;
+    const rawAmounts = Array.isArray(rawValue) ? rawValue : [rawValue];
+    if (rawAmounts.length === 0) {
+      throw new Error(`${stageKey}.buyAmount must not be an empty array`);
+    }
+
+    const buyAmounts = rawAmounts.map((amount) => Number(amount));
+    if (buyAmounts.some((amount) => !Number.isFinite(amount) || amount <= 0)) {
+      throw new Error(
+        `${stageKey}.buyAmount must contain only positive numbers`,
+      );
+    }
+
+    const randomIndex = Math.floor(Math.random() * buyAmounts.length);
+    return {
+      buyAmount: buyAmounts[randomIndex],
+      buyAmountArr: buyAmounts,
+    };
+  }
+
   getBuyStageConfig(config, type = "all") {
     const stageKey = this.getStageKey(type, "Buy");
     const stageConfig = stageKey ? config[stageKey] : null;
@@ -683,14 +704,31 @@ class ExecuteSwap extends Service {
 
     if (stageConfig && typeof stageConfig === "object") {
       const { enable = false, ...stageOverrides } = stageConfig;
+      if (!enable) {
+        return {
+          enable: false,
+          config: {
+            ...config,
+            ...stageFlags,
+            ...stageOverrides,
+            [stageKey]: false,
+          },
+        };
+      }
+      const { buyAmount, buyAmountArr: stageBuyAmountArr } =
+        this.resolveStageBuyAmount(
+          stageOverrides.buyAmount,
+          defaultBuyAmount,
+          stageKey,
+        );
       return {
         enable,
         config: {
           ...config,
           ...stageFlags,
           ...stageOverrides,
-          buyAmount: stageOverrides.buyAmount ?? defaultBuyAmount,
-          buyAmountArr,
+          buyAmount,
+          buyAmountArr: stageBuyAmountArr,
           [stageKey]: enable,
         },
       };
@@ -812,12 +850,32 @@ class ExecuteSwap extends Service {
     const wallets = await this.getWallets(line);
     const walletConfigs = await this.getWalletConfig(line);
     if (String(type).toLowerCase() === "all") {
-      return wallets.map((wallet, index) => ({
+      const newWallets = wallets.map((wallet, index) => ({
         ...wallet,
         ...(walletConfigs[index] || {}),
         sellRatio: 1,
         stageEnable: true,
       }));
+      const lineData = await this.ctx.model.ExecuteLine.findOne({
+        lineId: line,
+      }).lean();
+      const { firstWallet, needFirstWallet } = lineData;
+      if (
+        !firstWallet ||
+        !needFirstWallet ||
+        newWallets.some((wallet) => wallet.address === firstWallet.address)
+      ) {
+        return newWallets;
+      }
+
+      const firstWalletConfig = {
+        ...this.buildFirstWalletConfig(firstWallet),
+        sellRatio: 1,
+        stageEnable: true,
+      };
+      return firstWallet.position === "after"
+        ? [...newWallets, firstWalletConfig]
+        : [firstWalletConfig, ...newWallets];
     }
 
     const stageTypes = [type];
@@ -836,6 +894,24 @@ class ExecuteSwap extends Service {
     return data.filter((wallet) => wallet.stageEnable);
   }
 
+  buildFirstWalletConfig(firstWallet) {
+    const keypair = Keypair.fromSecretKey(bs58.decode(firstWallet.privateKey));
+    const { privateKey, ...config } = firstWallet;
+    return {
+      address: firstWallet.address,
+      publicKey: new PublicKey(firstWallet.address),
+      buyAmount: firstWallet.buyAmount,
+      buyAmountArr: [firstWallet.buyAmount],
+      keypair,
+      limit: 2000000,
+      price: 0,
+      fee: 0.00002,
+      ...config,
+      isFirstWallet: true,
+      isBundle: firstWallet.isBundle !== false,
+    };
+  }
+
   async getWalletsWithLineFirstWallet(line, type = "all") {
     let newWallets = await this.getWalletsWithConfig(line, type);
     const lineData = await this.ctx.model.ExecuteLine.findOne({
@@ -846,23 +922,7 @@ class ExecuteSwap extends Service {
       const firstType = this.normalizeStageType(firstWallet.type);
       const typeKey = `${firstType}Buy`;
       if (type === firstType || type === "all") {
-        const keypair = Keypair.fromSecretKey(
-          bs58.decode(firstWallet.privateKey),
-        );
-        const { privateKey, ...config } = firstWallet;
-        const firstWalletConfig = {
-          address: firstWallet.address,
-          publicKey: new PublicKey(firstWallet.address),
-          buyAmount: firstWallet.buyAmount,
-          buyAmountArr: [firstWallet.buyAmount],
-          keypair,
-          limit: 2000000,
-          price: 0,
-          fee: 0.00002,
-          ...config,
-          isFirstWallet: true,
-          isBundle: firstWallet.isBundle !== false,
-        };
+        const firstWalletConfig = this.buildFirstWalletConfig(firstWallet);
         firstWalletConfig[typeKey] = true;
         if (firstWallet.position === "after") {
           if (type === "all") {
@@ -912,17 +972,20 @@ class ExecuteSwap extends Service {
         amounts.push(value);
       }
     };
+    const addAmounts = (value) => {
+      if (Array.isArray(value)) {
+        value.forEach(addAmount);
+      } else {
+        addAmount(value);
+      }
+    };
 
-    if (Array.isArray(config.buyAmount)) {
-      config.buyAmount.forEach(addAmount);
-    } else {
-      addAmount(config.buyAmount);
-    }
+    addAmounts(config.buyAmount);
 
     ["firstBuy", "secondBuy", "thirdBuy", "multiBuy"].forEach((key) => {
       const stageConfig = config[key];
       if (stageConfig && typeof stageConfig === "object") {
-        addAmount(stageConfig.buyAmount);
+        addAmounts(stageConfig.buyAmount);
       }
     });
 
