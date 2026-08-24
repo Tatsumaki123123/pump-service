@@ -103,36 +103,15 @@ class ExecuteSwap extends BaseController {
 
   async getAxiomWallets() {
     const { ctx } = this;
-    const { startTime, endTime, eid, wait = false } = ctx.request.body;
-    const params = {
+    const { startTime, endTime, eid } = ctx.request.body;
+    const res = await ctx.service.axiomWallet.getAxiomWallets({
       startTime,
       endTime,
       eid,
-    };
-
-    if (!wait) {
-      const task = await ctx.service.axiomWallet.startAxiomWalletScan(params);
-      ctx.logger.info(`[Axiom] task response preparing: taskId=${task.taskId}`);
-      this.success(task);
-      ctx.logger.info(`[Axiom] task response written: taskId=${task.taskId}`);
-      return;
-    }
-
-    const res = await ctx.service.axiomWallet.getAxiomWallets({
-      ...params,
     });
     ctx.logger.info(`[Axiom] response preparing: total=${res.total}`);
     this.success(res);
     ctx.logger.info(`[Axiom] response written: total=${res.total}`);
-  }
-
-  async getAxiomWalletScanTask() {
-    const { ctx } = this;
-    const { taskId } = ctx.request.body;
-    if (!taskId) throw new Error("taskId is required");
-
-    const res = await ctx.service.axiomWallet.getAxiomWalletScanTask(taskId);
-    this.success(res);
   }
 
   async getWalletPrivateKey() {

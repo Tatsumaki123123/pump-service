@@ -81,7 +81,7 @@ POST /v1/execute/getAxiomWallets
 
 接口会先按 `ExecuteData.createTime` 查询时间范围内的执行批次，再取这些批次的 `eid` 查询 `ExecuteWallet`，最后检查每个钱包最近 10 笔交易中是否有包含 Axiom program 的成功交易。每个钱包只要找到一笔符合条件的交易就停止判断；接口不会继续分页查询更早的历史交易。
 
-默认异步执行：接口会立即返回 `taskId`，避免钱包数量较多时被网关的 HTTP 超时中断。使用下面的任务查询接口轮询，`status` 为 `completed` 时在 `data.result.list` 获取结果。任务状态和结果存储在 MongoDB，并在创建 30 分钟后自动清理。
+接口会一直等待扫描完成，最后返回 `total/list`。该接口不需要传递 `wait` 参数。
 
 接口固定使用项目 `RPC_URL` 配置的 QuickNode RPC。每个钱包只查询最近 10 笔交易，每个钱包最多发起一次签名查询和一次交易详情查询；RPC 请求默认限制为每秒 10 次，并允许多个钱包并行查询。每个钱包找到第一笔 Axiom 交易后立即停止本钱包的判断；收到限流响应时会自动退避重试。可以通过环境变量调整：
 
@@ -89,55 +89,6 @@ POST /v1/execute/getAxiomWallets
 AXIOM_RPC_REQUESTS_PER_SECOND=10
 AXIOM_WALLET_CONCURRENCY=10
 AXIOM_RPC_RETRY_ATTEMPTS=5
-```
-
-异步提交响应：
-
-```json
-{
-  "code": 0,
-  "data": {
-    "taskId": "axiom-...",
-    "status": "pending",
-    "createdAt": "2026-08-24T00:00:00.000Z"
-  }
-}
-```
-
-### 查询扫描任务
-
-```text
-POST /v1/execute/getAxiomWalletScanTask
-```
-
-```json
-{
-  "taskId": "axiom-..."
-}
-```
-
-```bash
-curl -X POST http://localhost:8899/v1/execute/getAxiomWalletScanTask \
-  -H "Content-Type: application/json" \
-  -d '{
-    "taskId": "axiom-..."
-  }'
-```
-
-处理中返回 `status: "pending"`；完成时返回：
-
-```json
-{
-  "code": 0,
-  "data": {
-    "taskId": "axiom-...",
-    "status": "completed",
-    "result": {
-      "total": 95,
-      "list": []
-    }
-  }
-}
 ```
 
 QuickNode 的限制是每秒 50 次请求。该接口每个钱包最多两次 RPC 请求；为给项目其他 QuickNode 请求预留空间，默认保持 `AXIOM_RPC_REQUESTS_PER_SECOND=10`，不要直接设置为 50。收到 429 后会暂停全局 RPC 队列至少 2 秒，再继续重试。
@@ -155,7 +106,6 @@ FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9
 | `startTime` | string/number | 是 | 开始时间。支持 ISO 时间、Unix 秒时间戳或毫秒时间戳 |
 | `endTime` | string/number | 是 | 结束时间。支持 ISO 时间、Unix 秒时间戳或毫秒时间戳 |
 | `eid` | number | 否 | 只查询指定 `eid` 下的钱包 |
-| `wait` | boolean | 否 | 默认 `false`，立即返回任务 ID；传 `true` 时等待扫描完成并直接返回结果 |
 
 ISO 时间示例：
 
@@ -173,14 +123,13 @@ curl -X POST http://localhost:8899/v1/execute/getAxiomWallets \
   -d '{
     "startTime": "2026-08-01T00:00:00+08:00",
     "endTime": "2026-08-24T23:59:59+08:00",
-    "eid": 123,
-    "wait": false
+    "eid": 123
   }'
 ```
 
 ### 同步返回示例
 
-仅当请求传入 `"wait": true` 时，原接口直接返回以下结果。钱包数量较多时建议使用默认异步模式。
+接口会等待扫描完成后返回以下结果。
 
 ```json
 {

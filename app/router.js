@@ -25,10 +25,6 @@ module.exports = (app) => {
     controller.executeSwap.getAxiomWallets,
   );
   router.post(
-    "/v1/execute/getAxiomWalletScanTask",
-    controller.executeSwap.getAxiomWalletScanTask,
-  );
-  router.post(
     "/v1/execute/getWalletPrivateKey",
     controller.executeSwap.getWalletPrivateKey,
   );

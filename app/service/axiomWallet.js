@@ -5,7 +5,6 @@ const { PublicKey } = require("@solana/web3.js");
 const { connection, AXIOM_PROGRAM_ID } = require("../constants");
 
 const RECENT_TRANSACTION_LIMIT = 10;
-const SCAN_TASK_TTL_MS = 30 * 60 * 1000;
 
 function getPositiveEnvNumber(name, fallback) {
   const value = Number(process.env[name]);
@@ -30,10 +29,6 @@ let nextRpcRequestAt = 0;
 
 function sleepMilliseconds(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-function createScanTaskId() {
-  return `axiom-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function isRateLimitError(error) {
@@ -178,96 +173,6 @@ async function runWithConcurrency(items, worker, concurrency) {
 }
 
 class AxiomWalletService extends Service {
-  async startAxiomWalletScan(params = {}) {
-    const start = parseTime(params.startTime, "startTime");
-    const end = parseTime(params.endTime, "endTime", true);
-    if (start.getTime() > end.getTime()) {
-      throw new Error("startTime must be less than or equal to endTime");
-    }
-    if (
-      params.eid !== undefined &&
-      params.eid !== null &&
-      String(params.eid).trim() !== "" &&
-      !Number.isInteger(Number(params.eid))
-    ) {
-      throw new Error("eid must be an integer");
-    }
-
-    const taskId = createScanTaskId();
-    const createdAt = new Date();
-    await this.ctx.model.AxiomScanTask.create({
-      taskId,
-      status: "pending",
-      params,
-      createdAt,
-      updatedAt: createdAt,
-      expireAt: new Date(createdAt.getTime() + SCAN_TASK_TTL_MS),
-    });
-
-    const app = this.app;
-    const runScan = async () => {
-      const taskCtx = app.createAnonymousContext();
-      try {
-        const result = await taskCtx.service.axiomWallet.getAxiomWallets(params);
-        await taskCtx.model.AxiomScanTask.updateOne(
-          { taskId },
-          {
-            status: "completed",
-            result,
-            error: null,
-            updatedAt: new Date(),
-          },
-        );
-        app.logger.info(
-          `[Axiom] task completed: taskId=${taskId}, total=${result.total}`,
-        );
-      } catch (error) {
-        const message = error.message || String(error);
-        await taskCtx.model.AxiomScanTask.updateOne(
-          { taskId },
-          {
-            status: "failed",
-            error: message,
-            updatedAt: new Date(),
-          },
-        );
-        app.logger.error(
-          `[Axiom] task failed: taskId=${taskId}, error=${message}`,
-        );
-      }
-    };
-
-    setImmediate(() => {
-      runScan().catch((error) => {
-        app.logger.error(
-          `[Axiom] task persistence failed: taskId=${taskId}, ` +
-            `error=${error.message || String(error)}`,
-        );
-      });
-    });
-
-    this.logger.info(`[Axiom] task created: taskId=${taskId}`);
-    return {
-      taskId,
-      status: "pending",
-      createdAt: createdAt.toISOString(),
-    };
-  }
-
-  async getAxiomWalletScanTask(taskId) {
-    const task = await this.ctx.model.AxiomScanTask.findOne({ taskId }).lean();
-    if (!task) throw new Error("Axiom scan task not found or expired");
-
-    const response = {
-      taskId: task.taskId,
-      status: task.status,
-      createdAt: task.createdAt.toISOString(),
-    };
-    if (task.status === "completed") response.result = task.result;
-    if (task.status === "failed") response.error = task.error;
-    return response;
-  }
-
   async getAxiomWallets({ startTime, endTime, eid } = {}) {
     const scanStartedAt = Date.now();
     const start = parseTime(startTime, "startTime");
