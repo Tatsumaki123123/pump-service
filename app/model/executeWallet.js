@@ -10,5 +10,7 @@ module.exports = (app) => {
     createTime: { type: Date },
   });
 
+  WalletSchema.index({ eid: 1 });
+
   return mongoose.model("ExecuteWallet", WalletSchema);
 };

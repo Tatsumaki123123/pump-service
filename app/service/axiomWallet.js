@@ -5,6 +5,7 @@ const { PublicKey } = require("@solana/web3.js");
 const { connection, AXIOM_PROGRAM_ID } = require("../constants");
 
 const RECENT_TRANSACTION_LIMIT = 10;
+const SCAN_TASK_TTL_MS = 30 * 60 * 1000;
 
 function getPositiveEnvNumber(name, fallback) {
   const value = Number(process.env[name]);
@@ -15,9 +16,9 @@ const WALLET_CONCURRENCY = Math.max(
   1,
   Math.floor(getPositiveEnvNumber("AXIOM_WALLET_CONCURRENCY", 10)),
 );
-const RPC_REQUESTS_PER_SECOND = getPositiveEnvNumber(
-  "AXIOM_RPC_REQUESTS_PER_SECOND",
+const RPC_REQUESTS_PER_SECOND = Math.min(
   10,
+  getPositiveEnvNumber("AXIOM_RPC_REQUESTS_PER_SECOND", 10),
 );
 const RPC_REQUEST_INTERVAL_MS = Math.ceil(1000 / RPC_REQUESTS_PER_SECOND);
 const RPC_RETRY_ATTEMPTS = Math.max(
@@ -31,12 +32,17 @@ function sleepMilliseconds(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function createScanTaskId() {
+  return `axiom-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function isRateLimitError(error) {
   const message = String(error?.message || error).toLowerCase();
   return (
     message.includes("429") ||
     message.includes("rate limit") ||
     message.includes("request limit") ||
+    message.includes("limited to") ||
     message.includes("too many requests") ||
     message.includes("exceeded")
   );
@@ -61,10 +67,22 @@ function enqueueRpcRequest(request) {
     if (wait > 0) await sleepMilliseconds(wait);
     nextRpcRequestAt =
       Math.max(nextRpcRequestAt, Date.now()) + RPC_REQUEST_INTERVAL_MS;
+
+    try {
+      return await request();
+    } catch (error) {
+      if (isRateLimitError(error)) {
+        nextRpcRequestAt = Math.max(
+          nextRpcRequestAt,
+          Date.now() + Math.max(2000, getRetryDelay(error, 1)),
+        );
+      }
+      throw error;
+    }
   });
 
   rpcSchedule = scheduledRequest.catch(() => undefined);
-  return scheduledRequest.then(request);
+  return scheduledRequest;
 }
 
 async function callRpc(method, request) {
@@ -136,8 +154,7 @@ function hasAxiomInstruction(transaction) {
 function isSigner(transaction, address) {
   return (transaction?.transaction?.message?.accountKeys || []).some(
     (account) =>
-      account.signer === true &&
-      toPublicKeyString(account.pubkey) === address,
+      account.signer === true && toPublicKeyString(account.pubkey) === address,
   );
 }
 
@@ -161,7 +178,98 @@ async function runWithConcurrency(items, worker, concurrency) {
 }
 
 class AxiomWalletService extends Service {
+  async startAxiomWalletScan(params = {}) {
+    const start = parseTime(params.startTime, "startTime");
+    const end = parseTime(params.endTime, "endTime", true);
+    if (start.getTime() > end.getTime()) {
+      throw new Error("startTime must be less than or equal to endTime");
+    }
+    if (
+      params.eid !== undefined &&
+      params.eid !== null &&
+      String(params.eid).trim() !== "" &&
+      !Number.isInteger(Number(params.eid))
+    ) {
+      throw new Error("eid must be an integer");
+    }
+
+    const taskId = createScanTaskId();
+    const createdAt = new Date();
+    await this.ctx.model.AxiomScanTask.create({
+      taskId,
+      status: "pending",
+      params,
+      createdAt,
+      updatedAt: createdAt,
+      expireAt: new Date(createdAt.getTime() + SCAN_TASK_TTL_MS),
+    });
+
+    const app = this.app;
+    const runScan = async () => {
+      const taskCtx = app.createAnonymousContext();
+      try {
+        const result = await taskCtx.service.axiomWallet.getAxiomWallets(params);
+        await taskCtx.model.AxiomScanTask.updateOne(
+          { taskId },
+          {
+            status: "completed",
+            result,
+            error: null,
+            updatedAt: new Date(),
+          },
+        );
+        app.logger.info(
+          `[Axiom] task completed: taskId=${taskId}, total=${result.total}`,
+        );
+      } catch (error) {
+        const message = error.message || String(error);
+        await taskCtx.model.AxiomScanTask.updateOne(
+          { taskId },
+          {
+            status: "failed",
+            error: message,
+            updatedAt: new Date(),
+          },
+        );
+        app.logger.error(
+          `[Axiom] task failed: taskId=${taskId}, error=${message}`,
+        );
+      }
+    };
+
+    setImmediate(() => {
+      runScan().catch((error) => {
+        app.logger.error(
+          `[Axiom] task persistence failed: taskId=${taskId}, ` +
+            `error=${error.message || String(error)}`,
+        );
+      });
+    });
+
+    this.logger.info(`[Axiom] task created: taskId=${taskId}`);
+    return {
+      taskId,
+      status: "pending",
+      createdAt: createdAt.toISOString(),
+    };
+  }
+
+  async getAxiomWalletScanTask(taskId) {
+    const task = await this.ctx.model.AxiomScanTask.findOne({ taskId }).lean();
+    if (!task) throw new Error("Axiom scan task not found or expired");
+
+    const response = {
+      taskId: task.taskId,
+      status: task.status,
+      createdAt: task.createdAt.toISOString(),
+    };
+    if (task.status === "completed") response.result = task.result;
+    if (task.status === "failed") response.error = task.error;
+    return response;
+  }
+
   async getAxiomWallets({ startTime, endTime, eid } = {}) {
+    const scanStartedAt = Date.now();
     const start = parseTime(startTime, "startTime");
     const end = parseTime(endTime, "endTime", true);
     const startTimestamp = Math.floor(start.getTime() / 1000);
@@ -171,20 +279,61 @@ class AxiomWalletService extends Service {
       throw new Error("startTime must be less than or equal to endTime");
     }
 
-    const filter = { address: { $exists: true, $ne: "" } };
+    const executeDataFilter = {
+      createTime: {
+        $gte: start,
+        $lte: end,
+      },
+    };
     if (eid !== undefined && eid !== null && String(eid).trim() !== "") {
       const numericEid = Number(eid);
       if (!Number.isInteger(numericEid)) {
         throw new Error("eid must be an integer");
       }
-      filter.eid = numericEid;
+      executeDataFilter.eid = numericEid;
     }
 
-    const wallets = await this.ctx.model.ExecuteWallet.find(filter, {
-      address: 1,
-      eid: 1,
-      isActive: 1,
-    }).lean();
+    const executeDataList = await this.ctx.model.ExecuteData.find(
+      executeDataFilter,
+      { eid: 1, createTime: 1 },
+    ).lean();
+    const eids = [
+      ...new Set(
+        executeDataList
+          .map((item) => item.eid)
+          .filter((item) => Number.isInteger(item)),
+      ),
+    ];
+
+    const wallets = eids.length
+      ? await this.ctx.model.ExecuteWallet.find(
+          {
+            eid: { $in: eids },
+            address: { $exists: true, $ne: "" },
+          },
+          {
+            address: 1,
+            eid: 1,
+            isActive: 1,
+          },
+        ).lean()
+      : [];
+
+    this.logger.info(
+      `[Axiom] execute data matched: batches=${executeDataList.length}, ` +
+        `eids=${eids.length}, wallets=${wallets.length}`,
+    );
+
+    /*
+     * ExecuteData.createTime selects the wallet batches. The transaction time
+     * range is still applied below because the most recent 10 wallet
+     * transactions may fall outside the requested interval.
+     */
+    this.logger.info(
+      `[Axiom] scan started: wallets=${wallets.length}, ` +
+        `start=${start.toISOString()}, end=${end.toISOString()}, ` +
+        `concurrency=${WALLET_CONCURRENCY}, rpcRate=${RPC_REQUESTS_PER_SECOND}/s`,
+    );
 
     const matchedWallets = await runWithConcurrency(
       wallets,
@@ -201,6 +350,11 @@ class AxiomWalletService extends Service {
         lastTradeTime: new Date(wallet.lastTradeTime * 1000).toISOString(),
       }));
 
+    this.logger.info(
+      `[Axiom] scan completed: scanned=${wallets.length}, ` +
+        `matched=${list.length}, elapsed=${Date.now() - scanStartedAt}ms`,
+    );
+
     return {
       startTime: start.toISOString(),
       endTime: end.toISOString(),
@@ -214,7 +368,9 @@ class AxiomWalletService extends Service {
     try {
       publicKey = new PublicKey(wallet.address);
     } catch (error) {
-      this.logger.warn(`Skip invalid execute wallet address: ${wallet.address}`);
+      this.logger.warn(
+        `Skip invalid execute wallet address: ${wallet.address}`,
+      );
       return null;
     }
 
@@ -226,18 +382,11 @@ class AxiomWalletService extends Service {
     );
   }
 
-  async scanWalletByRpc(
-    wallet,
-    publicKey,
-    startTimestamp,
-    endTimestamp,
-  ) {
-    const signatures = await callRpc(
-      "getSignaturesForAddress",
-      () =>
-        connection.getSignaturesForAddress(publicKey, {
-          limit: RECENT_TRANSACTION_LIMIT,
-        }),
+  async scanWalletByRpc(wallet, publicKey, startTimestamp, endTimestamp) {
+    const signatures = await callRpc("getSignaturesForAddress", () =>
+      connection.getSignaturesForAddress(publicKey, {
+        limit: RECENT_TRANSACTION_LIMIT,
+      }),
     );
     const candidates = signatures.filter(
       (item) =>
@@ -249,37 +398,41 @@ class AxiomWalletService extends Service {
     const matchedTransactions = [];
 
     if (candidates.length > 0) {
-      const transactions = await callRpc(
-        "getParsedTransactions",
-        () =>
-          connection.getParsedTransactions(
-            candidates.map((item) => item.signature),
-            {
-              commitment: "confirmed",
-              maxSupportedTransactionVersion: 0,
-            },
-          ),
+      const transactions = await callRpc("getParsedTransactions", () =>
+        connection.getParsedTransactions(
+          candidates.map((item) => item.signature),
+          {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0,
+          },
+        ),
       );
 
-      transactions.forEach((transaction, transactionIndex) => {
+      const transactionIndex = transactions.findIndex(
+        (transaction, index) =>
+          transaction &&
+          !transaction.meta?.err &&
+          hasAxiomInstruction(transaction) &&
+          isSigner(transaction, wallet.address) &&
+          candidates[index],
+      );
+      if (transactionIndex >= 0) {
         const signatureInfo = candidates[transactionIndex];
-        if (
-          !transaction ||
-          transaction.meta?.err ||
-          !hasAxiomInstruction(transaction) ||
-          !isSigner(transaction, wallet.address)
-        ) {
-          return;
-        }
-
         matchedTransactions.push({
           signature: signatureInfo.signature,
           blockTime: signatureInfo.blockTime,
         });
-      });
+      }
     }
 
-    return this.buildWalletResult(wallet, matchedTransactions);
+    const result = this.buildWalletResult(wallet, matchedTransactions);
+    if (result) {
+      this.logger.info(
+        `[Axiom] wallet matched: address=${result.address}, ` +
+          `signature=${result.lastSignature}`,
+      );
+    }
+    return result;
   }
 
   buildWalletResult(wallet, matchedTransactions) {

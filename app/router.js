@@ -25,12 +25,20 @@ module.exports = (app) => {
     controller.executeSwap.getAxiomWallets,
   );
   router.post(
+    "/v1/execute/getAxiomWalletScanTask",
+    controller.executeSwap.getAxiomWalletScanTask,
+  );
+  router.post(
     "/v1/execute/getWalletPrivateKey",
     controller.executeSwap.getWalletPrivateKey,
   );
   router.post(
     "/v1/execute/transferWalletBalance",
     controller.executeSwap.transferWalletBalance,
+  );
+  router.post(
+    "/v1/execute/transferFromReceiveAddress",
+    controller.executeSwap.transferFromReceiveAddress,
   );
   router.post("/v1/execute/getBoss", controller.executeSwap.getBoss);
   router.post("/v1/execute/getLines", controller.executeSwap.getLines);

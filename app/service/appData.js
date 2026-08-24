@@ -36,6 +36,22 @@ class AppData extends Service {
     return appData.receiveAddress;
   }
 
+  async getReceiveWallet() {
+    const appData = await this.ctx.model.AppData.findOne()
+      .select("+receivePrivateKey")
+      .lean();
+    if (!appData?.receiveAddress) {
+      throw new Error("AppData.receiveAddress is not configured");
+    }
+    if (!appData.receivePrivateKey) {
+      throw new Error("AppData.receivePrivateKey is not configured");
+    }
+    return {
+      address: appData.receiveAddress,
+      privateKey: appData.receivePrivateKey,
+    };
+  }
+
   async getXAuth() {
     const appData = await this.getData();
     return appData?.X_AUTH || "";

@@ -12,5 +12,7 @@ module.exports = (app) => {
     line: { type: Number },
   });
 
+  ExecuteDataSchema.index({ createTime: 1, eid: 1 });
+
   return mongoose.model("ExecuteData", ExecuteDataSchema);
 };

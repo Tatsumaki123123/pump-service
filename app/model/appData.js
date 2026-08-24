@@ -8,6 +8,7 @@ module.exports = (app) => {
     debotCookie: { type: String },
     key: { type: String, default: "basketball" },
     receiveAddress: { type: String },
+    receivePrivateKey: { type: String, select: false },
   });
 
   return mongoose.model("AppData", AppDataSchema);

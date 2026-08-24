@@ -13,6 +13,8 @@ const {
 const { connection } = require("../constants");
 
 const MULTIPLE_ACCOUNTS_LIMIT = 100;
+const SIGNATURE_STATUS_POLL_MS = 500;
+const SIGNATURE_CONFIRM_TIMEOUT_MS = 30000;
 
 function normalizeAddress(value, name) {
   if (typeof value !== "string" || value.trim() === "") {
@@ -47,6 +49,56 @@ function keypairFromWallet(wallet) {
   }
 
   return keypair;
+}
+
+function normalizeAmount(amount) {
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error("amount must be a positive number");
+  }
+
+  const lamports = Math.round(value * LAMPORTS_PER_SOL);
+  if (lamports <= 0) {
+    throw new Error("amount is too small");
+  }
+  if (!Number.isSafeInteger(lamports)) {
+    throw new Error("amount is too large");
+  }
+
+  return { amount: lamports / LAMPORTS_PER_SOL, lamports };
+}
+
+async function waitForSignatureConfirmation(signature) {
+  const deadline = Date.now() + SIGNATURE_CONFIRM_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    const response = await connection.getSignatureStatuses(
+      [signature],
+      { searchTransactionHistory: true },
+    );
+    const status = response?.value?.[0];
+
+    if (status?.err) {
+      throw new Error(
+        `Transaction failed: ${JSON.stringify(status.err)}`,
+      );
+    }
+
+    if (
+      status?.confirmationStatus === "confirmed" ||
+      status?.confirmationStatus === "finalized"
+    ) {
+      return status;
+    }
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, SIGNATURE_STATUS_POLL_MS),
+    );
+  }
+
+  throw new Error(
+    `Transaction sent but confirmation timed out: ${signature}`,
+  );
 }
 
 class WalletAdmin extends Service {
@@ -176,7 +228,7 @@ class WalletAdmin extends Service {
           keypair.publicKey,
           "confirmed",
         );
-        const { blockhash, lastValidBlockHeight } =
+        const { blockhash } =
           await connection.getLatestBlockhash("confirmed");
         const feeInstruction = SystemProgram.transfer({
           fromPubkey: keypair.publicKey,
@@ -226,15 +278,7 @@ class WalletAdmin extends Service {
           skipPreflight: false,
           maxRetries: 2,
         });
-        const confirmation = await connection.confirmTransaction(
-          { blockhash, lastValidBlockHeight, signature },
-          "confirmed",
-        );
-        if (confirmation.value.err) {
-          throw new Error(
-            `Transaction failed: ${JSON.stringify(confirmation.value.err)}`,
-          );
-        }
+        await waitForSignatureConfirmation(signature);
 
         list.push({
           address,
@@ -262,6 +306,84 @@ class WalletAdmin extends Service {
         (item) => item.status === "failed" || item.status === "not_found",
       ).length,
       list,
+    };
+  }
+
+  async transferFromReceiveAddress(targetAddress, amount = 0.01) {
+    const receiveWallet = await this.ctx.service.appData.getReceiveWallet();
+    const configuredSourceAddress = normalizeAddress(
+      receiveWallet.address,
+      "AppData.receiveAddress",
+    );
+    const sourceKeypair = keypairFromWallet({
+      ...receiveWallet,
+      address: configuredSourceAddress,
+    });
+    const sourceAddress = sourceKeypair.publicKey.toBase58();
+    const recipient = new PublicKey(normalizeAddress(targetAddress, "address"));
+    const normalizedAmount = normalizeAmount(amount);
+
+    if (sourceAddress === recipient.toBase58()) {
+      throw new Error("Source wallet is the recipient");
+    }
+
+    const balanceLamports = await connection.getBalance(
+      sourceKeypair.publicKey,
+      "confirmed",
+    );
+    const { blockhash } = await connection.getLatestBlockhash("confirmed");
+    const feeInstruction = SystemProgram.transfer({
+      fromPubkey: sourceKeypair.publicKey,
+      toPubkey: recipient,
+      lamports: 1,
+    });
+    const feeMessage = new TransactionMessage({
+      payerKey: sourceKeypair.publicKey,
+      recentBlockhash: blockhash,
+      instructions: [feeInstruction],
+    }).compileToV0Message();
+    const feeResponse = await connection.getFeeForMessage(
+      feeMessage,
+      "confirmed",
+    );
+    if (!Number.isFinite(feeResponse.value)) {
+      throw new Error("Unable to calculate transaction fee");
+    }
+
+    const feeLamports = feeResponse.value;
+    if (balanceLamports < normalizedAmount.lamports + feeLamports) {
+      throw new Error(
+        `Insufficient balance: ${balanceLamports} lamports available, ${
+          normalizedAmount.lamports + feeLamports
+        } required`,
+      );
+    }
+
+    const instruction = SystemProgram.transfer({
+      fromPubkey: sourceKeypair.publicKey,
+      toPubkey: recipient,
+      lamports: normalizedAmount.lamports,
+    });
+    const message = new TransactionMessage({
+      payerKey: sourceKeypair.publicKey,
+      recentBlockhash: blockhash,
+      instructions: [instruction],
+    }).compileToV0Message();
+    const transaction = new VersionedTransaction(message);
+    transaction.sign([sourceKeypair]);
+    const signature = await connection.sendTransaction(transaction, {
+      skipPreflight: false,
+      maxRetries: 2,
+    });
+    await waitForSignatureConfirmation(signature);
+
+    return {
+      sourceAddress,
+      targetAddress: recipient.toBase58(),
+      amount: normalizedAmount.amount,
+      amountLamports: normalizedAmount.lamports,
+      feeLamports,
+      signature,
     };
   }
 }

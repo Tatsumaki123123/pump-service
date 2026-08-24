@@ -1,6 +1,6 @@
 # Wallet API
 
-这三个接口用于查询 Axiom 交易钱包、获取执行钱包私钥，以及归集执行钱包中的 SOL。
+这几个接口用于查询 Axiom 交易钱包、获取执行钱包私钥，以及执行 SOL 转账。
 
 另外提供批量查询 SOL 余额接口。
 
@@ -79,9 +79,11 @@ curl -X POST http://localhost:8899/v1/execute/getWalletBalances \
 POST /v1/execute/getAxiomWallets
 ```
 
-查询 `ExecuteWallet` 表中的钱包，检查每个钱包最近 10 笔交易中是否有包含 Axiom program 的成功交易。接口不会继续分页查询更早的历史交易。
+接口会先按 `ExecuteData.createTime` 查询时间范围内的执行批次，再取这些批次的 `eid` 查询 `ExecuteWallet`，最后检查每个钱包最近 10 笔交易中是否有包含 Axiom program 的成功交易。每个钱包只要找到一笔符合条件的交易就停止判断；接口不会继续分页查询更早的历史交易。
 
-接口固定使用项目 `RPC_URL` 配置的 QuickNode RPC。每个钱包只查询最近 10 笔交易，RPC 请求默认限制为每秒 10 次，并允许多个请求并行返回；收到限流响应时会自动退避重试。可以通过环境变量调整：
+默认异步执行：接口会立即返回 `taskId`，避免钱包数量较多时被网关的 HTTP 超时中断。使用下面的任务查询接口轮询，`status` 为 `completed` 时在 `data.result.list` 获取结果。任务状态和结果存储在 MongoDB，并在创建 30 分钟后自动清理。
+
+接口固定使用项目 `RPC_URL` 配置的 QuickNode RPC。每个钱包只查询最近 10 笔交易，每个钱包最多发起一次签名查询和一次交易详情查询；RPC 请求默认限制为每秒 10 次，并允许多个钱包并行查询。每个钱包找到第一笔 Axiom 交易后立即停止本钱包的判断；收到限流响应时会自动退避重试。可以通过环境变量调整：
 
 ```env
 AXIOM_RPC_REQUESTS_PER_SECOND=10
@@ -89,7 +91,56 @@ AXIOM_WALLET_CONCURRENCY=10
 AXIOM_RPC_RETRY_ATTEMPTS=5
 ```
 
-QuickNode 的限制是每秒 50 次请求。如果 RPC 账号还有其他业务请求，建议保持 `AXIOM_RPC_REQUESTS_PER_SECOND=10` 或调低到 `5`。
+异步提交响应：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "taskId": "axiom-...",
+    "status": "pending",
+    "createdAt": "2026-08-24T00:00:00.000Z"
+  }
+}
+```
+
+### 查询扫描任务
+
+```text
+POST /v1/execute/getAxiomWalletScanTask
+```
+
+```json
+{
+  "taskId": "axiom-..."
+}
+```
+
+```bash
+curl -X POST http://localhost:8899/v1/execute/getAxiomWalletScanTask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": "axiom-..."
+  }'
+```
+
+处理中返回 `status: "pending"`；完成时返回：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "taskId": "axiom-...",
+    "status": "completed",
+    "result": {
+      "total": 95,
+      "list": []
+    }
+  }
+}
+```
+
+QuickNode 的限制是每秒 50 次请求。该接口每个钱包最多两次 RPC 请求；为给项目其他 QuickNode 请求预留空间，默认保持 `AXIOM_RPC_REQUESTS_PER_SECOND=10`，不要直接设置为 50。收到 429 后会暂停全局 RPC 队列至少 2 秒，再继续重试。
 
 Axiom program：
 
@@ -104,6 +155,7 @@ FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9
 | `startTime` | string/number | 是 | 开始时间。支持 ISO 时间、Unix 秒时间戳或毫秒时间戳 |
 | `endTime` | string/number | 是 | 结束时间。支持 ISO 时间、Unix 秒时间戳或毫秒时间戳 |
 | `eid` | number | 否 | 只查询指定 `eid` 下的钱包 |
+| `wait` | boolean | 否 | 默认 `false`，立即返回任务 ID；传 `true` 时等待扫描完成并直接返回结果 |
 
 ISO 时间示例：
 
@@ -121,11 +173,14 @@ curl -X POST http://localhost:8899/v1/execute/getAxiomWallets \
   -d '{
     "startTime": "2026-08-01T00:00:00+08:00",
     "endTime": "2026-08-24T23:59:59+08:00",
-    "eid": 123
+    "eid": 123,
+    "wait": false
   }'
 ```
 
-### 返回示例
+### 同步返回示例
+
+仅当请求传入 `"wait": true` 时，原接口直接返回以下结果。钱包数量较多时建议使用默认异步模式。
 
 ```json
 {
@@ -139,7 +194,7 @@ curl -X POST http://localhost:8899/v1/execute/getAxiomWallets \
         "address": "钱包地址",
         "eid": 123,
         "isActive": true,
-        "tradeCount": 4,
+        "tradeCount": 1,
         "firstTradeTime": "2026-08-02T03:12:00.000Z",
         "lastTradeTime": "2026-08-20T08:15:00.000Z",
         "lastSignature": "交易签名"
@@ -149,7 +204,7 @@ curl -X POST http://localhost:8899/v1/execute/getAxiomWallets \
 }
 ```
 
-只有最近 10 笔交易中满足以下条件的交易会计入结果：
+时间范围内执行批次对应的钱包，其最近 10 笔交易中只要有一笔满足以下条件，就会计入结果并停止继续判断该钱包：
 
 - 交易成功；
 - 钱包地址是交易 signer；
@@ -210,7 +265,7 @@ curl -X POST http://localhost:8899/v1/execute/getWalletPrivateKey \
 POST /v1/execute/transferWalletBalance
 ```
 
-把 `wallets` 中每个执行钱包的可用 SOL 余额转入 `AppData.receiveAddress` 配置的收款地址。接口会从 `ExecuteWallet` 表读取对应私钥，并按顺序逐个执行转账。
+把 `wallets` 中每个执行钱包的可用 SOL 余额转入 `AppData.receiveAddress` 配置的收款地址。接口会从 `ExecuteWallet` 表读取对应私钥，并按顺序逐个执行转账。交易确认通过 QuickNode HTTP RPC 轮询，不依赖 WebSocket 签名订阅；单笔交易最多等待 30 秒。
 
 配置收款地址示例：
 
@@ -309,6 +364,76 @@ curl -X POST http://localhost:8899/v1/execute/transferWalletBalance \
 
 该接口会实际转移链上资产，调用前请确认 `AppData.receiveAddress` 和钱包数组无误。按当前接口设计，余额归集接口不额外校验 `key`。
 
+## 4. 从提取地址转入 SOL
+
+```http
+POST /v1/execute/transferFromReceiveAddress
+```
+
+从 `AppData.receiveAddress` 配置的钱包向传入的目标地址转入 SOL。源钱包私钥从 `AppData.receivePrivateKey` 读取，必须是 Base58 编码，并且必须与 `receiveAddress` 匹配。交易发送后通过 QuickNode HTTP RPC 轮询确认，不依赖 WebSocket 签名订阅；最多等待 30 秒。该接口不返回私钥。
+
+配置源钱包示例：
+
+```js
+db.appdatas.updateOne(
+  {},
+  {
+    $set: {
+      receiveAddress: "源钱包地址",
+      receivePrivateKey: "源钱包对应的 Base58 私钥"
+    }
+  },
+  { upsert: true }
+)
+```
+
+### 请求参数
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `address` | string | 是 | 目标收款地址，也支持使用 `targetAddress` |
+| `targetAddress` | string | 否 | 目标收款地址；与 `address` 同时传入时优先使用该字段 |
+| `amount` | number | 否 | 转账 SOL 数量，默认 `0.01` |
+
+### 请求示例
+
+不传 `amount` 时默认转入 `0.01 SOL`：
+
+```bash
+curl -X POST http://localhost:8899/v1/execute/transferFromReceiveAddress \
+  -H "Content-Type: application/json" \
+  -d '{
+    "address": "目标地址"
+  }'
+```
+
+指定转账数量：
+
+```json
+{
+  "address": "目标地址",
+  "amount": 0.01
+}
+```
+
+### 返回示例
+
+```json
+{
+  "code": 0,
+  "data": {
+    "sourceAddress": "源钱包地址",
+    "targetAddress": "目标地址",
+    "amount": 0.01,
+    "amountLamports": 10000000,
+    "feeLamports": 5000,
+    "signature": "交易签名"
+  }
+}
+```
+
+调用前请确认源钱包余额至少包含转账金额和交易手续费，并确认 `AppData.receiveAddress` 与 `AppData.receivePrivateKey` 属于同一个钱包。该接口会实际转移链上资产。
+
 ## 错误返回
 
 参数或业务校验失败时，接口通常返回：
@@ -327,4 +452,8 @@ curl -X POST http://localhost:8899/v1/execute/transferWalletBalance \
 - `Invalid key`；
 - `Wallet not found`；
 - `AppData.receiveAddress is not configured`；
+- `AppData.receivePrivateKey is not configured`；
+- `AppData.receiveAddress` 与私钥不匹配；
+- `amount must be a positive number`；
+- `Transaction sent but confirmation timed out: 交易签名`；
 - `wallets must be a non-empty array`。
