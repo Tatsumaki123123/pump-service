@@ -6,6 +6,8 @@ module.exports = (app) => {
     X_AUTH: { type: String },
     currentExecuteId: { type: Number, default: 10000 },
     debotCookie: { type: String },
+    key: { type: String, default: "basketball" },
+    receiveAddress: { type: String },
   });
 
   return mongoose.model("AppData", AppDataSchema);

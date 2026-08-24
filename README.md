@@ -17,7 +17,7 @@ time curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":
 
 ## QuickStart
 
-<!-- add docs here for user -->
+接口说明见 [Wallet API 文档](docs/wallet-api.md)。
 
 see [egg docs][egg] for more detail.
 

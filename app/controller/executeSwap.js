@@ -94,6 +94,38 @@ class ExecuteSwap extends BaseController {
     }
   }
 
+  async getWalletBalances() {
+    const { ctx } = this;
+    const { wallets } = ctx.request.body;
+    const res = await ctx.service.walletAdmin.getWalletBalances(wallets);
+    this.success(res);
+  }
+
+  async getAxiomWallets() {
+    const { ctx } = this;
+    const { startTime, endTime, eid } = ctx.request.body;
+    const res = await ctx.service.axiomWallet.getAxiomWallets({
+      startTime,
+      endTime,
+      eid,
+    });
+    this.success(res);
+  }
+
+  async getWalletPrivateKey() {
+    const { ctx } = this;
+    const { address, key } = ctx.request.body;
+    const res = await ctx.service.walletAdmin.getWalletPrivateKey(address, key);
+    this.success(res);
+  }
+
+  async transferWalletBalance() {
+    const { ctx } = this;
+    const { wallets } = ctx.request.body;
+    const res = await ctx.service.walletAdmin.transferWalletBalance(wallets);
+    this.success(res);
+  }
+
   async getBoss() {
     const { ctx } = this;
     const { line } = ctx.request.body;
