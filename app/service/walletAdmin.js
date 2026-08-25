@@ -10,11 +10,19 @@ const {
   TransactionMessage,
   VersionedTransaction,
 } = require("@solana/web3.js");
+const {
+  createAssociatedTokenAccountIdempotentInstruction,
+  createCloseAccountInstruction,
+  TOKEN_PROGRAM_ID,
+} = require("@solana/spl-token");
 const { connection } = require("../constants");
+const { WSOL_TOKEN_ACCOUNT } = require("../constants");
+const PumpSwapSDK = require("../libs/pumpSwap");
 
 const MULTIPLE_ACCOUNTS_LIMIT = 100;
 const SIGNATURE_STATUS_POLL_MS = 500;
 const SIGNATURE_CONFIRM_TIMEOUT_MS = 30000;
+const pumpSwap = new PumpSwapSDK();
 
 function normalizeAddress(value, name) {
   if (typeof value !== "string" || value.trim() === "") {
@@ -384,6 +392,132 @@ class WalletAdmin extends Service {
       amountLamports: normalizedAmount.lamports,
       feeLamports,
       signature,
+    };
+  }
+
+  async claimCashback(wallets) {
+    if (!Array.isArray(wallets) || wallets.length === 0) {
+      throw new Error("wallets must be a non-empty array");
+    }
+
+    const addresses = [];
+    for (let index = 0; index < wallets.length; index++) {
+      const address = normalizeAddress(
+        getWalletAddress(wallets[index], index),
+        `wallets[${index}]`,
+      );
+      if (!addresses.includes(address)) addresses.push(address);
+    }
+
+    const walletData = await this.ctx.model.ExecuteWallet.find(
+      { address: { $in: addresses } },
+      { address: 1, privateKey: 1 },
+    ).lean();
+    const walletMap = new Map(
+      walletData.map((wallet) => [wallet.address, wallet]),
+    );
+
+    const list = [];
+    for (const address of addresses) {
+      const wallet = walletMap.get(address);
+      if (!wallet) {
+        list.push({
+          address,
+          status: "not_found",
+          message: "Wallet not found",
+        });
+        continue;
+      }
+
+      try {
+        const keypair = keypairFromWallet(wallet);
+        const claim = pumpSwap.createClaimCashbackInstruction(
+          keypair.publicKey,
+        );
+        const userWsolAccountInfo = await connection.getAccountInfo(
+          claim.userWsolTokenAccount,
+          "confirmed",
+        );
+        const createWsolAccount = !userWsolAccountInfo;
+        const instructions = [];
+
+        if (createWsolAccount) {
+          instructions.push(
+            createAssociatedTokenAccountIdempotentInstruction(
+              keypair.publicKey,
+              claim.userWsolTokenAccount,
+              keypair.publicKey,
+              WSOL_TOKEN_ACCOUNT,
+              TOKEN_PROGRAM_ID,
+            ),
+          );
+        }
+
+        instructions.push(claim.instruction);
+
+        if (createWsolAccount) {
+          instructions.push(
+            createCloseAccountInstruction(
+              claim.userWsolTokenAccount,
+              keypair.publicKey,
+              keypair.publicKey,
+              [],
+              TOKEN_PROGRAM_ID,
+            ),
+          );
+        }
+
+        const { blockhash } = await connection.getLatestBlockhash("confirmed");
+        const message = new TransactionMessage({
+          payerKey: keypair.publicKey,
+          recentBlockhash: blockhash,
+          instructions,
+        }).compileToV0Message();
+        const transaction = new VersionedTransaction(message);
+        transaction.sign([keypair]);
+
+        console.log(
+          `[Pump AMM] claim_cashback sending: address=${address}, createWsolAccount=${createWsolAccount}`,
+        );
+        const signature = await connection.sendTransaction(transaction, {
+          skipPreflight: false,
+          maxRetries: 2,
+        });
+        await waitForSignatureConfirmation(signature);
+        console.log(
+          `[Pump AMM] claim_cashback confirmed: address=${address}, signature=${signature}`,
+        );
+
+        list.push({
+          address,
+          status: "success",
+          signature,
+          userWsolTokenAccount: claim.userWsolTokenAccount.toBase58(),
+          userVolumeAccumulator: claim.userVolumeAccumulator.toBase58(),
+          userVolumeAccumulatorWsolTokenAccount:
+            claim.userVolumeAccumulatorWsolTokenAccount.toBase58(),
+          createdWsolAccount: createWsolAccount,
+          closedWsolAccount: createWsolAccount,
+        });
+      } catch (error) {
+        console.log(
+          `[Pump AMM] claim_cashback failed: address=${address}, error=${error.message}`,
+        );
+        list.push({
+          address,
+          status: "failed",
+          message: error.message,
+        });
+      }
+    }
+
+    return {
+      total: list.length,
+      success: list.filter((item) => item.status === "success").length,
+      failed: list.filter(
+        (item) => item.status === "failed" || item.status === "not_found",
+      ).length,
+      list,
     };
   }
 }

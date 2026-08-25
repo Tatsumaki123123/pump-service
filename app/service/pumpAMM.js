@@ -266,7 +266,7 @@ class PumpAMM extends Service {
               lookupTables,
               jupSwapData.lookupTableAccounts,
             );
-            if (NEXTBLOCK_TIP_EVERY_TX || i === 0) {
+            if (!isAxiom && (NEXTBLOCK_TIP_EVERY_TX || i === 0)) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: jipAcc,
@@ -345,7 +345,10 @@ class PumpAMM extends Service {
               }
             }
 
-            if (NEXTBLOCK_TIP_EVERY_TX || i === 0) {
+            const shouldAddJitoTip = isAxiom
+              ? wallets.length === 1
+              : NEXTBLOCK_TIP_EVERY_TX || i === 0;
+            if (shouldAddJitoTip) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: jipAcc,
@@ -357,6 +360,7 @@ class PumpAMM extends Service {
             if (
               wallets.length > 1 &&
               !jitoTipIx &&
+              !isAxiom &&
               (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
             ) {
               jitoTipIx = SystemProgram.transfer({
@@ -604,10 +608,16 @@ class PumpAMM extends Service {
         }
         // return;
         if (buyTxns.length > 0) {
-          const bundleResult = await ctx.service.jito.sendBundle(
-            buyTxns,
-            sendOptions,
-          );
+          const axiomOnly =
+            wallets.length > 0 && wallets.every((wallet) => wallet.isAxiom);
+          const bundleResult =
+            axiomOnly && !bundleHasTip
+              ? await ctx.service.jito.sendTransactionsConcurrentlyByRpc(
+                  buyTxns,
+                  undefined,
+                  sendOptions,
+                )
+              : await ctx.service.jito.sendBundle(buyTxns, sendOptions);
           console.log(bundleResult);
           console.log(chalk.green("Buy transactions completed."));
         }

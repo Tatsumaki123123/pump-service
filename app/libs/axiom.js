@@ -31,26 +31,33 @@ const AXIOM_PROGRAM_ID = new PublicKey(
   "FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9",
 );
 const AXIOM_CREATE_DATA_SUFFIX = 0xff;
-const AXIOM_BUY_DATA_SUFFIX = Buffer.from("00021f003200", "hex");
+const AXIOM_BUY_DATA_SUFFIX = Buffer.from("00021f00323c", "hex");
 const AXIOM_FEE_DESTINATION = new PublicKey(
   process.env.AXIOM_FEE_DESTINATION ||
-    "4FobGn5ZWYquoJkxMzh2VUAWvV36xMgxQ3M7uG1pGGhd",
+    "3PvqoztjnRxaAiFmLuEfqZkU4GSbjUareks8S2xCZaTa",
 );
 const AXIOM_DEFAULT_FEE_LAMPORTS = Number(
-  process.env.AXIOM_PLATFORM_FEE_LAMPORTS || 0,
+  process.env.AXIOM_PLATFORM_FEE_LAMPORTS || 143500,
 );
 const AXIOM_ACCOUNT_2 = new PublicKey(
-  process.env.AXIOM_ACCOUNT_2 || "4FobGn5ZWYquoJkxMzh2VUAWvV36xMgxQ3M7uG1pGGhd",
+  process.env.AXIOM_ACCOUNT_2 ||
+    "86Vh4XGLW2b6nvWbRyDs4ScgMXbuvRCHT7WbUT3RFxKG",
 );
 const AXIOM_ACCOUNT_6 = new PublicKey(
-  process.env.AXIOM_ACCOUNT_6 || "69jz6t68WdWP2ZwuG8Vw2DauGqu4zbjRLq98sHvhjGQi",
+  process.env.AXIOM_ACCOUNT_6 ||
+    "CoF2AQXNW96ZV48Ykw5ykK8XTw7Bb2hp91ZbvaWQL5kR",
 );
 const AXIOM_ACCOUNT_7 = new PublicKey(
-  process.env.AXIOM_ACCOUNT_7 || "3vSKL1NnVM8P9bg3vkXMDpQ8m6JgL6hV7c4p4AJrWdVy",
+  process.env.AXIOM_ACCOUNT_7 ||
+    "whvdVgr2hwzcAi474yGcaEFwSV6pVpMwaCmBKeSXFAa",
 );
 const AXIOM_POOL_AUTHORITY = new PublicKey(
   process.env.AXIOM_POOL_AUTHORITY ||
-    "CoPK3EXuHC2hXPgqVW9CvF83kmzQ7YeHMZqELoFPfXFE",
+    "92SirvwTNd9UTJVYpoB14tkcezY9wW6RHooesBPZqPmq",
+);
+const AXIOM_ACCOUNT_41 = new PublicKey(
+  process.env.AXIOM_ACCOUNT_41 ||
+    "4vxJwQxjit7D8TBneQuDQBdyNrSEQznnsx2gwtjRPaCD",
 );
 const GLOBAL_CONFIG = new PublicKey(
   "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
@@ -66,19 +73,19 @@ const FEE_PROGRAM = new PublicKey(
 );
 const BUYBACK_FEE_RECIPIENT = new PublicKey(
   process.env.AXIOM_BUYBACK_FEE_RECIPIENT ||
-    "5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6",
+    "A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW",
 );
 const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
   process.env.AXIOM_BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT ||
-    "GYH1Gae1wJytMSvMvw8JVcv7nuAbxi8i9erNVbERnzXd",
+    "qkYdTGRPHbWTWuBMz45bCiU6a23axRqf6sBHm9295WY",
 );
 const PROTOCOL_FEE_RECIPIENT = new PublicKey(
   process.env.AXIOM_PROTOCOL_FEE_RECIPIENT ||
-    "JCRGumoE9Qi5BBgULTgdgTLjSgkCMSbF62ZZfGs84JeU",
+    "AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY",
 );
 const PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
   process.env.AXIOM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT ||
-    "DWpvfqzGWuVy9jVSKSShdM2733nrEsnnhsUStYbkj6Nn",
+    "FGptqdxjahafaCzpZ1T6EDtCzYMv7Dyn5MgBLyB3VUFW",
 );
 const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey(
   "C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw",
@@ -322,12 +329,18 @@ async function createAxiomBuyInstructions({
       { pubkey: tempWsol, isSigner: false, isWritable: true },
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: AXIOM_FEE_DESTINATION, isSigner: false, isWritable: true },
-      { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: AXIOM_ACCOUNT_41, isSigner: false, isWritable: true },
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
     ],
     data: encodeAxiomBuyData(maxQuoteAmountIn, baseAmountOut),
+  });
+
+  const feeIx = SystemProgram.transfer({
+    fromPubkey: user,
+    toPubkey: AXIOM_FEE_DESTINATION,
+    lamports: platformFeeLamports.toNumber(),
   });
 
   console.log("Axiom instruction", {
@@ -336,11 +349,13 @@ async function createAxiomBuyInstructions({
     tempWsolBump,
     createData: createWsolIx.data.toString("hex"),
     buyData: buyIx.data.toString("hex"),
+    feeLamports: platformFeeLamports.toString(),
+    feeDestination: AXIOM_FEE_DESTINATION.toBase58(),
     buyAccounts: buyIx.keys.map((item) => item.pubkey.toBase58()),
   });
 
   return {
-    instructions: [createTokenAtaIx, createWsolIx, buyIx],
+    instructions: [createTokenAtaIx, createWsolIx, buyIx, feeIx],
     signers: [],
   };
 }

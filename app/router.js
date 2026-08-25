@@ -25,6 +25,10 @@ module.exports = (app) => {
     controller.executeSwap.getAxiomWallets,
   );
   router.post(
+    "/v1/execute/getPumpWallets",
+    controller.executeSwap.getPumpWallets,
+  );
+  router.post(
     "/v1/execute/getWalletPrivateKey",
     controller.executeSwap.getWalletPrivateKey,
   );
@@ -35,6 +39,10 @@ module.exports = (app) => {
   router.post(
     "/v1/execute/transferFromReceiveAddress",
     controller.executeSwap.transferFromReceiveAddress,
+  );
+  router.post(
+    "/v1/execute/claimCashback",
+    controller.executeSwap.claimCashback,
   );
   router.post("/v1/execute/getBoss", controller.executeSwap.getBoss);
   router.post("/v1/execute/getLines", controller.executeSwap.getLines);

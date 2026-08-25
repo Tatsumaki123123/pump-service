@@ -114,6 +114,19 @@ class ExecuteSwap extends BaseController {
     ctx.logger.info(`[Axiom] response written: total=${res.total}`);
   }
 
+  async getPumpWallets() {
+    const { ctx } = this;
+    const { startTime, endTime, eid } = ctx.request.body;
+    const res = await ctx.service.axiomWallet.getPumpWallets({
+      startTime,
+      endTime,
+      eid,
+    });
+    ctx.logger.info(`[Pump] response preparing: total=${res.total}`);
+    this.success(res);
+    ctx.logger.info(`[Pump] response written: total=${res.total}`);
+  }
+
   async getWalletPrivateKey() {
     const { ctx } = this;
     const { address, key } = ctx.request.body;
@@ -135,6 +148,13 @@ class ExecuteSwap extends BaseController {
       targetAddress || address,
       amount,
     );
+    this.success(res);
+  }
+
+  async claimCashback() {
+    const { ctx } = this;
+    const { wallets } = ctx.request.body;
+    const res = await ctx.service.walletAdmin.claimCashback(wallets);
     this.success(res);
   }
 

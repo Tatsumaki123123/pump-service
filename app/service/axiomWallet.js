@@ -1,10 +1,18 @@
 "use strict";
 
 const { Service } = require("egg");
+const bs58 = require("bs58");
 const { PublicKey } = require("@solana/web3.js");
-const { connection, AXIOM_PROGRAM_ID } = require("../constants");
+const {
+  connection,
+  AXIOM_PROGRAM_ID,
+  PUMP_AMM_PROGRAM_ID,
+} = require("../constants");
 
 const RECENT_TRANSACTION_LIMIT = 10;
+const CLAIM_CASHBACK_DISCRIMINATOR = Buffer.from([
+  37, 58, 35, 126, 190, 53, 228, 197,
+]);
 
 function getPositiveEnvNumber(name, fallback) {
   const value = Number(process.env[name]);
@@ -146,6 +154,55 @@ function hasAxiomInstruction(transaction) {
   });
 }
 
+function hasPumpCashbackInstruction(transaction) {
+  const instructions = [
+    ...(transaction?.transaction?.message?.instructions || []),
+    ...(transaction?.meta?.innerInstructions || []).flatMap(
+      (item) => item.instructions || [],
+    ),
+  ];
+  const pumpAmmProgram = PUMP_AMM_PROGRAM_ID.toBase58();
+
+  return instructions.some((instruction) => {
+    const programId = toPublicKeyString(instruction.programId);
+    const isPumpAmmInstruction =
+      programId === pumpAmmProgram || instruction.program === "pump_amm";
+    if (!isPumpAmmInstruction) return false;
+
+    if (instruction.parsed?.type === "claim_cashback") return true;
+    if (typeof instruction.data !== "string") return false;
+
+    try {
+      const data = Buffer.from(bs58.decode(instruction.data));
+      return data.subarray(0, CLAIM_CASHBACK_DISCRIMINATOR.length).equals(
+        CLAIM_CASHBACK_DISCRIMINATOR,
+      );
+    } catch (error) {
+      return false;
+    }
+  });
+}
+
+function hasTransferToAddress(transaction, sourceAddress, destinationAddress) {
+  const instructions = [
+    ...(transaction?.transaction?.message?.instructions || []),
+    ...(transaction?.meta?.innerInstructions || []).flatMap(
+      (item) => item.instructions || [],
+    ),
+  ];
+
+  return instructions.some((instruction) => {
+    const parsed = instruction?.parsed;
+    const info = parsed?.info;
+    if (parsed?.type !== "transfer" || !info) return false;
+
+    return (
+      toPublicKeyString(info.destination) === destinationAddress &&
+      toPublicKeyString(info.source) === sourceAddress
+    );
+  });
+}
+
 function isSigner(transaction, address) {
   return (transaction?.transaction?.message?.accountKeys || []).some(
     (account) =>
@@ -223,6 +280,11 @@ class AxiomWalletService extends Service {
           },
         ).lean()
       : [];
+    const appData = await this.ctx.model.AppData.findOne(
+      {},
+      { receiveAddress: 1 },
+    ).lean();
+    const receiveAddress = String(appData?.receiveAddress || "").trim();
 
     this.logger.info(
       `[Axiom] execute data matched: batches=${executeDataList.length}, ` +
@@ -237,12 +299,14 @@ class AxiomWalletService extends Service {
     this.logger.info(
       `[Axiom] scan started: wallets=${wallets.length}, ` +
         `start=${start.toISOString()}, end=${end.toISOString()}, ` +
-        `concurrency=${WALLET_CONCURRENCY}, rpcRate=${RPC_REQUESTS_PER_SECOND}/s`,
+        `concurrency=${WALLET_CONCURRENCY}, rpcRate=${RPC_REQUESTS_PER_SECOND}/s, ` +
+        `excludeReceiveAddress=${receiveAddress || "none"}`,
     );
 
     const matchedWallets = await runWithConcurrency(
       wallets,
-      (wallet) => this.scanWallet(wallet, startTimestamp, endTimestamp),
+      (wallet) =>
+        this.scanWallet(wallet, startTimestamp, endTimestamp, receiveAddress),
       WALLET_CONCURRENCY,
     );
 
@@ -268,7 +332,166 @@ class AxiomWalletService extends Service {
     };
   }
 
-  async scanWallet(wallet, startTimestamp, endTimestamp) {
+  async getPumpWallets({ startTime, endTime, eid } = {}) {
+    const scanStartedAt = Date.now();
+    const start = parseTime(startTime, "startTime");
+    const end = parseTime(endTime, "endTime", true);
+
+    if (start.getTime() > end.getTime()) {
+      throw new Error("startTime must be less than or equal to endTime");
+    }
+
+    const executeDataFilter = {
+      createTime: {
+        $gte: start,
+        $lte: end,
+      },
+    };
+    if (eid !== undefined && eid !== null && String(eid).trim() !== "") {
+      const numericEid = Number(eid);
+      if (!Number.isInteger(numericEid)) {
+        throw new Error("eid must be an integer");
+      }
+      executeDataFilter.eid = numericEid;
+    }
+
+    const executeDataList = await this.ctx.model.ExecuteData.find(
+      executeDataFilter,
+      { eid: 1, createTime: 1 },
+    ).lean();
+    const eids = [
+      ...new Set(
+        executeDataList
+          .map((item) => item.eid)
+          .filter((item) => Number.isInteger(item)),
+      ),
+    ];
+    const wallets = eids.length
+      ? await this.ctx.model.ExecuteWallet.find(
+          {
+            eid: { $in: eids },
+            address: { $exists: true, $ne: "" },
+          },
+          {
+            address: 1,
+            eid: 1,
+            isActive: 1,
+          },
+        ).lean()
+      : [];
+    const appData = await this.ctx.model.AppData.findOne(
+      {},
+      { receiveAddress: 1 },
+    ).lean();
+    const receiveAddress = String(appData?.receiveAddress || "").trim();
+
+    this.logger.info(
+      `[Pump] execute data matched: batches=${executeDataList.length}, ` +
+        `eids=${eids.length}, wallets=${wallets.length}`,
+    );
+    this.logger.info(
+      `[Pump] scan started: wallets=${wallets.length}, ` +
+        `start=${start.toISOString()}, end=${end.toISOString()}, ` +
+        `concurrency=${WALLET_CONCURRENCY}, rpcRate=${RPC_REQUESTS_PER_SECOND}/s, ` +
+        `excludeReceiveAddress=${receiveAddress || "none"}`,
+    );
+
+    const matchedWallets = await runWithConcurrency(
+      wallets,
+      (wallet) => this.scanPumpWallet(wallet, receiveAddress),
+      WALLET_CONCURRENCY,
+    );
+    const list = matchedWallets.filter(Boolean);
+
+    this.logger.info(
+      `[Pump] scan completed: scanned=${wallets.length}, ` +
+        `matched=${list.length}, elapsed=${Date.now() - scanStartedAt}ms`,
+    );
+
+    return {
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      total: list.length,
+      list,
+    };
+  }
+
+  async scanPumpWallet(wallet, receiveAddress) {
+    let publicKey;
+    try {
+      publicKey = new PublicKey(wallet.address);
+    } catch (error) {
+      this.logger.warn(`Skip invalid execute wallet address: ${wallet.address}`);
+      return null;
+    }
+
+    const signatures = await callRpc("getSignaturesForAddress", () =>
+      connection.getSignaturesForAddress(publicKey, {
+        limit: RECENT_TRANSACTION_LIMIT,
+      }),
+    );
+    const rpcSignatures = signatures.filter((item) => !item.err);
+
+    if (rpcSignatures.length > 0) {
+      const transactions = await callRpc("getParsedTransactions", () =>
+        connection.getParsedTransactions(
+          rpcSignatures.map((item) => item.signature),
+          {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0,
+          },
+        ),
+      );
+      const transactionBySignature = new Map(
+        rpcSignatures.map((item, index) => [
+          item.signature,
+          transactions[index],
+        ]),
+      );
+
+      if (
+        receiveAddress &&
+        rpcSignatures.some((item) =>
+          hasTransferToAddress(
+            transactionBySignature.get(item.signature),
+            wallet.address,
+            receiveAddress,
+          ),
+        )
+      ) {
+        this.logger.info(
+          `[Pump] wallet skipped: address=${wallet.address}, ` +
+            `reason=transfer_to_receive_address, receiveAddress=${receiveAddress}`,
+        );
+        return null;
+      }
+
+      if (
+        rpcSignatures.some((item) => {
+          const transaction = transactionBySignature.get(item.signature);
+          return transaction &&
+            !transaction.meta?.err &&
+            hasPumpCashbackInstruction(transaction);
+        })
+      ) {
+        this.logger.info(
+          `[Pump] wallet skipped: address=${wallet.address}, ` +
+            "reason=claim_cashback",
+        );
+        return null;
+      }
+    }
+
+    const result = {
+      address: wallet.address,
+      eid: wallet.eid,
+      isActive: wallet.isActive,
+    };
+    this.logger.info(`[Pump] wallet matched: address=${result.address}`);
+    return result;
+  }
+
+  async scanWallet(wallet, startTimestamp, endTimestamp, receiveAddress) {
     let publicKey;
     try {
       publicKey = new PublicKey(wallet.address);
@@ -284,10 +507,17 @@ class AxiomWalletService extends Service {
       publicKey,
       startTimestamp,
       endTimestamp,
+      receiveAddress,
     );
   }
 
-  async scanWalletByRpc(wallet, publicKey, startTimestamp, endTimestamp) {
+  async scanWalletByRpc(
+    wallet,
+    publicKey,
+    startTimestamp,
+    endTimestamp,
+    receiveAddress,
+  ) {
     const signatures = await callRpc("getSignaturesForAddress", () =>
       connection.getSignaturesForAddress(publicKey, {
         limit: RECENT_TRANSACTION_LIMIT,
@@ -302,25 +532,50 @@ class AxiomWalletService extends Service {
     );
     const matchedTransactions = [];
 
-    if (candidates.length > 0) {
+    const rpcSignatures = signatures.filter((item) => !item.err);
+    if (rpcSignatures.length > 0 && (candidates.length > 0 || receiveAddress)) {
       const transactions = await callRpc("getParsedTransactions", () =>
         connection.getParsedTransactions(
-          candidates.map((item) => item.signature),
+          rpcSignatures.map((item) => item.signature),
           {
             commitment: "confirmed",
             maxSupportedTransactionVersion: 0,
           },
         ),
       );
+      const transactionBySignature = new Map(
+        rpcSignatures.map((item, index) => [
+          item.signature,
+          transactions[index],
+        ]),
+      );
 
-      const transactionIndex = transactions.findIndex(
-        (transaction, index) =>
+      if (
+        receiveAddress &&
+        rpcSignatures.some((item) =>
+          hasTransferToAddress(
+            transactionBySignature.get(item.signature),
+            wallet.address,
+            receiveAddress,
+          ),
+        )
+      ) {
+        this.logger.info(
+          `[Axiom] wallet skipped: address=${wallet.address}, ` +
+            `reason=transfer_to_receive_address, receiveAddress=${receiveAddress}`,
+        );
+        return null;
+      }
+
+      const transactionIndex = candidates.findIndex((signatureInfo) => {
+        const transaction = transactionBySignature.get(signatureInfo.signature);
+        return (
           transaction &&
           !transaction.meta?.err &&
           hasAxiomInstruction(transaction) &&
-          isSigner(transaction, wallet.address) &&
-          candidates[index],
-      );
+          isSigner(transaction, wallet.address)
+        );
+      });
       if (transactionIndex >= 0) {
         const signatureInfo = candidates[transactionIndex];
         matchedTransactions.push({

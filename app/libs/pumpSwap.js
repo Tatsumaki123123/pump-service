@@ -225,9 +225,66 @@ const U64_MAX = (1n << 64n) - 1n;
 const SELL_DISCRIMINATOR = new Uint8Array([
   51, 230, 133, 164, 1, 127, 131, 173,
 ]);
+const CLAIM_CASHBACK_DISCRIMINATOR = new Uint8Array([
+  37, 58, 35, 126, 190, 53, 228, 197,
+]);
 
 class PumpSwapSDK {
   constructor() {}
+
+  createClaimCashbackInstruction(user) {
+    const userVolumeAccumulator = getUserVolumeAccumulatorPda(user);
+    const userVolumeAccumulatorWsolTokenAccount =
+      getAssociatedTokenAddressSync(
+        WSOL_TOKEN_ACCOUNT,
+        userVolumeAccumulator,
+        true,
+        TOKEN_PROGRAM_ID,
+      );
+    const userWsolTokenAccount = getAssociatedTokenAddressSync(
+      WSOL_TOKEN_ACCOUNT,
+      user,
+      false,
+      TOKEN_PROGRAM_ID,
+    );
+
+    return {
+      instruction: new TransactionInstruction({
+        programId: PUMP_AMM_PROGRAM_ID,
+        keys: [
+          { pubkey: user, isSigner: false, isWritable: true },
+          {
+            pubkey: userVolumeAccumulator,
+            isSigner: false,
+            isWritable: true,
+          },
+          { pubkey: WSOL_TOKEN_ACCOUNT, isSigner: false, isWritable: false },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          {
+            pubkey: userVolumeAccumulatorWsolTokenAccount,
+            isSigner: false,
+            isWritable: true,
+          },
+          {
+            pubkey: userWsolTokenAccount,
+            isSigner: false,
+            isWritable: true,
+          },
+          {
+            pubkey: SystemProgram.programId,
+            isSigner: false,
+            isWritable: false,
+          },
+          { pubkey: EVENT_AUTHORITY, isSigner: false, isWritable: false },
+          { pubkey: PUMP_AMM_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        data: Buffer.from(CLAIM_CASHBACK_DISCRIMINATOR),
+      }),
+      userWsolTokenAccount,
+      userVolumeAccumulator,
+      userVolumeAccumulatorWsolTokenAccount,
+    };
+  }
 
   async createBuyInstruction(params) {
     const {

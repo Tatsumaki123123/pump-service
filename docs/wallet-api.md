@@ -159,7 +159,58 @@ curl -X POST http://localhost:8899/v1/execute/getAxiomWallets \
 - 钱包地址是交易 signer；
 - 顶层指令或内部指令调用了 Axiom program。
 
-## 2. 获取钱包私钥
+如果 `AppData.receiveAddress` 已配置，最近 10 笔交易中只要发现该 wallet 向 `receiveAddress` 转账，就会直接跳过该 wallet，不返回到结果中。
+
+## 2. 查询可领取 Pump Cashback 的钱包
+
+```http
+POST /v1/execute/getPumpWallets
+```
+
+接口会先按 `ExecuteData.createTime` 查询时间范围内的执行批次，再通过 `eid` 查询 `ExecuteWallet`。每个钱包只检查最近 10 笔成功交易：如果发现 Pump AMM 的 `claim_cashback`，或发现钱包向 `AppData.receiveAddress` 转账，则跳过该钱包；其余钱包返回到结果中。
+
+该接口会同步等待扫描完成，不需要传递 `wait` 参数。最近 10 笔交易只用于排除已领取 cashback 或已归集的钱包，不再向更早历史分页查询。接口使用项目 `RPC_URL` 配置的 QuickNode RPC，并复用 Axiom 扫描的并发、限流和重试配置。
+
+### 请求参数
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `startTime` | string/number | 是 | `ExecuteData.createTime` 开始时间，支持 ISO、Unix 秒或毫秒时间戳 |
+| `endTime` | string/number | 是 | `ExecuteData.createTime` 结束时间，支持 ISO、Unix 秒或毫秒时间戳 |
+| `eid` | number | 否 | 只查询指定 `eid` 下的钱包 |
+
+### 请求示例
+
+```bash
+curl -X POST http://localhost:8899/v1/execute/getPumpWallets \
+  -H "Content-Type: application/json" \
+  -d '{
+    "startTime": "2026-08-01T00:00:00+08:00",
+    "endTime": "2026-08-24T23:59:59+08:00"
+  }'
+```
+
+### 返回示例
+
+```json
+{
+  "code": 0,
+  "data": {
+    "startTime": "2026-07-31T16:00:00.000Z",
+    "endTime": "2026-08-24T15:59:59.000Z",
+    "total": 1,
+    "list": [
+      {
+        "address": "钱包地址",
+        "eid": 123,
+        "isActive": true
+      }
+    ]
+  }
+}
+```
+
+## 3. 获取钱包私钥
 
 ```http
 POST /v1/execute/getWalletPrivateKey
@@ -208,7 +259,7 @@ curl -X POST http://localhost:8899/v1/execute/getWalletPrivateKey \
 
 私钥接口属于高敏感接口。不要把响应写入日志、前端页面、聊天记录或公开监控系统；生产环境应立即将默认密钥修改为随机高强度密钥，并限制接口访问来源。
 
-## 3. 归集钱包 SOL 余额
+## 4. 归集钱包 SOL 余额
 
 ```http
 POST /v1/execute/transferWalletBalance
@@ -313,7 +364,7 @@ curl -X POST http://localhost:8899/v1/execute/transferWalletBalance \
 
 该接口会实际转移链上资产，调用前请确认 `AppData.receiveAddress` 和钱包数组无误。按当前接口设计，余额归集接口不额外校验 `key`。
 
-## 4. 从提取地址转入 SOL
+## 5. 从提取地址转入 SOL
 
 ```http
 POST /v1/execute/transferFromReceiveAddress
@@ -382,6 +433,70 @@ curl -X POST http://localhost:8899/v1/execute/transferFromReceiveAddress \
 ```
 
 调用前请确认源钱包余额至少包含转账金额和交易手续费，并确认 `AppData.receiveAddress` 与 `AppData.receivePrivateKey` 属于同一个钱包。该接口会实际转移链上资产。
+
+## 6. 领取 Pump AMM Cashback
+
+```http
+POST /v1/execute/claimCashback
+```
+
+对 `wallets` 中的执行钱包逐个调用 Pump AMM 的 `claim_cashback` 指令，领取钱包在 Pump AMM 交易中累计的 cashback。接口从 `ExecuteWallet` 表读取私钥，并等待每笔交易确认后再返回。
+
+如果用户没有 WSOL ATA，接口会在同一笔交易中创建该账户、领取 cashback，然后关闭账户，将 WSOL 转回原生 SOL。已有的 WSOL ATA 不会被关闭，避免把账户中原有的 WSOL 一并转出。
+
+### 请求参数
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `wallets` | array | 是 | 钱包地址数组，也支持 `{ "address": "..." }` 对象数组 |
+
+### 请求示例
+
+```bash
+curl -X POST http://localhost:8899/v1/execute/claimCashback \
+  -H "Content-Type: application/json" \
+  -d '{
+    "wallets": [
+      "钱包地址1",
+      "钱包地址2"
+    ]
+  }'
+```
+
+### 返回示例
+
+```json
+{
+  "code": 0,
+  "data": {
+    "total": 2,
+    "success": 1,
+    "failed": 1,
+    "list": [
+      {
+        "address": "钱包地址1",
+        "status": "success",
+        "signature": "交易签名",
+        "createdWsolAccount": true,
+        "closedWsolAccount": true
+      },
+      {
+        "address": "钱包地址2",
+        "status": "failed",
+        "message": "没有可领取的 cashback 或交易失败原因"
+      }
+    ]
+  }
+}
+```
+
+单个钱包状态说明：
+
+| 状态 | 说明 |
+| --- | --- |
+| `success` | cashback 领取交易已确认 |
+| `failed` | 读取私钥、RPC、发送或确认交易失败 |
+| `not_found` | 地址不在 `ExecuteWallet` 表中 |
 
 ## 错误返回
 
