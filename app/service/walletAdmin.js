@@ -20,6 +20,7 @@ const { WSOL_TOKEN_ACCOUNT } = require("../constants");
 const PumpSwapSDK = require("../libs/pumpSwap");
 
 const MULTIPLE_ACCOUNTS_LIMIT = 100;
+const CLAIM_CASHBACK_FUNDING_AMOUNT = 0.01;
 const SIGNATURE_STATUS_POLL_MS = 500;
 const SIGNATURE_CONFIRM_TIMEOUT_MS = 30000;
 const pumpSwap = new PumpSwapSDK();
@@ -318,6 +319,37 @@ class WalletAdmin extends Service {
   }
 
   async transferFromReceiveAddress(targetAddress, amount = 0.01) {
+    if (Array.isArray(targetAddress)) {
+      if (targetAddress.length === 0) {
+        throw new Error("address must be a non-empty array");
+      }
+
+      const list = [];
+      for (const address of targetAddress) {
+        try {
+          const result = await this.transferFromReceiveAddress(address, amount);
+          list.push({
+            address: result.targetAddress,
+            status: "success",
+            ...result,
+          });
+        } catch (error) {
+          list.push({
+            address,
+            status: "failed",
+            message: error.message,
+          });
+        }
+      }
+
+      return {
+        total: list.length,
+        success: list.filter((item) => item.status === "success").length,
+        failed: list.filter((item) => item.status === "failed").length,
+        list,
+      };
+    }
+
     const receiveWallet = await this.ctx.service.appData.getReceiveWallet();
     const configuredSourceAddress = normalizeAddress(
       receiveWallet.address,
@@ -429,15 +461,68 @@ class WalletAdmin extends Service {
         continue;
       }
 
+      let funding;
       try {
         const keypair = keypairFromWallet(wallet);
         const claim = pumpSwap.createClaimCashbackInstruction(
           keypair.publicKey,
         );
-        const userWsolAccountInfo = await connection.getAccountInfo(
-          claim.userWsolTokenAccount,
+        const [
+          userWsolAccountInfo,
+          userVolumeAccumulatorWsolAccountInfo,
+        ] = await connection.getMultipleAccountsInfo(
+          [
+            claim.userWsolTokenAccount,
+            claim.userVolumeAccumulatorWsolTokenAccount,
+          ],
           "confirmed",
         );
+
+        // The accumulator ATA is the source of the cashback transfer. It must
+        // have been funded by prior cashback-enabled Pump AMM swaps; creating
+        // an empty one here only spends rent and cannot produce a claim.
+        if (!userVolumeAccumulatorWsolAccountInfo) {
+          list.push({
+            address,
+            status: "skipped",
+            message: "No Pump AMM cashback account found",
+            userVolumeAccumulator: claim.userVolumeAccumulator.toBase58(),
+            userVolumeAccumulatorWsolTokenAccount:
+              claim.userVolumeAccumulatorWsolTokenAccount.toBase58(),
+          });
+          continue;
+        }
+
+        const accumulatorBalance = await connection.getTokenAccountBalance(
+          claim.userVolumeAccumulatorWsolTokenAccount,
+          "confirmed",
+        );
+        const claimableLamports = BigInt(accumulatorBalance.value.amount);
+        if (claimableLamports === 0n) {
+          list.push({
+            address,
+            status: "skipped",
+            message: "No Pump AMM cashback available",
+            userVolumeAccumulator: claim.userVolumeAccumulator.toBase58(),
+            userVolumeAccumulatorWsolTokenAccount:
+              claim.userVolumeAccumulatorWsolTokenAccount.toBase58(),
+            claimableLamports: "0",
+            claimableSol: "0",
+          });
+          continue;
+        }
+
+        const balanceLamports = await connection.getBalance(
+          keypair.publicKey,
+          "confirmed",
+        );
+        if (balanceLamports === 0) {
+          funding = await this.transferFromReceiveAddress(
+            address,
+            CLAIM_CASHBACK_FUNDING_AMOUNT,
+          );
+        }
+
         const createWsolAccount = !userWsolAccountInfo;
         const instructions = [];
 
@@ -477,7 +562,7 @@ class WalletAdmin extends Service {
         transaction.sign([keypair]);
 
         console.log(
-          `[Pump AMM] claim_cashback sending: address=${address}, createWsolAccount=${createWsolAccount}`,
+          `[Pump AMM] claim_cashback sending: address=${address}, claimableLamports=${claimableLamports}, createWsolAccount=${createWsolAccount}`,
         );
         const signature = await connection.sendTransaction(transaction, {
           skipPreflight: false,
@@ -496,8 +581,11 @@ class WalletAdmin extends Service {
           userVolumeAccumulator: claim.userVolumeAccumulator.toBase58(),
           userVolumeAccumulatorWsolTokenAccount:
             claim.userVolumeAccumulatorWsolTokenAccount.toBase58(),
+          claimableLamports: claimableLamports.toString(),
+          claimableSol: accumulatorBalance.value.uiAmountString,
           createdWsolAccount: createWsolAccount,
           closedWsolAccount: createWsolAccount,
+          ...(funding ? { funding } : {}),
         });
       } catch (error) {
         console.log(
@@ -507,6 +595,7 @@ class WalletAdmin extends Service {
           address,
           status: "failed",
           message: error.message,
+          ...(funding ? { funding } : {}),
         });
       }
     }
@@ -514,6 +603,7 @@ class WalletAdmin extends Service {
     return {
       total: list.length,
       success: list.filter((item) => item.status === "success").length,
+      skipped: list.filter((item) => item.status === "skipped").length,
       failed: list.filter(
         (item) => item.status === "failed" || item.status === "not_found",
       ).length,

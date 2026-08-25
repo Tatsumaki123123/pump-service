@@ -66,12 +66,17 @@ const TRANSACTION_FEE = 5000;
 const MAX_TRANSACTION_SIZE = 1232;
 const DEFAULT_PROXY_PUMP_SWAP_LOOKUP_TABLE =
   "4j834PBihsChsKWF4SZCY4K9tVNHc5JFpw1vEDJgbW29";
+const DEFAULT_AXIOM_LOOKUP_TABLE =
+  "4vX5U9XsiY11infmC13d6VFPjvUqtuRw744r4o94dyow";
 const AXIOM_COMPUTE_BUDGET_MARKER = new PublicKey(
   process.env.AXIOM_COMPUTE_BUDGET_MARKER ||
-    "jitodontfront81111111TradeWithAxiomDotTrade",
+    "jitodontfront61111111TradeWithAxiomDotTrade",
 );
 const AXIOM_COMPUTE_UNIT_LIMIT = Number(
   process.env.AXIOM_COMPUTE_UNIT_LIMIT || 275000,
+);
+const AXIOM_COMPUTE_UNIT_PRICE = Number(
+  process.env.AXIOM_COMPUTE_UNIT_PRICE || 218916,
 );
 const BUNDLE_PROVIDER = (
   process.env.BUNDLE_PROVIDER || "quicknode"
@@ -85,15 +90,13 @@ const PUMP_AMM_DONT_FRONT_MARKER = new PublicKey(
 const AVE_COMPUTE_UNIT_LIMIT = Number(
   process.env.AVE_COMPUTE_UNIT_LIMIT || 500000,
 );
-const AXIOM_MEV_TIP_ACCOUNT = new PublicKey(
-  process.env.AXIOM_MEV_TIP_ACCOUNT ||
-    "DKbvWuh6NeDTAbeZ8stnMkobcZM4umbXmeAHXSzKXfsi",
+const AXIOM_TIP_ACCOUNT = new PublicKey(
+  process.env.AXIOM_TIP_ACCOUNT ||
+    "7sMh3XCdHUGWQzjqDc91QoYsyb5eVozrXSyBskLPUXaG",
 );
-const AXIOM_MEV_TIP_LAMPORTS = Number(process.env.AXIOM_MEV_TIP_LAMPORTS || 0);
-// When true, drop the jitodontfront marker so Axiom txns can go through a Jito
-// bundle (co-land atomically) at the cost of losing anti-frontrun protection.
-// When false (default), keep the marker for anti-frontrun protection and concurrent RPC sends.
-const AXIOM_BUNDLE_MODE = process.env.AXIOM_BUNDLE_MODE === "true";
+const AXIOM_TIP_LAMPORTS = Number(
+  process.env.AXIOM_TIP_LAMPORTS || 139798,
+);
 
 const SLIPPAGE_BASIS_POINTS = 0.3;
 const BUY_SLIPPAGE_ERROR = "BuySlippageBelowMinBaseAmountOut";
@@ -159,30 +162,33 @@ class PumpAMM extends Service {
   constructor(ctx) {
     super(ctx);
     this.subscriptionId = null;
-    this.pumpSwapLookupTables = null;
+    this.lookupTablesByRoute = new Map();
   }
 
-  getLookupTableAddresses() {
-    const configuredAddresses = [
-      process.env.PROXY_PUMP_SWAP_LOOKUP_TABLE ||
-        DEFAULT_PROXY_PUMP_SWAP_LOOKUP_TABLE,
-      process.env.PUMP_AMM_LOOKUP_TABLES,
-      process.env.AXIOM_LOOKUP_TABLES,
-    ]
+  getLookupTableAddresses(isAxiom = false) {
+    const configuredAddresses = isAxiom
+      ? [process.env.AXIOM_LOOKUP_TABLES || DEFAULT_AXIOM_LOOKUP_TABLE]
+      : [
+          process.env.PROXY_PUMP_SWAP_LOOKUP_TABLE ||
+            DEFAULT_PROXY_PUMP_SWAP_LOOKUP_TABLE,
+          process.env.PUMP_AMM_LOOKUP_TABLES,
+        ];
+
+    return configuredAddresses
       .flatMap((value) => (value || "").split(","))
       .map((value) => value.trim())
       .filter(Boolean);
-
-    return [...new Set(configuredAddresses)];
   }
 
-  async getProxyPumpSwapLookupTables() {
-    if (this.pumpSwapLookupTables) {
-      return this.pumpSwapLookupTables;
+  async getProxyPumpSwapLookupTables(isAxiom = false) {
+    const route = isAxiom ? "axiom" : "pumpAmm";
+    if (this.lookupTablesByRoute.has(route)) {
+      return this.lookupTablesByRoute.get(route);
     }
 
-    const lookupTableAddresses = this.getLookupTableAddresses();
-    this.pumpSwapLookupTables = [];
+    const lookupTableAddresses = this.getLookupTableAddresses(isAxiom);
+    const lookupTables = [];
+    this.lookupTablesByRoute.set(route, lookupTables);
 
     for (const lookupTableAddress of lookupTableAddresses) {
       try {
@@ -190,24 +196,24 @@ class PumpAMM extends Service {
           new PublicKey(lookupTableAddress),
         );
         if (lookupTable.value) {
-          this.pumpSwapLookupTables.push(lookupTable.value);
+          lookupTables.push(lookupTable.value);
         } else {
           console.log(
             chalk.yellow(
-              `Pump AMM lookup table not found: ${lookupTableAddress}`,
+              `${isAxiom ? "Axiom" : "Pump AMM"} lookup table not found: ${lookupTableAddress}`,
             ),
           );
         }
       } catch (error) {
         console.log(
           chalk.yellow(
-            `Failed to load pump AMM lookup table ${lookupTableAddress}: ${error.message}`,
+            `Failed to load ${isAxiom ? "Axiom" : "Pump AMM"} lookup table ${lookupTableAddress}: ${error.message}`,
           ),
         );
       }
     }
 
-    return this.pumpSwapLookupTables;
+    return lookupTables;
   }
 
   /**
@@ -229,10 +235,6 @@ class PumpAMM extends Service {
         const buyTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
         const tipAmount = ctx.service.jito.getTipAmount();
-        const lookupTableAccounts = await this.getProxyPumpSwapLookupTables();
-        const lookupTables = lookupTableAccounts.length
-          ? lookupTableAccounts
-          : undefined;
         let bundleHasTip = false;
         for (let i = 0; i < wallets.length; i++) {
           const slippage = i === 0 ? 0.05 : SLIPPAGE_BASIS_POINTS;
@@ -240,6 +242,11 @@ class PumpAMM extends Service {
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
           const { buyAmount, limit, price, fee, isAxiom, isAve } = wallet;
+          const lookupTableAccounts =
+            await this.getProxyPumpSwapLookupTables(isAxiom);
+          const lookupTables = lookupTableAccounts.length
+            ? lookupTableAccounts
+            : undefined;
           let volumeIxs = [];
           let jitoTipIx = null;
           let walletLookupTables = lookupTables;
@@ -283,7 +290,7 @@ class PumpAMM extends Service {
                     ? AVE_COMPUTE_UNIT_LIMIT
                     : limit,
               });
-            const shouldAddAxiomDontFront = isAxiom && !AXIOM_BUNDLE_MODE;
+            const shouldAddAxiomDontFront = isAxiom;
             const shouldAddPumpAmmDontFront =
               !isAxiom &&
               !isAve &&
@@ -302,7 +309,9 @@ class PumpAMM extends Service {
 
             const setComputeUnitPriceIx =
               ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports: price,
+                microLamports: isAxiom
+                  ? wallet.axiomComputeUnitPrice ?? AXIOM_COMPUTE_UNIT_PRICE
+                  : price,
               });
 
             const proxyBuyIxs = await this.genBuyProxyIxs({
@@ -318,16 +327,6 @@ class PumpAMM extends Service {
               setComputeUnitPriceIx,
               ...proxyBuyIxs,
             ];
-            if (isAxiom && AXIOM_MEV_TIP_LAMPORTS > 0) {
-              volumeIxs.push(
-                SystemProgram.transfer({
-                  fromPubkey: user,
-                  toPubkey: AXIOM_MEV_TIP_ACCOUNT,
-                  lamports: AXIOM_MEV_TIP_LAMPORTS,
-                }),
-              );
-            }
-
             // 9, gmgn, trogan, jito
             if (wallet.isGmgn) {
               const gmgnTipTx = SystemProgram.transfer({
@@ -345,9 +344,8 @@ class PumpAMM extends Service {
               }
             }
 
-            const shouldAddJitoTip = isAxiom
-              ? wallets.length === 1
-              : NEXTBLOCK_TIP_EVERY_TX || i === 0;
+            const shouldAddJitoTip =
+              !isAxiom && (NEXTBLOCK_TIP_EVERY_TX || i === 0);
             if (shouldAddJitoTip) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -355,6 +353,16 @@ class PumpAMM extends Service {
                 lamports: tipAmount,
               });
               volumeIxs.push(jitoTipIx);
+            }
+
+            if (isAxiom && AXIOM_TIP_LAMPORTS > 0) {
+              volumeIxs.push(
+                SystemProgram.transfer({
+                  fromPubkey: user,
+                  toPubkey: AXIOM_TIP_ACCOUNT,
+                  lamports: AXIOM_TIP_LAMPORTS,
+                }),
+              );
             }
 
             if (
@@ -575,12 +583,12 @@ class PumpAMM extends Service {
             console.log(
               chalk.green("simulation success", keypair.publicKey.toString()),
             );
-            buyTxns.push(tx);
+            buyTxns.push({ tx, isAxiom });
             if (jitoTipIx) {
               bundleHasTip = true;
             }
             if (splitTipTx) {
-              buyTxns.push(splitTipTx);
+              buyTxns.push({ tx: splitTipTx, isAxiom: false });
               bundleHasTip = true;
             }
           } catch (error) {
@@ -594,7 +602,7 @@ class PumpAMM extends Service {
         if (SIMULATE_BEFORE_BUNDLE) {
           for (let i = 0; i < buyTxns.length; i++) {
             const simulationResult = await connection.simulateTransaction(
-              buyTxns[i],
+              buyTxns[i].tx,
               { commitment: "confirmed" },
             );
             if (simulationResult.value.err) {
@@ -608,17 +616,28 @@ class PumpAMM extends Service {
         }
         // return;
         if (buyTxns.length > 0) {
-          const axiomOnly =
-            wallets.length > 0 && wallets.every((wallet) => wallet.isAxiom);
-          const bundleResult =
-            axiomOnly && !bundleHasTip
-              ? await ctx.service.jito.sendTransactionsConcurrentlyByRpc(
-                  buyTxns,
-                  undefined,
-                  sendOptions,
-                )
-              : await ctx.service.jito.sendBundle(buyTxns, sendOptions);
-          console.log(bundleResult);
+          const axiomTxns = buyTxns
+            .filter((item) => item.isAxiom)
+            .map((item) => item.tx);
+          const bundleTxns = buyTxns
+            .filter((item) => !item.isAxiom)
+            .map((item) => item.tx);
+          if (axiomTxns.length > 0) {
+            const rpcResult =
+              await ctx.service.jito.sendTransactionsConcurrentlyByRpc(
+                axiomTxns,
+                undefined,
+                sendOptions,
+              );
+            console.log("Axiom RPC result", rpcResult);
+          }
+          if (bundleTxns.length > 0) {
+            const bundleResult = await ctx.service.jito.sendBundle(
+              bundleTxns,
+              sendOptions,
+            );
+            console.log("Pump AMM bundle result", bundleResult);
+          }
           console.log(chalk.green("Buy transactions completed."));
         }
       };

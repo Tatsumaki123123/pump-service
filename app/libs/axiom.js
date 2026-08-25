@@ -31,33 +31,21 @@ const AXIOM_PROGRAM_ID = new PublicKey(
   "FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9",
 );
 const AXIOM_CREATE_DATA_SUFFIX = 0xff;
-const AXIOM_BUY_DATA_SUFFIX = Buffer.from("00021f00323c", "hex");
+const AXIOM_BUY_DATA_SUFFIX = Buffer.from("00021f00183c", "hex");
 const AXIOM_FEE_DESTINATION = new PublicKey(
   process.env.AXIOM_FEE_DESTINATION ||
-    "3PvqoztjnRxaAiFmLuEfqZkU4GSbjUareks8S2xCZaTa",
+    "EqGzowSp6cKAsMSRyyrFTaBxnZEVeNY81LC18YFy8Cx9",
 );
 const AXIOM_DEFAULT_FEE_LAMPORTS = Number(
-  process.env.AXIOM_PLATFORM_FEE_LAMPORTS || 143500,
+  process.env.AXIOM_PLATFORM_FEE_LAMPORTS || 100000,
 );
 const AXIOM_ACCOUNT_2 = new PublicKey(
   process.env.AXIOM_ACCOUNT_2 ||
-    "86Vh4XGLW2b6nvWbRyDs4ScgMXbuvRCHT7WbUT3RFxKG",
-);
-const AXIOM_ACCOUNT_6 = new PublicKey(
-  process.env.AXIOM_ACCOUNT_6 ||
-    "CoF2AQXNW96ZV48Ykw5ykK8XTw7Bb2hp91ZbvaWQL5kR",
-);
-const AXIOM_ACCOUNT_7 = new PublicKey(
-  process.env.AXIOM_ACCOUNT_7 ||
-    "whvdVgr2hwzcAi474yGcaEFwSV6pVpMwaCmBKeSXFAa",
-);
-const AXIOM_POOL_AUTHORITY = new PublicKey(
-  process.env.AXIOM_POOL_AUTHORITY ||
-    "92SirvwTNd9UTJVYpoB14tkcezY9wW6RHooesBPZqPmq",
+    "5L2QKqDn5ukJSWGyqR4RPvFvwnBabKWqAqMzH4heaQNB",
 );
 const AXIOM_ACCOUNT_41 = new PublicKey(
   process.env.AXIOM_ACCOUNT_41 ||
-    "4vxJwQxjit7D8TBneQuDQBdyNrSEQznnsx2gwtjRPaCD",
+    "9krj8YnMCgeEDdx4eiuxciiXsfcfJf8C28aUKWjgmm2u",
 );
 const GLOBAL_CONFIG = new PublicKey(
   "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
@@ -81,11 +69,11 @@ const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
 );
 const PROTOCOL_FEE_RECIPIENT = new PublicKey(
   process.env.AXIOM_PROTOCOL_FEE_RECIPIENT ||
-    "AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY",
+    "7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ",
 );
 const PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
   process.env.AXIOM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT ||
-    "FGptqdxjahafaCzpZ1T6EDtCzYMv7Dyn5MgBLyB3VUFW",
+    "7GFUN3bWzJMKMRZ34JLsvcqdssDbXnp589SiE33KVwcC",
 );
 const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey(
   "C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw",
@@ -274,9 +262,17 @@ async function createAxiomBuyInstructions({
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: PUMP_AMM_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: AXIOM_ACCOUNT_6, isSigner: false, isWritable: false },
-      { pubkey: AXIOM_ACCOUNT_7, isSigner: false, isWritable: false },
-      { pubkey: AXIOM_POOL_AUTHORITY, isSigner: false, isWritable: true },
+      {
+        pubkey: poolDetail.poolData.coinCreator,
+        isSigner: false,
+        isWritable: false,
+      },
+      {
+        pubkey: coinCreatorVaultAuthority,
+        isSigner: false,
+        isWritable: false,
+      },
+      { pubkey: coinCreatorVaultAta, isSigner: false, isWritable: true },
       { pubkey: poolDetail.address, isSigner: false, isWritable: true },
       { pubkey: user, isSigner: true, isWritable: true },
       { pubkey: GLOBAL_CONFIG, isSigner: false, isWritable: false },
@@ -337,12 +333,6 @@ async function createAxiomBuyInstructions({
     data: encodeAxiomBuyData(maxQuoteAmountIn, baseAmountOut),
   });
 
-  const feeIx = SystemProgram.transfer({
-    fromPubkey: user,
-    toPubkey: AXIOM_FEE_DESTINATION,
-    lamports: platformFeeLamports.toNumber(),
-  });
-
   console.log("Axiom instruction", {
     programId: AXIOM_PROGRAM_ID.toBase58(),
     tempWsol: tempWsol.toBase58(),
@@ -354,8 +344,14 @@ async function createAxiomBuyInstructions({
     buyAccounts: buyIx.keys.map((item) => item.pubkey.toBase58()),
   });
 
+  const tokenAtaExists = await connection.getAccountInfo(userBaseTokenAccount);
+
   return {
-    instructions: [createTokenAtaIx, createWsolIx, buyIx, feeIx],
+    instructions: [
+      ...(tokenAtaExists ? [] : [createTokenAtaIx]),
+      createWsolIx,
+      buyIx,
+    ],
     signers: [],
   };
 }

@@ -391,8 +391,8 @@ db.appdatas.updateOne(
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `address` | string | 是 | 目标收款地址，也支持使用 `targetAddress` |
-| `targetAddress` | string | 否 | 目标收款地址；与 `address` 同时传入时优先使用该字段 |
+| `address` | string/array | 是 | 目标收款地址，也支持使用 `targetAddress`；传数组时批量转账 |
+| `targetAddress` | string/array | 否 | 目标收款地址；与 `address` 同时传入时优先使用该字段 |
 | `amount` | number | 否 | 转账 SOL 数量，默认 `0.01` |
 
 ### 请求示例
@@ -415,6 +415,17 @@ curl -X POST http://localhost:8899/v1/execute/transferFromReceiveAddress \
   "amount": 0.01
 }
 ```
+
+批量转账时，数组中的每个地址都会单独发送一笔交易，接口按顺序执行并返回每个地址的结果：
+
+```json
+{
+  "address": ["目标地址1", "目标地址2"],
+  "amount": 0.01
+}
+```
+
+批量请求返回 `total`、`success`、`failed` 和 `list` 字段；单个地址失败不会阻断其他地址。
 
 ### 返回示例
 
@@ -440,15 +451,17 @@ curl -X POST http://localhost:8899/v1/execute/transferFromReceiveAddress \
 POST /v1/execute/claimCashback
 ```
 
-对 `wallets` 中的执行钱包逐个调用 Pump AMM 的 `claim_cashback` 指令，领取钱包在 Pump AMM 交易中累计的 cashback。接口从 `ExecuteWallet` 表读取私钥，并等待每笔交易确认后再返回。
+对 `wallets` 中的执行钱包逐个调用 Pump AMM 的 `claim_cashback` 指令，领取钱包在 Pump AMM 交易中累计的 cashback。接口从 `ExecuteWallet` 表读取私钥，并等待每笔交易确认后再返回。若钱包链上 SOL 余额为 `0`，会先从 `AppData.receiveAddress` 转入 `0.01 SOL`，确认到账后再执行领取。
 
-如果用户没有 WSOL ATA，接口会在同一笔交易中创建该账户、领取 cashback，然后关闭账户，将 WSOL 转回原生 SOL。已有的 WSOL ATA 不会被关闭，避免把账户中原有的 WSOL 一并转出。
+接口先读取 `user_volume_accumulator` 的 WSOL ATA。该账户是 Pump AMM `claim_cashback` 的资金来源，只有存在且余额大于 0 才发送领取交易；不存在或余额为 0 时返回 `skipped`，不会补款、创建账户或消耗手续费。若需要领取但用户 WSOL ATA 不存在，接口会在同一笔交易中创建用户 WSOL ATA、调用 `claim_cashback`，然后关闭该 ATA，将 WSOL 转回原生 SOL；已有的用户 WSOL ATA 不会被关闭。
 
 ### 请求参数
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `wallets` | array | 是 | 钱包地址数组，也支持 `{ "address": "..." }` 对象数组 |
+
+余额为 `0` 且确认有可领取 cashback 的钱包，会先触发自动补款；返回项会额外包含 `funding`，其中包含补款交易信息。
 
 ### 请求示例
 
@@ -471,19 +484,22 @@ curl -X POST http://localhost:8899/v1/execute/claimCashback \
   "data": {
     "total": 2,
     "success": 1,
-    "failed": 1,
+    "skipped": 1,
+    "failed": 0,
     "list": [
       {
         "address": "钱包地址1",
         "status": "success",
         "signature": "交易签名",
         "createdWsolAccount": true,
-        "closedWsolAccount": true
+        "closedWsolAccount": true,
+        "claimableLamports": "203399650",
+        "claimableSol": "0.20339965"
       },
       {
         "address": "钱包地址2",
-        "status": "failed",
-        "message": "没有可领取的 cashback 或交易失败原因"
+        "status": "skipped",
+        "message": "No Pump AMM cashback available"
       }
     ]
   }
@@ -495,6 +511,7 @@ curl -X POST http://localhost:8899/v1/execute/claimCashback \
 | 状态 | 说明 |
 | --- | --- |
 | `success` | cashback 领取交易已确认 |
+| `skipped` | PDA 的 WSOL 资金账户不存在或可领取余额为 0，未发送交易 |
 | `failed` | 读取私钥、RPC、发送或确认交易失败 |
 | `not_found` | 地址不在 `ExecuteWallet` 表中 |
 

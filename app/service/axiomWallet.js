@@ -174,9 +174,9 @@ function hasPumpCashbackInstruction(transaction) {
 
     try {
       const data = Buffer.from(bs58.decode(instruction.data));
-      return data.subarray(0, CLAIM_CASHBACK_DISCRIMINATOR.length).equals(
-        CLAIM_CASHBACK_DISCRIMINATOR,
-      );
+      return data
+        .subarray(0, CLAIM_CASHBACK_DISCRIMINATOR.length)
+        .equals(CLAIM_CASHBACK_DISCRIMINATOR);
     } catch (error) {
       return false;
     }
@@ -421,7 +421,9 @@ class AxiomWalletService extends Service {
     try {
       publicKey = new PublicKey(wallet.address);
     } catch (error) {
-      this.logger.warn(`Skip invalid execute wallet address: ${wallet.address}`);
+      this.logger.warn(
+        `Skip invalid execute wallet address: ${wallet.address}`,
+      );
       return null;
     }
 
@@ -466,20 +468,20 @@ class AxiomWalletService extends Service {
         return null;
       }
 
-      if (
-        rpcSignatures.some((item) => {
-          const transaction = transactionBySignature.get(item.signature);
-          return transaction &&
-            !transaction.meta?.err &&
-            hasPumpCashbackInstruction(transaction);
-        })
-      ) {
-        this.logger.info(
-          `[Pump] wallet skipped: address=${wallet.address}, ` +
-            "reason=claim_cashback",
-        );
-        return null;
-      }
+      // if (
+      //   rpcSignatures.some((item) => {
+      //     const transaction = transactionBySignature.get(item.signature);
+      //     return transaction &&
+      //       !transaction.meta?.err &&
+      //       hasPumpCashbackInstruction(transaction);
+      //   })
+      // ) {
+      //   this.logger.info(
+      //     `[Pump] wallet skipped: address=${wallet.address}, ` +
+      //       "reason=claim_cashback",
+      //   );
+      //   return null;
+      // }
     }
 
     const result = {
