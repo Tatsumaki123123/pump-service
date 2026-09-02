@@ -66,6 +66,10 @@ module.exports = (app) => {
   );
 
   router.post("/v1/appdata/getXAuth", controller.appData.getXAuth);
+  router.post(
+    "/v1/appdata/checkVisitPass",
+    controller.appData.checkVisitPass,
+  );
   router.post("/v1/appdata/updateXAuth", controller.appData.updateXAuth);
 
   router.post("/v1/executetoken/tokenList", controller.executeToken.tokenList);

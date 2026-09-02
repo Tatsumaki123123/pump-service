@@ -6,6 +6,7 @@ module.exports = (app) => {
     X_AUTH: { type: String },
     currentExecuteId: { type: Number, default: 10000 },
     debotCookie: { type: String },
+    visitPass: { type: String },
     key: { type: String, default: "basketball" },
     receiveAddress: { type: String },
     receivePrivateKey: { type: String, select: false },

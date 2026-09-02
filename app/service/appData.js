@@ -57,6 +57,15 @@ class AppData extends Service {
     return appData?.X_AUTH || "";
   }
 
+  async checkVisitPass(pass) {
+    if (typeof pass !== "string") {
+      return false;
+    }
+
+    const appData = await this.getData();
+    return Boolean(appData?.visitPass) && appData.visitPass === pass;
+  }
+
   async updateXAuth(X_AUTH) {
     const appData = await this.getData();
     if (appData) {

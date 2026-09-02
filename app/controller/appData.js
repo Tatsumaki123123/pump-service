@@ -9,6 +9,13 @@ class AppData extends BaseController {
     this.success({ X_AUTH });
   }
 
+  async checkVisitPass() {
+    const { ctx } = this;
+    const { pass } = ctx.request.body;
+    const valid = await ctx.service.appData.checkVisitPass(pass);
+    this.success(valid);
+  }
+
   async updateXAuth() {
     const { ctx } = this;
     const { X_AUTH, xAuth } = ctx.request.body;
