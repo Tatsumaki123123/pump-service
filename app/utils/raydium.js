@@ -37,6 +37,10 @@ const initSdk = async (params) => {
   raydium = await Raydium.load({
     owner: testWallet,
     connection,
+    // Raydium SDK 0.2.x tries to load Jupiter's deprecated v1 token list
+    // during initialization. This service resolves token/pool data directly
+    // from Raydium and does not need that optional list.
+    disableLoadToken: true,
   });
   return raydium;
 };

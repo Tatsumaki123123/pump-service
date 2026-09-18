@@ -176,8 +176,10 @@ const getPriceAndLiquidity = async (pool) => {
   let is_err = true,
     cnt = 0;
   try {
-    wsolBalance = await connection.getTokenAccountBalance(wsolAddress);
-    tokenBalance = await connection.getTokenAccountBalance(tokenAddress);
+    [wsolBalance, tokenBalance] = await Promise.all([
+      connection.getTokenAccountBalance(wsolAddress),
+      connection.getTokenAccountBalance(tokenAddress),
+    ]);
     is_err = false;
   } catch (err) {
     is_err = true;

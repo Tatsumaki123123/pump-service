@@ -733,45 +733,56 @@ class PumpAMM extends Service {
       const tokenMint = new PublicKey(token);
       const tokenProgramId = await getTokenProgramId(tokenMint);
 
-      const newWallets = [];
       const seenSellWallets = new Set();
-      for (let i = 0; i < wallets.length; i++) {
-        const wallet = wallets[i];
-        const keypair = wallet.keypair;
-        const user = keypair.publicKey;
-        const balance = await getSPLBalance(
-          connection,
-          tokenMint,
-          keypair.publicKey,
-          tokenProgramId,
-        );
-        const sellPercent = getWalletSellPercent(wallet);
-        const percentBasisPoints = BigInt(Math.round(sellPercent * 100));
-        const balanceRaw = BigInt(Math.trunc(balance * 10 ** 6));
-        const tokenAmountRaw = (balanceRaw * percentBasisPoints) / 10000n;
-        const tokenAmount = Number(tokenAmountRaw) / 10 ** 6;
-
-        console.log(
-          `${user.toBase58()} sell ${tokenAmount} (${sellPercent}%) ${token}`,
-        );
-        if ((sellAll ? balance > 0 : balance >= 100) && tokenAmountRaw > 0n) {
-          const walletAddress = user.toBase58();
-          if (seenSellWallets.has(walletAddress)) {
-            console.log(
-              chalk.yellow(`Skip duplicate sell wallet ${walletAddress}`),
-            );
-            continue;
-          }
-          seenSellWallets.add(walletAddress);
-          newWallets.push({ ...wallet, tokenAmount });
+      const uniqueWallets = wallets.filter((wallet) => {
+        const walletAddress = wallet.keypair.publicKey.toBase58();
+        if (seenSellWallets.has(walletAddress)) {
+          console.log(
+            chalk.yellow(`Skip duplicate sell wallet ${walletAddress}`),
+          );
+          return false;
         }
-      }
+        seenSellWallets.add(walletAddress);
+        return true;
+      });
+      const newWallets = (
+        await Promise.all(
+          uniqueWallets.map(async (wallet) => {
+            const keypair = wallet.keypair;
+            const user = keypair.publicKey;
+            const balance = await getSPLBalance(
+              connection,
+              tokenMint,
+              keypair.publicKey,
+              tokenProgramId,
+            );
+            const sellPercent = getWalletSellPercent(wallet);
+            const percentBasisPoints = BigInt(Math.round(sellPercent * 100));
+            const balanceRaw = BigInt(Math.trunc(balance * 10 ** 6));
+            const tokenAmountRaw = (balanceRaw * percentBasisPoints) / 10000n;
+            const tokenAmount = Number(tokenAmountRaw) / 10 ** 6;
+
+            console.log(
+              `${user.toBase58()} sell ${tokenAmount} (${sellPercent}%) ${token}`,
+            );
+            if (
+              (sellAll ? balance > 0 : balance >= 100) &&
+              tokenAmountRaw > 0n
+            ) {
+              return { ...wallet, tokenAmount };
+            }
+            return null;
+          }),
+        )
+      ).filter(Boolean);
 
       newWallets.reverse();
 
       const func = async (wallets) => {
-        const { blockhash } = await connection.getLatestBlockhash();
-        const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
+        const [{ blockhash }, poolDetail] = await Promise.all([
+          connection.getLatestBlockhash(),
+          getPoolsWithPrices(tokenMint, ctx),
+        ]);
         const sellTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
         const tipAmount = ctx.service.jito.getTipAmount();
@@ -932,11 +943,9 @@ class PumpAMM extends Service {
         return true;
       };
       const bundles = splitIntoBundles(newWallets);
+      // Each send path waits for the submitted transactions to land already.
       for (let i = 0; i < bundles.length; i++) {
         await func(bundles[i]);
-        if (i < bundles.length - 1) {
-          await sleep(0.5);
-        }
       }
       return true;
     } else {
