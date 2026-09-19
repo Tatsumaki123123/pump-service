@@ -19,9 +19,6 @@ const {
   reverseBnLayoutFormatter,
 } = require("../utils/utils");
 
-const { PumpAmmInternalSdk } = require("./pumpfun/sdk/pumpAmmInternal");
-const pumpAmmInternal = new PumpAmmInternalSdk(connection);
-
 const PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 const PUMP_PROGRAM_ID_PUBKEY = new PublicKey(PUMP_PROGRAM_ID);
 
@@ -40,13 +37,44 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
         poolAddress,
         "confirmed",
       );
-      if (accountInfo && accountInfo.data.length > 244) {
-        poolData.is_mayhem = accountInfo.data[243] === 1;
-        poolData.is_cashback = accountInfo.data[244] === 1;
+      if (accountInfo && accountInfo.data.length > 8) {
+        // Pool fields such as coinCreator are part of the on-chain account.
+        // A cached poolObj can predate a pool layout/update, which produces a
+        // wrong coin_creator_vault_authority PDA during a swap. Always decode
+        // the current account when it is available and retain the cache only
+        // as a fallback for transient RPC failures.
+        const freshPoolData = program.coder.accounts.decode(
+          "Pool",
+          accountInfo.data,
+        );
+        if (accountInfo.data.length > 244) {
+          freshPoolData.is_mayhem = accountInfo.data[243] === 1;
+          freshPoolData.is_cashback = accountInfo.data[244] === 1;
+        }
+        if (ctx?.model?.PoolStore) {
+          try {
+            await ctx.model.PoolStore.updateOne(
+              { token: mintAddress.toBase58() },
+              { $set: { poolObj: bnLayoutFormatter(freshPoolData) } },
+            );
+          } catch (error) {
+            console.log(
+              "Failed to update cached Pump AMM pool " +
+                poolAddress.toBase58() +
+                ": " +
+                error.message,
+            );
+          }
+        }
+        return {
+          address: poolAddress,
+          is_native_base: false,
+          poolData: freshPoolData,
+        };
       }
     } catch (error) {
       console.log(
-        "Failed to refresh Pump AMM pool flags " +
+        "Failed to refresh Pump AMM pool " +
           poolAddress.toBase58() +
           ": " +
           error.message,
@@ -82,7 +110,7 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
     }
     const mappedPools = response.map((pool) => {
       const data = Buffer.from(pool.account.data);
-      const poolData = program.coder.accounts.decode("pool", data);
+      const poolData = program.coder.accounts.decode("Pool", data);
       // IDL 未包含 is_mayhem/is_cashback，从原始字节读取
       // pool struct 字节布局: 8(discriminator)+1+2+32+32+32+32+32+32+8+32 = 243
       poolData.is_mayhem = data[243] === 1;
@@ -126,7 +154,7 @@ const getPoolsWithQuoteMint = async (mintAddress) => {
 
   const mappedPools = response.map((pool) => {
     const data = Buffer.from(pool.account.data);
-    const poolData = program.coder.accounts.decode("pool", data);
+    const poolData = program.coder.accounts.decode("Pool", data);
     return {
       address: pool.pubkey,
       is_native_base: true,
@@ -158,7 +186,7 @@ const getPoolsWithBaseMintQuoteWSOL = async (mintAddress) => {
 
   const mappedPools = response.map((pool) => {
     const data = Buffer.from(pool.account.data);
-    const poolData = program.coder.accounts.decode("pool", data);
+    const poolData = program.coder.accounts.decode("Pool", data);
     return {
       address: pool.pubkey,
       is_native_base: true,

@@ -26,7 +26,10 @@ const {
 const bs58 = require("bs58");
 const chalk = require("chalk");
 
-const { getPoolsWithPrices } = require("../libs/pool");
+const {
+  getPoolsWithPrices,
+  getUserVolumeAccumulatorPda,
+} = require("../libs/pool");
 
 const {
   connection,
@@ -1005,6 +1008,23 @@ class PumpAMM extends Service {
     // 指令 6: 同步 wSOL ATA
     const syncNativeIx = createSyncNativeInstruction(wSolATA, TOKEN_PROGRAM_ID);
 
+    const userVolumeAccumulator = getUserVolumeAccumulatorPda(user);
+    const cashbackAta = getAssociatedTokenAddressSync(
+      WSOL_TOKEN_ACCOUNT,
+      userVolumeAccumulator,
+      true,
+      TOKEN_PROGRAM_ID,
+    );
+    const createCashbackAtaIx = poolDetail.poolData.is_cashback
+      ? createAssociatedTokenAccountIdempotentInstruction(
+          user,
+          cashbackAta,
+          userVolumeAccumulator,
+          WSOL_TOKEN_ACCOUNT,
+          TOKEN_PROGRAM_ID,
+        )
+      : null;
+
     // 指令 7: Pump AMM buy_exact_quote_in
     let swapIxs = await pSwap.createBuyExactQuoteInInstruction({
       tokenMint: tokenMint,
@@ -1022,6 +1042,7 @@ class PumpAMM extends Service {
     const Ixs = [
       createWSOLAtaIx,
       createTokenAtaIx,
+      ...(createCashbackAtaIx ? [createCashbackAtaIx] : []),
       transferLamportsWSOLIx,
       syncNativeIx,
       swapIxs,

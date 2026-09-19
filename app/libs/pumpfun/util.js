@@ -4,6 +4,7 @@ exports.getTxDetails = exports.buildVersionedTx = exports.calculateWithSlippage 
 exports.returnTx = returnTx;
 exports.sendTx = sendTx;
 const web3_js_1 = require("@solana/web3.js");
+const solanaRpc_1 = require("../../utils/solanaRpc");
 exports.DEFAULT_COMMITMENT = "finalized";
 exports.DEFAULT_FINALITY = "finalized";
 const calculateWithSlippageBuy = (amount, basisPoints) => {
@@ -97,8 +98,8 @@ const getTxDetails = async (connection, sig, commitment = exports.DEFAULT_COMMIT
         lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
         signature: sig,
     }, commitment);
-    return connection.getTransaction(sig, {
-        maxSupportedTransactionVersion: 0,
+    return (0, solanaRpc_1.getTransaction)(connection, sig, {
+        maxSupportedTransactionVersion: 1,
         commitment: finality,
     });
 };

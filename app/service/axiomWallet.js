@@ -8,6 +8,7 @@ const {
   AXIOM_PROGRAM_ID,
   PUMP_AMM_PROGRAM_ID,
 } = require("../constants");
+const { getParsedTransactions } = require("../utils/solanaRpc");
 
 const RECENT_TRANSACTION_LIMIT = 10;
 const CLAIM_CASHBACK_DISCRIMINATOR = Buffer.from([
@@ -436,11 +437,12 @@ class AxiomWalletService extends Service {
 
     if (rpcSignatures.length > 0) {
       const transactions = await callRpc("getParsedTransactions", () =>
-        connection.getParsedTransactions(
+        getParsedTransactions(
+          connection,
           rpcSignatures.map((item) => item.signature),
           {
             commitment: "confirmed",
-            maxSupportedTransactionVersion: 0,
+            maxSupportedTransactionVersion: 1,
           },
         ),
       );
@@ -537,11 +539,12 @@ class AxiomWalletService extends Service {
     const rpcSignatures = signatures.filter((item) => !item.err);
     if (rpcSignatures.length > 0 && (candidates.length > 0 || receiveAddress)) {
       const transactions = await callRpc("getParsedTransactions", () =>
-        connection.getParsedTransactions(
+        getParsedTransactions(
+          connection,
           rpcSignatures.map((item) => item.signature),
           {
             commitment: "confirmed",
-            maxSupportedTransactionVersion: 0,
+            maxSupportedTransactionVersion: 1,
           },
         ),
       );

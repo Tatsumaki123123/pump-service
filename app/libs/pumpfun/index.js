@@ -15,8 +15,6 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 __exportStar(require("./pumpfun"), exports);
-__exportStar(require("./pumpswap"), exports);
-__exportStar(require("./poolswap"), exports);
 __exportStar(require("./util"), exports);
 __exportStar(require("./types"), exports);
 __exportStar(require("./events"), exports);

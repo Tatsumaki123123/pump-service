@@ -61,11 +61,11 @@ const FEE_PROGRAM = new PublicKey(
 );
 const BUYBACK_FEE_RECIPIENT = new PublicKey(
   process.env.AXIOM_BUYBACK_FEE_RECIPIENT ||
-    "A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW",
+    "9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7",
 );
 const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
   process.env.AXIOM_BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT ||
-    "qkYdTGRPHbWTWuBMz45bCiU6a23axRqf6sBHm9295WY",
+    "GAFuhgcd328SkkBYHpfadzmef9hTGAFRCi9QoCnsZQug",
 );
 const PROTOCOL_FEE_RECIPIENT = new PublicKey(
   process.env.AXIOM_PROTOCOL_FEE_RECIPIENT ||
@@ -241,6 +241,19 @@ async function createAxiomBuyInstructions({
     tokenProgramId,
   );
 
+  // Pump AMM cashback is paid into the WSOL ATA owned by the user's volume
+  // accumulator PDA. Create it before the CPI when the selected pool enables
+  // cashback; the Pump instruction only receives the account as an input.
+  const createCashbackAtaIx = quote.isCashback
+    ? createAssociatedTokenAccountIdempotentInstruction(
+        user,
+        wsolUserAccumulatorAta,
+        userVolumeAccumulator,
+        NATIVE_MINT,
+        TOKEN_PROGRAM_ID,
+      )
+    : null;
+
   const createWsolIx = new TransactionInstruction({
     programId: AXIOM_PROGRAM_ID,
     keys: [
@@ -349,6 +362,7 @@ async function createAxiomBuyInstructions({
   return {
     instructions: [
       ...(tokenAtaExists ? [] : [createTokenAtaIx]),
+      ...(createCashbackAtaIx ? [createCashbackAtaIx] : []),
       createWsolIx,
       buyIx,
     ],
