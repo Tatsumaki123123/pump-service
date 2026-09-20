@@ -24,6 +24,33 @@ const PUMP_PROGRAM_ID_PUBKEY = new PublicKey(PUMP_PROGRAM_ID);
 
 const program = new Program(IDL, { connection });
 
+function decodePoolAccount(data) {
+  const accountData = Buffer.from(data);
+  try {
+    return program.coder.accounts.decode("Pool", accountData);
+  } catch (error) {
+    // Older deployed IDLs may contain the Pool type but omit the account
+    // registration. Decode the bytes after the 8-byte Anchor discriminator
+    // directly through the type coder in that case.
+    const errorMessage = String(error?.message || error).toLowerCase();
+    if (!errorMessage.includes("account not found")) {
+      throw error;
+    }
+    if (typeof program.coder.types?.decode === "function") {
+      let typeError;
+      for (const typeName of ["Pool", "pool"]) {
+        try {
+          return program.coder.types.decode(typeName, accountData.subarray(8));
+        } catch (decodeError) {
+          typeError = decodeError;
+        }
+      }
+      if (typeError) throw typeError;
+    }
+    throw error;
+  }
+}
+
 const getPoolsWithBaseMint = async (mintAddress, ctx) => {
   const dbData = await ctx.model.PoolStore.findOne({
     token: mintAddress.toBase58(),
@@ -43,10 +70,7 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
         // wrong coin_creator_vault_authority PDA during a swap. Always decode
         // the current account when it is available and retain the cache only
         // as a fallback for transient RPC failures.
-        const freshPoolData = program.coder.accounts.decode(
-          "Pool",
-          accountInfo.data,
-        );
+        const freshPoolData = decodePoolAccount(accountInfo.data);
         if (accountInfo.data.length > 244) {
           freshPoolData.is_mayhem = accountInfo.data[243] === 1;
           freshPoolData.is_cashback = accountInfo.data[244] === 1;
@@ -110,7 +134,7 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
     }
     const mappedPools = response.map((pool) => {
       const data = Buffer.from(pool.account.data);
-      const poolData = program.coder.accounts.decode("Pool", data);
+      const poolData = decodePoolAccount(data);
       // IDL 未包含 is_mayhem/is_cashback，从原始字节读取
       // pool struct 字节布局: 8(discriminator)+1+2+32+32+32+32+32+32+8+32 = 243
       poolData.is_mayhem = data[243] === 1;
@@ -154,7 +178,7 @@ const getPoolsWithQuoteMint = async (mintAddress) => {
 
   const mappedPools = response.map((pool) => {
     const data = Buffer.from(pool.account.data);
-    const poolData = program.coder.accounts.decode("Pool", data);
+    const poolData = decodePoolAccount(data);
     return {
       address: pool.pubkey,
       is_native_base: true,
@@ -186,7 +210,7 @@ const getPoolsWithBaseMintQuoteWSOL = async (mintAddress) => {
 
   const mappedPools = response.map((pool) => {
     const data = Buffer.from(pool.account.data);
-    const poolData = program.coder.accounts.decode("Pool", data);
+    const poolData = decodePoolAccount(data);
     return {
       address: pool.pubkey,
       is_native_base: true,

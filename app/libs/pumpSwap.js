@@ -252,7 +252,8 @@ class PumpSwapSDK {
       instruction: new TransactionInstruction({
         programId: PUMP_AMM_PROGRAM_ID,
         keys: [
-          { pubkey: user, isSigner: false, isWritable: true },
+          // claim_cashback requires the user account to sign the instruction.
+          { pubkey: user, isSigner: true, isWritable: true },
           {
             pubkey: userVolumeAccumulator,
             isSigner: false,

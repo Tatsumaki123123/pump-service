@@ -470,10 +470,12 @@ class WalletAdmin extends Service {
         const [
           userWsolAccountInfo,
           userVolumeAccumulatorWsolAccountInfo,
+          userVolumeAccumulatorAccountInfo,
         ] = await connection.getMultipleAccountsInfo(
           [
             claim.userWsolTokenAccount,
             claim.userVolumeAccumulatorWsolTokenAccount,
+            claim.userVolumeAccumulator,
           ],
           "confirmed",
         );
@@ -486,6 +488,18 @@ class WalletAdmin extends Service {
             address,
             status: "skipped",
             message: "No Pump AMM cashback account found",
+            userVolumeAccumulator: claim.userVolumeAccumulator.toBase58(),
+            userVolumeAccumulatorWsolTokenAccount:
+              claim.userVolumeAccumulatorWsolTokenAccount.toBase58(),
+          });
+          continue;
+        }
+
+        if (!userVolumeAccumulatorAccountInfo) {
+          list.push({
+            address,
+            status: "skipped",
+            message: "No Pump AMM volume accumulator found",
             userVolumeAccumulator: claim.userVolumeAccumulator.toBase58(),
             userVolumeAccumulatorWsolTokenAccount:
               claim.userVolumeAccumulatorWsolTokenAccount.toBase58(),
@@ -512,18 +526,25 @@ class WalletAdmin extends Service {
           continue;
         }
 
+        const createWsolAccount = !userWsolAccountInfo;
+        const rentLamports = createWsolAccount
+          ? await connection.getMinimumBalanceForRentExemption(
+              165,
+              "confirmed",
+            )
+          : 0;
+        const transactionReserveLamports = rentLamports + 10_000;
         const balanceLamports = await connection.getBalance(
           keypair.publicKey,
           "confirmed",
         );
-        if (balanceLamports === 0) {
+        if (balanceLamports < transactionReserveLamports) {
           funding = await this.transferFromReceiveAddress(
             address,
             CLAIM_CASHBACK_FUNDING_AMOUNT,
           );
         }
 
-        const createWsolAccount = !userWsolAccountInfo;
         const instructions = [];
 
         if (createWsolAccount) {
