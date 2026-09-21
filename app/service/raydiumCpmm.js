@@ -48,7 +48,16 @@ class RaydiumCpmm extends Service {
         const buyTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
 
-        const poolDetail = await getPoolDetail(tokenMint);
+        const needsPoolDetail = wallets.some(
+          (wallet) =>
+            !wallet.isOkx &&
+            !wallet.isDflow &&
+            !wallet.isJup &&
+            !wallet.isRayRouter,
+        );
+        const poolDetail = needsPoolDetail
+          ? await getPoolDetail(tokenMint)
+          : undefined;
         const dflowBuyData = await Promise.all(
           wallets.map((wallet, i) => {
             if (!wallet.isDflow) {

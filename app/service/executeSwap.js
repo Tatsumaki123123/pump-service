@@ -841,7 +841,12 @@ class ExecuteSwap extends Service {
       ];
     });
 
-    let newWallets = data.filter((wallet) => wallet.stageEnable);
+    let newWallets = data
+      .filter((wallet) => wallet.stageEnable)
+      .map((wallet) => ({
+        ...wallet,
+        isDflow: wallet.isDflow ?? wallet.isDlfow ?? false,
+      }));
     return newWallets;
   }
 
@@ -907,6 +912,7 @@ class ExecuteSwap extends Service {
       price: 0,
       fee: 0.00002,
       ...config,
+      isDflow: config.isDflow ?? config.isDlfow ?? false,
       isFirstWallet: true,
       isBundle: firstWallet.isBundle !== false,
     };
