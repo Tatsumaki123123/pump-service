@@ -1078,53 +1078,72 @@ class ExecuteSwap extends Service {
     }
 
     let symbol = tokenData.symbol;
-    if (!symbol) {
-      const metaData = await ctx.service.ave.getTokenInfo(token);
-      symbol = metaData.symbol;
-    }
-
     let amm = tokenData.amm;
-    let dev, pool;
-    if (tokenData.pool && amm) {
-      dev = "";
-      pool = tokenData.pool;
-    } else {
+    let dev = "";
+    let pool = tokenData.pool;
+
+    // AVE already returns the token's main pair and AMM. Use it before doing
+    // chain-wide Pump AMM/Raydium pool scans, especially when tokenData only
+    // contains the mint address.
+    let aveTokenInfo;
+    if (!symbol || !pool || !amm) {
+      try {
+        aveTokenInfo = await ctx.service.ave.getTokenInfo(token);
+      } catch (error) {
+        console.log(
+          `Failed to get AVE token info for ${token}: ${error.message}`,
+        );
+      }
+    }
+    symbol = symbol || aveTokenInfo?.symbol;
+    pool = pool || aveTokenInfo?.pool;
+    amm = amm || aveTokenInfo?.amm;
+
+    if (!pool || !amm) {
       const oldData = await ctx.model.ExecuteToken.findOne({
         token: token,
       });
-      if (oldData) {
+      if (oldData?.pool || oldData?.amm) {
         dev = "";
-        pool = oldData.pool;
-        amm = oldData.amm;
+        pool = pool || oldData.pool;
+        amm = amm || oldData.amm;
+      }
+    }
+
+    if (!pool || !amm) {
+      let poolDetail;
+      try {
+        poolDetail = await getPoolsWithPrices(new PublicKey(token), ctx);
+      } catch (error) {
+        // Keep the Raydium and Pump.fun fallbacks below for tokens AVE does
+        // not index yet.
+      }
+      if (poolDetail) {
+        amm = PUMP_AMM_NAME;
+        dev = poolDetail.poolData.coinCreator;
+        pool = poolDetail.address;
       } else {
-        let poolDetail;
-        try {
-          poolDetail = await getPoolsWithPrices(new PublicKey(token), ctx);
-        } catch (error) {
-          // throw new Error(error);
-        }
-        if (poolDetail) {
-          amm = PUMP_AMM_NAME;
-          dev = poolDetail.poolData.coinCreator;
-          pool = poolDetail.address;
+        const poolId = await getRaydiumCpmmPoolId(new PublicKey(token));
+        if (poolId) {
+          pool = poolId.toBase58();
+          amm = RAYDIUM_CPMM_NAME;
         } else {
-          const poolId = await getRaydiumCpmmPoolId(new PublicKey(token));
-          if (poolId) {
-            pool = poolId.toBase58();
-            dev = "";
-            amm = RAYDIUM_CPMM_NAME;
+          const pumpFunPoolDetail = await ctx.service.pumpfun.getPoolDetail(
+            token,
+          );
+          if (pumpFunPoolDetail) {
+            amm = PUMP_FUN_NAME;
+            dev = pumpFunPoolDetail.dev;
+            pool = "";
           } else {
-            const poolDetail = await ctx.service.pumpfun.getPoolDetail(token);
-            if (poolDetail) {
-              amm = PUMP_FUN_NAME;
-              dev = poolDetail.dev;
-              pool = "";
-            } else {
-              throw new Error("Cannot find pool data");
-            }
+            throw new Error("Cannot find pool data");
           }
         }
       }
+    }
+
+    if (!symbol) {
+      throw new Error("Cannot find token metadata");
     }
 
     const tokenDb = await ctx.model.ExecuteToken.findOne({

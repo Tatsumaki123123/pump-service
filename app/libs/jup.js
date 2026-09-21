@@ -9,8 +9,11 @@ const BASE_URL = "https://lite-api.jup.ag";
 const JUP_PROGRAM_V6 = new PublicKey(
   "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
 );
-const ROUTE_V2_DISCRIMINATOR = Buffer.from([
+const SHARED_ACCOUNTS_ROUTE_DISCRIMINATOR = Buffer.from([
   187, 100, 250, 204, 49, 196, 175, 20,
+]);
+const SHARED_ACCOUNTS_ROUTE_V2_DISCRIMINATOR = Buffer.from([
+  209, 152, 83, 147, 124, 254, 216, 233,
 ]);
 
 function toTransactionInstruction(instruction) {
@@ -27,7 +30,14 @@ function toTransactionInstruction(instruction) {
 
 class JupSDK {
   async getBuyInstructions(ctx, params) {
-    const { user, tokenMint, buyAmount, slippage, connection } = params;
+    const {
+      user,
+      tokenMint,
+      buyAmount,
+      slippage,
+      connection,
+      useSharedAccounts = false,
+    } = params;
     const amount = Math.trunc(Number(buyAmount) * LAMPORTS_PER_SOL);
     const quoteResponse = await this.getQuote(
       ctx,
@@ -36,11 +46,20 @@ class JupSDK {
       amount,
       slippage,
     );
-    return this.getSwapInstructions(ctx, user, quoteResponse, connection);
+    return this.getSwapInstructions(ctx, user, quoteResponse, connection, {
+      useSharedAccounts,
+    });
   }
 
   async getSellInstructions(ctx, params) {
-    const { user, tokenMint, tokenAmount, slippage, connection } = params;
+    const {
+      user,
+      tokenMint,
+      tokenAmount,
+      slippage,
+      connection,
+      useSharedAccounts = false,
+    } = params;
     const quoteResponse = await this.getQuote(
       ctx,
       tokenMint.toBase58(),
@@ -48,10 +67,18 @@ class JupSDK {
       tokenAmount,
       slippage,
     );
-    return this.getSwapInstructions(ctx, user, quoteResponse, connection);
+    return this.getSwapInstructions(ctx, user, quoteResponse, connection, {
+      useSharedAccounts,
+    });
   }
 
-  async getSwapInstructions(ctx, user, quoteResponse, connection) {
+  async getSwapInstructions(
+    ctx,
+    user,
+    quoteResponse,
+    connection,
+    { useSharedAccounts = false } = {},
+  ) {
     const uri = `${BASE_URL}/swap/v1/swap-instructions`;
     const res = await ctx.curl(uri, {
       dataType: "json",
@@ -62,7 +89,7 @@ class JupSDK {
       data: {
         quoteResponse,
         userPublicKey: user.toBase58 ? user.toBase58() : String(user),
-        useSharedAccounts: false,
+        useSharedAccounts,
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
       },
@@ -70,12 +97,12 @@ class JupSDK {
     const swapData = res.data;
     if (!swapData || swapData.error) {
       throw new Error(
-        `Cannot get Jupiter route_v2 instructions: ${swapData?.error || "empty response"}`,
+        `Cannot get Jupiter instructions: ${swapData?.error || "empty response"}`,
       );
     }
 
     const swapInstruction = toTransactionInstruction(swapData.swapInstruction);
-    this.assertRouteV2Instruction(swapInstruction);
+    this.assertRouteInstruction(swapInstruction, useSharedAccounts);
 
     const instructions = [
       swapData.tokenLedgerInstruction,
@@ -96,16 +123,22 @@ class JupSDK {
     return { instructions, lookupTableAccounts };
   }
 
-  assertRouteV2Instruction(instruction) {
-    const isRouteV2 =
+  assertRouteInstruction(instruction, useSharedAccounts) {
+    const expectedDiscriminator = useSharedAccounts
+      ? SHARED_ACCOUNTS_ROUTE_V2_DISCRIMINATOR
+      : SHARED_ACCOUNTS_ROUTE_DISCRIMINATOR;
+    const routeName = useSharedAccounts
+      ? "shared_accounts_route_v2"
+      : "shared_accounts_route";
+    const isExpectedRoute =
       instruction.programId.equals(JUP_PROGRAM_V6) &&
-      instruction.data.length >= ROUTE_V2_DISCRIMINATOR.length &&
+      instruction.data.length >= expectedDiscriminator.length &&
       instruction.data
-        .subarray(0, ROUTE_V2_DISCRIMINATOR.length)
-        .equals(ROUTE_V2_DISCRIMINATOR);
-    if (!isRouteV2) {
+        .subarray(0, expectedDiscriminator.length)
+        .equals(expectedDiscriminator);
+    if (!isExpectedRoute) {
       throw new Error(
-        `Jupiter swap instruction is not route_v2: ${instruction.programId.toBase58()} ${instruction.data.subarray(0, 8).toString("hex")}`,
+        `Jupiter swap instruction is not ${routeName}: ${instruction.programId.toBase58()} ${instruction.data.subarray(0, 8).toString("hex")}`,
       );
     }
   }

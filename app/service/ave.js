@@ -1,12 +1,52 @@
 const { Service } = require("egg");
+const {
+  constants: cryptoConstants,
+  publicEncrypt,
+} = require("node:crypto");
 
 const AVE_API_URL = "https://api.gejbckf.com/";
 const AVE_TOKEN_INFO_API_URL = "https://cyjm22.com/";
+const AVE_AUTH_BASE_URL =
+  process.env.AVE_AUTH_BASE_URL ||
+  process.env.AVE_BASE_URL ||
+  AVE_TOKEN_INFO_API_URL;
+const AVE_PUBLIC_KEY =
+  "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp7rxCs+UF5QjAZWY63Ow1rNY4prtorIRawALlqGcWrDP2TKqC6XLybJCwOZ8HCGYzzHdQJFBLb8wlbaAJxg2/G+glwN/Hp1xNuYw6uJ7LTFMZCFsU5ReLxZ83uVs/uG80vyrpaiN+eU58B9j12+w4VbIv4dd0a5ILAQMLjJQiUgiGfD4JI9ic8qCNwOo2su3wdKthMeg5WYhYXtKJyUBJMn5odKd7XOQO7KmsuHy+dEbutSPuC2kTY+y2bzHUdTYeUp6U/GUZCjHirZCUCQyCBPE8nWoCRjhP9+ewSKSRPaTOG/uicrN1cUZC5Oal9PPigGAJ8gkKTPDgZHFPXTKuQIDAQAB";
+const AVE_VISITOR_ID = process.env.AVE_VISITOR_ID || "";
 const AVE_TREASURE_API_URL =
   process.env.AVE_TREASURE_API_URL || "https://jyhkdyf.com/";
 const AVE_FOLLOW_API_URL =
   process.env.AVE_FOLLOW_API_URL || AVE_TREASURE_API_URL;
 const AVE_LOGO_URL = process.env.AVE_LOGO_URL || "https://www.iconaves.com/";
+
+let aveRefreshPromise = null;
+
+function createAuthExpiredError(message, cause) {
+  const error = new Error(message, cause ? { cause } : undefined);
+  error.code = "AVE_AUTH_EXPIRED";
+  return error;
+}
+
+function isAuthExpiredError(error) {
+  return error?.code === "AVE_AUTH_EXPIRED";
+}
+
+function getHttpStatus(response) {
+  return Number(
+    response?.status || response?.statusCode || response?.res?.statusCode,
+  );
+}
+
+function isAuthHttpError(error) {
+  const status = Number(
+    error?.status || error?.statusCode || error?.response?.status,
+  );
+  return status === 401 || status === 403;
+}
+
+function getAveUrl(baseUrl, path) {
+  return new URL(path.replace(/^\/+/, ""), baseUrl).toString();
+}
 
 function getAveLogoUrl(logoUrl) {
   if (!logoUrl || typeof logoUrl !== "string") {
@@ -85,22 +125,150 @@ function aveTokenInfoToList(item) {
 
 class Ave extends Service {
   async getXAuth() {
-    const appData = await this.ctx.model.AppData.findOne();
-    return appData.X_AUTH;
+    const storedAuth = await this.ctx.service.appData.getXAuth();
+    return String(storedAuth || process.env.AVE_X_AUTH || "").trim();
+  }
+
+  async requestRaw(uri, options = {}) {
+    const { ctx } = this;
+    let response;
+    try {
+      response = await ctx.curl(uri, {
+        dataType: "json",
+        ...options,
+      });
+    } catch (error) {
+      if (isAuthHttpError(error)) {
+        throw createAuthExpiredError("AVE x-auth expired or rejected", error);
+      }
+      throw error;
+    }
+
+    const httpStatus = getHttpStatus(response);
+    if (httpStatus === 401 || httpStatus === 403) {
+      throw createAuthExpiredError(`AVE x-auth rejected (HTTP ${httpStatus})`);
+    }
+
+    const status = String(response?.data?.status ?? "");
+    if (status === "10000" || status === "10001") {
+      throw createAuthExpiredError("AVE x-auth expired or rejected");
+    }
+    return response;
+  }
+
+  async requestAve(uri, options = {}) {
+    let xAuth = await this.getXAuth();
+    if (!xAuth) {
+      xAuth = await this.refreshXAuth("");
+      return this.requestRaw(uri, {
+        ...options,
+        headers: { ...(options.headers || {}), "x-auth": xAuth },
+      });
+    }
+
+    try {
+      return await this.requestRaw(uri, {
+        ...options,
+        headers: { ...(options.headers || {}), "x-auth": xAuth },
+      });
+    } catch (error) {
+      if (!isAuthExpiredError(error)) {
+        throw error;
+      }
+      xAuth = await this.refreshXAuth(xAuth);
+      return this.requestRaw(uri, {
+        ...options,
+        headers: { ...(options.headers || {}), "x-auth": xAuth },
+      });
+    }
+  }
+
+  async refreshXAuth(rejectedToken) {
+    if (aveRefreshPromise) {
+      return aveRefreshPromise;
+    }
+
+    aveRefreshPromise = (async () => {
+      const currentToken = await this.getXAuth();
+      if (currentToken && currentToken !== rejectedToken) {
+        return currentToken;
+      }
+
+      const visitorId = String(
+        process.env.AVE_VISITOR_ID || AVE_VISITOR_ID,
+      ).trim();
+      if (!/^[0-9a-f]{32}$/i.test(visitorId)) {
+        throw new Error(
+          "AVE_VISITOR_ID must be the 32-character hexadecimal browser visitorId",
+        );
+      }
+
+      const serverTimeUri = getAveUrl(
+        AVE_AUTH_BASE_URL,
+        "/v1api/v2/settings/serverTime",
+      );
+      const serverTimeResponse = await this.requestRaw(serverTimeUri, {
+        method: "GET",
+      });
+      const serverTime = Number(serverTimeResponse.data?.data?.server_time);
+      if (
+        String(serverTimeResponse.data?.status) !== "1" ||
+        !Number.isSafeInteger(Math.trunc(serverTime)) ||
+        serverTime <= 0
+      ) {
+        throw new Error("AVE returned an invalid server_time");
+      }
+
+      const timestamp = Math.trunc(serverTime) * 1000 + (Date.now() % 1000);
+      const plaintext = `${visitorId}$web$1.0.0$r1r$${timestamp}`;
+      const requestId = publicEncrypt(
+        {
+          key: Buffer.from(AVE_PUBLIC_KEY, "base64"),
+          format: "der",
+          type: "spki",
+          padding: cryptoConstants.RSA_PKCS1_OAEP_PADDING,
+          oaepHash: "sha256",
+        },
+        Buffer.from(plaintext),
+      ).toString("base64");
+
+      const tokenUri = getAveUrl(
+        AVE_AUTH_BASE_URL,
+        "/v1api/v1/captcha/requestToken",
+      );
+      const tokenResponse = await this.requestRaw(tokenUri, {
+        method: "POST",
+        contentType: "json",
+        headers: { "Content-Type": "application/json" },
+        data: { request_id: requestId },
+      });
+      const tokenData = tokenResponse.data?.data || {};
+      if (tokenData.image || tokenData.image_base64) {
+        throw new Error(
+          "AVE requires captcha verification before x-auth can be updated",
+        );
+      }
+      const nextToken = String(tokenData.id || "").trim();
+      if (String(tokenResponse.data?.status) !== "1" || !nextToken) {
+        throw new Error("AVE requestToken returned no valid token");
+      }
+
+      await this.ctx.service.appData.updateXAuth(nextToken);
+      return nextToken;
+    })();
+
+    try {
+      return await aveRefreshPromise;
+    } finally {
+      aveRefreshPromise = null;
+    }
   }
 
   async getTokenInfo(tokenAddress) {
-    const { ctx } = this;
-    const X_AUTH = await this.getXAuth();
     const tokenId = `${tokenAddress}-solana`;
     const uri = `${AVE_TOKEN_INFO_API_URL}v2api/token_info/v1/token/detail?token_id=${tokenId}&cache_use=false`;
 
-    const res = await ctx.curl(uri, {
-      dataType: "json",
-      headers: {
-        "x-auth": X_AUTH,
-      },
-    });
+    const res = await this.requestAve(uri);
     const data = res.data?.data;
 
     // const devData = await this.getTokenDev(tokenAddress);
@@ -149,16 +317,8 @@ class Ave extends Service {
   }
 
   async getTokenDev(tokenAddress) {
-    const X_AUTH = await this.getXAuth();
-    const { ctx } = this;
-
     const uri = `${AVE_API_URL}v1api/v3/stats/rugpullrate?token_id=${tokenAddress}-solana`;
-    const res = await this.ctx.curl(uri, {
-      dataType: "json",
-      headers: {
-        "x-auth": X_AUTH,
-      },
-    });
+    const res = await this.requestAve(uri);
     const data = res.data?.data;
     if (data) {
       return data.dev;
@@ -168,16 +328,10 @@ class Ave extends Service {
   }
 
   async getFollowAggregateStates(tokenAddress) {
-    const X_AUTH = await this.getXAuth();
     const tokenId = `${tokenAddress}-solana`;
     const uri = `${AVE_FOLLOW_API_URL}v1api/v3/stats/follows/aggregatestates?token_id=${encodeURIComponent(tokenId)}&self_address=0xa65ad9201b6d48519822a3a1972ee68ec0437e1b`;
 
-    const res = await this.ctx.curl(uri, {
-      dataType: "json",
-      headers: {
-        "x-auth": X_AUTH,
-      },
-    });
+    const res = await this.requestAve(uri);
     const data = res.data?.data;
     if (String(res.data?.status) === "1" && data) {
       return data;
@@ -188,8 +342,6 @@ class Ave extends Service {
   }
 
   async getList(groupSort = {}) {
-    const { ctx } = this;
-
     const category = groupSort.category || "pump_out_new";
 
     if (category === "user") {
@@ -254,14 +406,7 @@ class Ave extends Service {
     );
     uri.search = params.toString();
 
-    const X_AUTH = await this.getXAuth();
-
-    const res = await ctx.curl(uri.toString(), {
-      dataType: "json",
-      headers: {
-        "x-auth": X_AUTH,
-      },
-    });
+    const res = await this.requestAve(uri.toString());
     const data = res.data?.data?.data;
     if (data) {
       return data.map((item) => aveTokenToDB(item));
@@ -270,7 +415,6 @@ class Ave extends Service {
   }
 
   async getMonitorPumpList() {
-    const { ctx } = this;
     const sort_field = "created_at";
     const sort_order = "asc";
     const mcp_min = 500000;
@@ -282,14 +426,7 @@ class Ave extends Service {
     const category = "pump_out_hot";
     const uri = `${AVE_TREASURE_API_URL}v1api/v4/tokens/treasure/list?chain=solana&sort=${sort_field}&sort_dir=${sort_order}&created_at_min=${create_min}&marketcap_min=${mcp_min}&marketcap_max=${mcp_max}&holder_min=${holder_min}&pageNO=1&pageSize=500&category=${category}`;
 
-    const X_AUTH = await this.getXAuth();
-
-    const res = await ctx.curl(uri, {
-      dataType: "json",
-      headers: {
-        "x-auth": X_AUTH,
-      },
-    });
+    const res = await this.requestAve(uri);
     const data = res.data?.data?.data;
     if (data) {
       console.log(data.length);
@@ -303,19 +440,11 @@ class Ave extends Service {
     if (!address || address.length === 0) {
       throw new Error("address is required");
     }
-    const X_AUTH = await this.getXAuth();
-    const { ctx } = this;
-
     const list = [];
     for (const addr of address) {
       const uri = `${AVE_API_URL}/v2api/walletinfo/v1/tokens?user_address=${addr}&chain=solana&pageNO=1&pageSize=500&sort_dir=desc&sort=last_txn_time&is_self=0e`;
 
-      const res = await ctx.curl(uri, {
-        dataType: "json",
-        headers: {
-          "x-auth": X_AUTH,
-        },
-      });
+      const res = await this.requestAve(uri);
       const data = res.data?.data;
       if (data) {
         const tokens = data.filter(

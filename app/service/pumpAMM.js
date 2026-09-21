@@ -40,6 +40,7 @@ const PumpSwapSDK = require("../libs/pumpSwap");
 const AvePumpSwapSDK = require("../libs/aveProxy");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
+const DFlowSDK = require("../libs/dflow");
 const { createAxiomBuyInstructions } = require("../libs/axiom");
 const {
   getSPLBalance,
@@ -160,6 +161,7 @@ const avePumpSwap = new AvePumpSwapSDK();
 
 const okxSwap = new OKXSwapSDK();
 const jupSwap = new JupSDK();
+const dflowSwap = new DFlowSDK();
 
 class PumpAMM extends Service {
   constructor(ctx) {
@@ -239,13 +241,30 @@ class PumpAMM extends Service {
         const jipAcc = ctx.service.jito.getTipAcc();
         const tipAmount = ctx.service.jito.getTipAmount();
         let bundleHasTip = false;
+        const dflowBuyData = await Promise.all(
+          wallets.map((wallet, i) => {
+            if (!wallet.isDflow) {
+              return null;
+            }
+            const slippage = i === 0 ? 0.05 : SLIPPAGE_BASIS_POINTS;
+            const { buyAmount, price } = wallet;
+            return dflowSwap.getBuyInstructions(ctx, {
+              user: wallet.keypair.publicKey,
+              tokenMint,
+              buyAmount,
+              slippage,
+              connection,
+              price,
+            });
+          }),
+        );
         for (let i = 0; i < wallets.length; i++) {
           const slippage = i === 0 ? 0.05 : SLIPPAGE_BASIS_POINTS;
           const wallet = wallets[i];
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
           const { buyAmount, limit, price, fee, isAxiom, isAve } = wallet;
-          const lookupTableAccounts =
+          let lookupTableAccounts =
             await this.getProxyPumpSwapLookupTables(isAxiom);
           const lookupTables = lookupTableAccounts.length
             ? lookupTableAccounts
@@ -263,6 +282,14 @@ class PumpAMM extends Service {
               poolDetail,
             });
             volumeIxs = [...okxIxs];
+          } else if (wallet.isDflow) {
+            const dflowSwapData = dflowBuyData[i];
+            volumeIxs = [...dflowSwapData.instructions];
+            lookupTableAccounts = dflowSwapData.lookupTableAccounts;
+            walletLookupTables = mergeLookupTableAccounts(
+              lookupTables,
+              dflowSwapData.lookupTableAccounts,
+            );
           } else if (wallet.isJup) {
             const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
               user,

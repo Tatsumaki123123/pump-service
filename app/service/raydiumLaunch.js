@@ -21,11 +21,13 @@ const { getSPLBalanceAmount, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
+const DFlowSDK = require("../libs/dflow");
 const { sendAstralaneTransaction } = require("../utils/astralane");
 const { splitIntoBundles } = require("../utils/utils");
 
 const okxSwap = new OKXSwapSDK();
 const jupSwap = new JupSDK();
+const dflowSwap = new DFlowSDK();
 
 const GMGN_FEES_VAULT = new PublicKey(
   "BB5dnY55FXS1e1NXqZDwCzgdYJdMCj3B92PU6Q5Fb6DT"
@@ -45,6 +47,23 @@ class RaydiumLaunch extends Service {
       const buyTxns = [];
       let existJitoIx = false;
       const jipAcc = ctx.service.jito.getTipAcc();
+      const dflowBuyData = await Promise.all(
+        wallets.map((wallet, i) => {
+          if (!wallet.isDflow) {
+            return null;
+          }
+          const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
+          const { buyAmount, price } = wallet;
+          return dflowSwap.getBuyInstructions(ctx, {
+            user: wallet.keypair.publicKey,
+            tokenMint,
+            buyAmount,
+            slippage,
+            connection,
+            price,
+          });
+        }),
+      );
       for (let i = 0; i < wallets.length; i++) {
         const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
         const wallet = wallets[i];
@@ -64,6 +83,10 @@ class RaydiumLaunch extends Service {
             slippage: slippage,
           });
           volumeIxs = [...okxIxs];
+        } else if (wallet.isDflow) {
+          const dflowSwapData = dflowBuyData[i];
+          volumeIxs = [...dflowSwapData.instructions];
+          lookupTableAccounts = dflowSwapData.lookupTableAccounts;
         } else if (wallet.isJup) {
           const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
             user,
@@ -71,6 +94,7 @@ class RaydiumLaunch extends Service {
             buyAmount,
             slippage,
             connection,
+            useSharedAccounts: true,
           });
           volumeIxs = [...jupSwapData.instructions];
           lookupTableAccounts = jupSwapData.lookupTableAccounts;

@@ -20,12 +20,14 @@ const { getSPLBalanceAmount, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const JupSDK = require("../libs/jup");
+const DFlowSDK = require("../libs/dflow");
 const RaydiumRouterSDK = require("../libs/raydiumRouter");
 const { sendAstralaneTransaction } = require("../utils/astralane");
 const { sleep, splitIntoBundles } = require("../utils/utils");
 
 const okxSwap = new OKXSwapSDK();
 const jupSwap = new JupSDK();
+const dflowSwap = new DFlowSDK();
 const rayRouterSwap = new RaydiumRouterSDK();
 
 const GMGN_FEES_VAULT = new PublicKey(
@@ -47,6 +49,23 @@ class RaydiumCpmm extends Service {
         const jipAcc = ctx.service.jito.getTipAcc();
 
         const poolDetail = await getPoolDetail(tokenMint);
+        const dflowBuyData = await Promise.all(
+          wallets.map((wallet, i) => {
+            if (!wallet.isDflow) {
+              return null;
+            }
+            const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
+            const { buyAmount, price } = wallet;
+            return dflowSwap.getBuyInstructions(ctx, {
+              user: wallet.keypair.publicKey,
+              tokenMint,
+              buyAmount,
+              slippage,
+              connection,
+              price,
+            });
+          }),
+        );
 
         for (let i = 0; i < wallets.length; i++) {
           const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
@@ -70,6 +89,10 @@ class RaydiumCpmm extends Service {
               slippage: slippage,
             });
             volumeIxs = [...okxIxs];
+          } else if (wallet.isDflow) {
+            const dflowSwapData = dflowBuyData[i];
+            volumeIxs = [...dflowSwapData.instructions];
+            lookupTableAccounts = dflowSwapData.lookupTableAccounts;
           } else if (wallet.isJup) {
             const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
               user,
@@ -77,6 +100,7 @@ class RaydiumCpmm extends Service {
               buyAmount,
               slippage,
               connection,
+              useSharedAccounts: true,
             });
             volumeIxs = [...jupSwapData.instructions];
             lookupTableAccounts = jupSwapData.lookupTableAccounts;
@@ -282,6 +306,17 @@ class RaydiumCpmm extends Service {
               slippage: slippage,
             });
             volumeIxs = [...okxIxs];
+          } else if (wallet.isDflow && i === 0) {
+            const dflowSwapData = await dflowSwap.getSellInstructions(ctx, {
+              user,
+              tokenMint,
+              tokenAmount,
+              slippage,
+              connection,
+              price,
+            });
+            volumeIxs = [...dflowSwapData.instructions];
+            lookupTableAccounts = dflowSwapData.lookupTableAccounts;
           } else if (wallet.isJup && i === 0) {
             const jupSwapData = await jupSwap.getSellInstructions(ctx, {
               user,
@@ -289,6 +324,7 @@ class RaydiumCpmm extends Service {
               tokenAmount,
               slippage,
               connection,
+              useSharedAccounts: true,
             });
             volumeIxs = [...jupSwapData.instructions];
             lookupTableAccounts = jupSwapData.lookupTableAccounts;
