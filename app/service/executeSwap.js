@@ -1167,7 +1167,10 @@ class ExecuteSwap extends Service {
 
     const followStates = await ctx.service.ave.getFollowAggregateStates(token);
     const minFollowStates = Number(lineData?.minFollowStates || 0);
-    if (Number(followStates.all || 0) <= minFollowStates) {
+    if (
+      minFollowStates > 0 &&
+      Number(followStates.all || 0) <= minFollowStates
+    ) {
       const reserveToken = await ctx.model.ReserveToken.findOne({
         token: tokenInfo.token,
         line: tokenInfo.line,
