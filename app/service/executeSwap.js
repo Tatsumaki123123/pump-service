@@ -786,6 +786,27 @@ class ExecuteSwap extends Service {
       },
     };
   }
+
+  normalizeWalletRouting(config) {
+    const buyStages = ["firstBuy", "secondBuy", "thirdBuy", "multiBuy"]
+      .map((key) => config[key])
+      .filter(
+        (stage) =>
+          stage && typeof stage === "object" && stage.enable !== false,
+      );
+    const stageDflow = buyStages.some(
+      (stage) => stage.isDflow === true || stage.isDlfow === true,
+    );
+    const stageJup = buyStages.some((stage) => stage.isJup === true);
+    return {
+      ...config,
+      isDflow:
+        config.isDflow ??
+        config.isDlfow ??
+        stageDflow,
+      isJup: config.isJup ?? stageJup,
+    };
+  }
   /**
    * get keypair from db
    */
@@ -843,10 +864,7 @@ class ExecuteSwap extends Service {
 
     let newWallets = data
       .filter((wallet) => wallet.stageEnable)
-      .map((wallet) => ({
-        ...wallet,
-        isDflow: wallet.isDflow ?? wallet.isDlfow ?? false,
-      }));
+      .map((wallet) => this.normalizeWalletRouting(wallet));
     return newWallets;
   }
 
@@ -855,12 +873,14 @@ class ExecuteSwap extends Service {
     const wallets = await this.getWallets(line);
     const walletConfigs = await this.getWalletConfig(line);
     if (String(type).toLowerCase() === "all") {
-      const newWallets = wallets.map((wallet, index) => ({
-        ...wallet,
-        ...(walletConfigs[index] || {}),
-        sellRatio: 1,
-        stageEnable: true,
-      }));
+      const newWallets = wallets.map((wallet, index) =>
+        this.normalizeWalletRouting({
+          ...wallet,
+          ...(walletConfigs[index] || {}),
+          sellRatio: 1,
+          stageEnable: true,
+        }),
+      );
       const lineData = await this.ctx.model.ExecuteLine.findOne({
         lineId: line,
       }).lean();
@@ -896,7 +916,9 @@ class ExecuteSwap extends Service {
         }));
     });
 
-    return data.filter((wallet) => wallet.stageEnable);
+    return data
+      .filter((wallet) => wallet.stageEnable)
+      .map((wallet) => this.normalizeWalletRouting(wallet));
   }
 
   buildFirstWalletConfig(firstWallet) {

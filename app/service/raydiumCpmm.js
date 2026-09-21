@@ -280,11 +280,16 @@ class RaydiumCpmm extends Service {
         const tokenAmountRaw = (balanceRaw * percentBasisPoints) / 10000n;
         const tokenAmount = tokenAmountRaw.toString();
 
-        console.log(
-          `${user.toBase58()} sell ${tokenAmount} (${sellPercent}%) ${token}`
-        );
-        if ((sellAll ? balanceRaw > 0n : balanceRaw >= 100n) && tokenAmountRaw > 0n) {
+        const shouldSell =
+          (sellAll ? balanceRaw > 0n : balanceRaw >= 100n) &&
+          tokenAmountRaw > 0n;
+        if (shouldSell) {
+          console.log(
+            `${user.toBase58()} sell ${tokenAmount} (${sellPercent}%) ${token}`,
+          );
           newWallets.push({ ...wallet, tokenAmount });
+        } else {
+          console.log(`${user.toBase58()} skip sell: token balance is 0`);
         }
       }
       newWallets.reverse();
@@ -293,6 +298,26 @@ class RaydiumCpmm extends Service {
         const sellTxns = [];
         const { blockhash } = await connection.getLatestBlockhash();
         const jipAcc = ctx.service.jito.getTipAcc();
+        const routedSellData = await Promise.all(
+          wallets.map((wallet) => {
+            const params = {
+              user: wallet.keypair.publicKey,
+              tokenMint,
+              tokenAmount: wallet.tokenAmount,
+              slippage,
+              connection,
+              price: wallet.price,
+              useSharedAccounts: true,
+            };
+            if (wallet.isDflow) {
+              return dflowSwap.getSellInstructions(ctx, params);
+            }
+            if (wallet.isJup) {
+              return jupSwap.getSellInstructions(ctx, params);
+            }
+            return null;
+          }),
+        );
         for (let i = 0; i < wallets.length; i++) {
           const wallet = wallets[i];
           const keypair = wallet.keypair;
@@ -315,26 +340,12 @@ class RaydiumCpmm extends Service {
               slippage: slippage,
             });
             volumeIxs = [...okxIxs];
-          } else if (wallet.isDflow && i === 0) {
-            const dflowSwapData = await dflowSwap.getSellInstructions(ctx, {
-              user,
-              tokenMint,
-              tokenAmount,
-              slippage,
-              connection,
-              price,
-            });
+          } else if (wallet.isDflow) {
+            const dflowSwapData = routedSellData[i];
             volumeIxs = [...dflowSwapData.instructions];
             lookupTableAccounts = dflowSwapData.lookupTableAccounts;
-          } else if (wallet.isJup && i === 0) {
-            const jupSwapData = await jupSwap.getSellInstructions(ctx, {
-              user,
-              tokenMint,
-              tokenAmount,
-              slippage,
-              connection,
-              useSharedAccounts: true,
-            });
+          } else if (wallet.isJup) {
+            const jupSwapData = routedSellData[i];
             volumeIxs = [...jupSwapData.instructions];
             lookupTableAccounts = jupSwapData.lookupTableAccounts;
           } else {

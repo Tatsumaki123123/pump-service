@@ -58,16 +58,23 @@ async function getSPLBalanceAmount(
   connection,
   tokenMint,
   owner,
-  allowOffCurve = false,
 ) {
   try {
-    let ata = getAssociatedTokenAddressSync(tokenMint, owner, allowOffCurve);
-    const balance = await connection.getTokenAccountBalance(ata, "confirmed");
-    return balance.value.amount || 0;
+    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+      owner,
+      { mint: tokenMint },
+      "confirmed",
+    );
+    return tokenAccounts.value
+      .reduce((total, { account }) => {
+        const amount = account.data?.parsed?.info?.tokenAmount?.amount;
+        return amount == null ? total : total + BigInt(amount);
+      }, 0n)
+      .toString();
   } catch (e) {
     console.error(e.message);
   }
-  return 0;
+  return "0";
 }
 
 async function closeAllTokenAccounts(connection, keypair, force = false) {
