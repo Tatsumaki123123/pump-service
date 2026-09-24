@@ -28,7 +28,12 @@ const TROGAN_PARAM_LAMPORTS = BigInt(
 );
 
 
-const createTroProxyInstruction = (payer, _jipAcc, amount = 0.0001) => {
+const createTroProxyInstruction = (
+  payer,
+  _jipAcc,
+  amount = 0.0001,
+  { includeJitoDontFront = true } = {},
+) => {
   const accounts = [
     {
       pubkey: payer, // Account #1
@@ -46,7 +51,10 @@ const createTroProxyInstruction = (payer, _jipAcc, amount = 0.0001) => {
       isSigner: false,
     },
     {
-      pubkey: TROGAN_JITODONTFRONT, // Account #4
+      // Only the first protected transaction in a Jito bundle may carry this marker.
+      pubkey: includeJitoDontFront
+        ? TROGAN_JITODONTFRONT
+        : SystemProgram.programId,
       isWritable: false,
       isSigner: false,
     },

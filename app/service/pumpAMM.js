@@ -402,7 +402,12 @@ class PumpAMM extends Service {
             }
           }
           if (wallet.isTrogan || wallet.isTragon) {
-            const troganTipIx = createTroProxyInstruction(user, jipAcc);
+            const troganTipIx = createTroProxyInstruction(
+              user,
+              jipAcc,
+              undefined,
+              { includeJitoDontFront: i === 0 },
+            );
             if (troganTipIx) {
               volumeIxs.push(troganTipIx);
             }
