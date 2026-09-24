@@ -366,14 +366,6 @@ class PumpAMM extends Service {
               });
               volumeIxs.push(gmgnTipTx);
             }
-            if (wallet.isTrogan) {
-              const troganTipIx = createTroProxyInstruction(user, jipAcc);
-
-              if (troganTipIx) {
-                volumeIxs.push(troganTipIx);
-              }
-            }
-
             const shouldAddJitoTip =
               !isAxiom && (NEXTBLOCK_TIP_EVERY_TX || i === 0);
             if (shouldAddJitoTip) {
@@ -407,6 +399,12 @@ class PumpAMM extends Service {
                 lamports: tipAmount,
               });
               volumeIxs.push(jitoTipIx);
+            }
+          }
+          if (wallet.isTrogan || wallet.isTragon) {
+            const troganTipIx = createTroProxyInstruction(user, jipAcc);
+            if (troganTipIx) {
+              volumeIxs.push(troganTipIx);
             }
           }
           try {

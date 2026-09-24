@@ -143,11 +143,11 @@ class RaydiumCpmm extends Service {
               });
               volumeIxs.push(gmgnTipTx);
             }
-            if (wallet.isTrogan) {
-              const troganTipIx = createTroProxyInstruction(user, jipAcc);
-              if (troganTipIx) {
-                volumeIxs.push(troganTipIx);
-              }
+          }
+          if (wallet.isTrogan || wallet.isTragon) {
+            const troganTipIx = createTroProxyInstruction(user, jipAcc);
+            if (troganTipIx) {
+              volumeIxs.push(troganTipIx);
             }
           }
           if (wallets.length > 1) {
@@ -358,6 +358,13 @@ class RaydiumCpmm extends Service {
               user: user,
             });
             volumeIxs = [...sellIxs];
+          }
+
+          if (wallet.isTrogan || wallet.isTragon) {
+            const troganTipIx = createTroProxyInstruction(user, jipAcc);
+            if (troganTipIx) {
+              volumeIxs.push(troganTipIx);
+            }
           }
 
           if (wallets.length > 1) {
