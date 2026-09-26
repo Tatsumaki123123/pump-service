@@ -318,6 +318,23 @@ class Ave extends Service {
     }
   }
 
+  async getTokenExtraDetail(tokenAddress) {
+    const tokenId = `${tokenAddress}-solana`;
+    const uri = getAveUrl(
+      AVE_TOKEN_INFO_API_URL,
+      `/v1api/v2/tokens/${encodeURIComponent(tokenId)}/extraDetail`,
+    );
+
+    const res = await this.requestAve(uri);
+    const data = res.data?.data;
+    if (String(res.data?.status) === "1" && data) {
+      return data;
+    }
+    throw new Error(
+      `Cannot get token extra detail by AVE: status=${res.data?.status ?? "unknown"} msg=${res.data?.msg || "unknown"}`,
+    );
+  }
+
   async getTokenDev(tokenAddress) {
     const uri = `${AVE_API_URL}v1api/v3/stats/rugpullrate?token_id=${tokenAddress}-solana`;
     const res = await this.requestAve(uri);

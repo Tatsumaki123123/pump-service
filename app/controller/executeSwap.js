@@ -372,6 +372,7 @@ class ExecuteSwap extends BaseController {
         firstWallet: firstWallet,
         needFirstWallet: res.needFirstWallet,
         minFollowStates: Number(res.minFollowStates || 0),
+        maxBuyTax: res.maxBuyTax,
         sourceWeb: res.sourceWeb,
         groupSort: res.groupSort,
         autoStep: res.autoStep,

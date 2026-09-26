@@ -1197,6 +1197,24 @@ class ExecuteSwap extends Service {
       status: "pending",
     };
 
+    const hasMaxBuyTax =
+      lineData?.maxBuyTax !== undefined &&
+      lineData?.maxBuyTax !== null &&
+      lineData?.maxBuyTax !== "";
+    if (hasMaxBuyTax) {
+      const maxBuyTax = Number(lineData.maxBuyTax);
+      const extraDetail = await ctx.service.ave.getTokenExtraDetail(token);
+      const totalBuyTax = Number(extraDetail.total_buy_tax);
+      if (!Number.isFinite(totalBuyTax)) {
+        throw new Error("Cannot get token buy tax by AVE");
+      }
+      if (totalBuyTax > maxBuyTax) {
+        throw new Error(
+          `Buy tax ${totalBuyTax} exceeds maxBuyTax ${maxBuyTax}`,
+        );
+      }
+    }
+
     const followStates = await ctx.service.ave.getFollowAggregateStates(token);
     const minFollowStates = Number(lineData?.minFollowStates || 0);
     if (
