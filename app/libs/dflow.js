@@ -25,7 +25,7 @@ function parsePriceImpactPct(value) {
   return numericValue <= 1 ? numericValue * 100 : numericValue;
 }
 
-function assertQuoteQuality(quote) {
+function assertQuoteQuality(quote, slippage) {
   const impacts = [];
   const addImpact = (value) => {
     const impact = parsePriceImpactPct(value);
@@ -38,9 +38,16 @@ function assertQuoteQuality(quote) {
     addImpact(route?.swapInfo?.priceImpactPct);
   }
 
-  const maxImpact = Number.isFinite(MAX_PRICE_IMPACT_PCT)
+  const configuredMaxImpact = Number.isFinite(MAX_PRICE_IMPACT_PCT)
     ? Math.max(0, MAX_PRICE_IMPACT_PCT)
     : 10;
+  const requestedSlippagePct = Number(slippage) * 100;
+  const maxImpact = Math.max(
+    configuredMaxImpact,
+    Number.isFinite(requestedSlippagePct)
+      ? Math.max(0, requestedSlippagePct)
+      : 0,
+  );
   const worstImpact = impacts.length ? Math.max(...impacts) : null;
   if (worstImpact !== null && worstImpact > maxImpact) {
     throw new Error(
@@ -133,7 +140,7 @@ class DFlowSDK {
       transactionVersion: "v0",
     };
     const quote = await this.getQuote(ctx, quoteParams, headers);
-    assertQuoteQuality(quote);
+    assertQuoteQuality(quote, slippage);
 
     const swapBody = {
       userPublicKey: user.toBase58 ? user.toBase58() : String(user),
