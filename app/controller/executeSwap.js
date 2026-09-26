@@ -175,6 +175,12 @@ class ExecuteSwap extends BaseController {
     this.success(res);
   }
 
+  async addLine() {
+    const { ctx } = this;
+    const res = await ctx.service.executeSwap.addLine();
+    this.success(res);
+  }
+
   async checkToken() {
     const { ctx } = this;
 

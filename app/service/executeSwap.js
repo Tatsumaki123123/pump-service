@@ -84,6 +84,50 @@ class ExecuteSwap extends Service {
     return executeData;
   }
 
+  async addLine() {
+    const { ctx } = this;
+    const latestLine = await ctx.model.ExecuteLine.findOne()
+      .sort({ lineId: -1 })
+      .lean();
+    const lineId = Number(latestLine?.lineId || 0) + 1;
+    const eid = lineId * 1000;
+    const boss = Keypair.generate();
+    const linePayload = {
+      lineId,
+      lineName: `line-${lineId}`,
+      walletConfig: [],
+      groupSort: {},
+      autoStep: [],
+      lineBots: [],
+      autoSwap: false,
+      needFirstWallet: false,
+      minFollowStates: 0,
+    };
+    const dataPayload = {
+      eid,
+      bossAddress: boss.publicKey.toBase58(),
+      privateKey: bs58.encode(boss.secretKey),
+      active: true,
+      createTime: new Date(),
+      walletsExist: false,
+      line: lineId,
+    };
+    let createdLine;
+    try {
+      createdLine = await ctx.model.ExecuteLine.create(linePayload);
+      const createdData = await ctx.model.ExecuteData.create(dataPayload);
+      return {
+        executeLine: createdLine,
+        executeData: createdData,
+      };
+    } catch (error) {
+      if (createdLine?._id) {
+        await ctx.model.ExecuteLine.deleteOne({ _id: createdLine._id });
+      }
+      throw error;
+    }
+  }
+
   async getWalletConfig(line) {
     const { ctx } = this;
     const lineData = await ctx.model.ExecuteLine.findOne({ lineId: line });
