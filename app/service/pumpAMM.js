@@ -102,7 +102,10 @@ const AXIOM_TIP_LAMPORTS = Number(
   process.env.AXIOM_TIP_LAMPORTS || 139798,
 );
 
-const SLIPPAGE_BASIS_POINTS = 0.3;
+// DFlow/Jupiter slippage is passed as a fraction: 0.05 = 5%.
+const SLIPPAGE_BASIS_POINTS = Number(
+  process.env.DFLOW_BATCH_SLIPPAGE || 0.05,
+);
 const BUY_SLIPPAGE_ERROR = "BuySlippageBelowMinBaseAmountOut";
 const BASIS_POINTS_DENOMINATOR = 10000n;
 
@@ -246,7 +249,7 @@ class PumpAMM extends Service {
             if (!wallet.isDflow) {
               return null;
             }
-            const slippage = i === 0 ? 0.05 : SLIPPAGE_BASIS_POINTS;
+            const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
             const { buyAmount, price } = wallet;
             return dflowSwap.getBuyInstructions(ctx, {
               user: wallet.keypair.publicKey,
@@ -259,8 +262,8 @@ class PumpAMM extends Service {
           }),
         );
         for (let i = 0; i < wallets.length; i++) {
-          const slippage = i === 0 ? 0.05 : SLIPPAGE_BASIS_POINTS;
           const wallet = wallets[i];
+          const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
           const { buyAmount, limit, price, fee, isAxiom, isAve } = wallet;
@@ -825,6 +828,7 @@ class PumpAMM extends Service {
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
           const tokenAmount = wallet.tokenAmount;
+          const slippage = wallet.slippage;
 
           const { limit, price, fee } = wallet;
 
@@ -878,6 +882,7 @@ class PumpAMM extends Service {
             sellNewAccount: newAccount,
             poolDetail: poolDetail,
             tokenProgramId,
+            slippage,
           });
 
           // 6. Token Program: closeAccount

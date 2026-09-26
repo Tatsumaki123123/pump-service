@@ -34,6 +34,17 @@ const TIP_ACCOUNT = new PublicKey(
 );
 const SLIPPAGE_BASIS_POINTS = 5000n;
 
+function getWalletSlippageBasisPoints(wallet) {
+  if (wallet?.slippage === undefined || wallet?.slippage === null) {
+    return SLIPPAGE_BASIS_POINTS;
+  }
+  const slippage = Number(wallet.slippage);
+  if (!Number.isFinite(slippage) || slippage < 0 || slippage > 1) {
+    throw new Error("slippage must be between 0 and 1");
+  }
+  return BigInt(Math.floor(slippage * 10000));
+}
+
 class PumpFun extends Service {
   constructor(ctx) {
     super(ctx);
@@ -176,13 +187,14 @@ class PumpFun extends Service {
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
         const { buyAmount, limit, price, fee } = wallet;
+        const slippageBasisPoints = getWalletSlippageBasisPoints(wallet);
         let volumeIxs = [];
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
         const buyTx = await pfSwap.buy(
           user,
           tokenMint,
           BigInt(buyAmount * LAMPORTS_PER_SOL),
-          SLIPPAGE_BASIS_POINTS,
+          slippageBasisPoints,
           {
             unitLimit: limit,
             unitPrice: price,
@@ -345,13 +357,14 @@ class PumpFun extends Service {
           const tokenAmount = wallet.tokenAmount;
 
           const { limit, price, fee } = wallet;
+          const slippageBasisPoints = getWalletSlippageBasisPoints(wallet);
 
           let volumeIxs = [];
           const sellTx = await pfSwap.sell(
             user,
             tokenMint,
             BigInt(Math.trunc(tokenAmount * Math.pow(10, 6))),
-            SLIPPAGE_BASIS_POINTS,
+            slippageBasisPoints,
             {
               unitLimit: limit,
               unitPrice: price,

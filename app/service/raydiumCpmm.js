@@ -35,7 +35,10 @@ const GMGN_FEES_VAULT = new PublicKey(
 );
 const GMGN_FEE = 0.0004;
 
-const SLIPPAGE_BASIS_POINTS = 0.6;
+// DFlow/Jupiter slippage is passed as a fraction: 0.05 = 5%.
+const SLIPPAGE_BASIS_POINTS = Number(
+  process.env.DFLOW_BATCH_SLIPPAGE || 0.05,
+);
 class RaydiumCpmm extends Service {
   async batchBuyToken(token, wallets, type = "") {
     const { ctx } = this;
@@ -63,7 +66,7 @@ class RaydiumCpmm extends Service {
             if (!wallet.isDflow) {
               return null;
             }
-            const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
+            const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
             const { buyAmount, price } = wallet;
             return dflowSwap.getBuyInstructions(ctx, {
               user: wallet.keypair.publicKey,
@@ -77,8 +80,8 @@ class RaydiumCpmm extends Service {
         );
 
         for (let i = 0; i < wallets.length; i++) {
-          const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
           const wallet = wallets[i];
+          const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
           const { buyAmount, limit, price, fee } = wallet;
@@ -272,9 +275,10 @@ class RaydiumCpmm extends Service {
 
       const tokenMint = new PublicKey(token);
       const newWallets = [];
-      const slippage = wallets.length === 1 ? 0.01 : SLIPPAGE_BASIS_POINTS;
+      const defaultSlippage = wallets.length === 1 ? 0.01 : SLIPPAGE_BASIS_POINTS;
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
+        const slippage = wallet.slippage ?? defaultSlippage;
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
         const balanceRaw = BigInt(
@@ -305,6 +309,7 @@ class RaydiumCpmm extends Service {
         const jipAcc = ctx.service.jito.getTipAcc();
         const routedSellData = await Promise.all(
           wallets.map((wallet) => {
+            const slippage = wallet.slippage ?? defaultSlippage;
             const params = {
               user: wallet.keypair.publicKey,
               tokenMint,
@@ -325,6 +330,7 @@ class RaydiumCpmm extends Service {
         );
         for (let i = 0; i < wallets.length; i++) {
           const wallet = wallets[i];
+          const slippage = wallet.slippage ?? defaultSlippage;
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
           const tokenAmount = wallet.tokenAmount;

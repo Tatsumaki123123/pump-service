@@ -4,7 +4,50 @@ const BASE_URL = process.env.DFLOW_API_URL || "https://quote-api.dflow.net";
 const API_KEY = process.env.DFLOW_API_KEY || "";
 const DEV_API_HOST = "dev-quote-api.dflow.net";
 const QUOTE_CACHE_TTL_MS = Number(process.env.DFLOW_QUOTE_CACHE_TTL_MS || 1500);
+// DFlow receives slippage in basis points. The public service methods in this
+// project use a fraction (0.01 = 1%). Override with DFLOW_MAX_SLIPPAGE_BPS
+// when a deployment wants a stricter ceiling.
+const MAX_SLIPPAGE_BPS = Number(
+  process.env.DFLOW_MAX_SLIPPAGE_BPS || 10000,
+);
+const MAX_PRICE_IMPACT_PCT = Number(
+  process.env.DFLOW_MAX_PRICE_IMPACT_PCT || 10,
+);
 const quoteCache = new Map();
+
+function parsePriceImpactPct(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue < 0) {
+    return null;
+  }
+  // Jupiter-compatible quote APIs commonly encode this field as a fraction
+  // (0.01 = 1%), while some providers return a percentage directly.
+  return numericValue <= 1 ? numericValue * 100 : numericValue;
+}
+
+function assertQuoteQuality(quote) {
+  const impacts = [];
+  const addImpact = (value) => {
+    const impact = parsePriceImpactPct(value);
+    if (impact !== null) impacts.push(impact);
+  };
+
+  addImpact(quote?.priceImpactPct);
+  for (const route of Array.isArray(quote?.routePlan) ? quote.routePlan : []) {
+    addImpact(route?.priceImpactPct);
+    addImpact(route?.swapInfo?.priceImpactPct);
+  }
+
+  const maxImpact = Number.isFinite(MAX_PRICE_IMPACT_PCT)
+    ? Math.max(0, MAX_PRICE_IMPACT_PCT)
+    : 10;
+  const worstImpact = impacts.length ? Math.max(...impacts) : null;
+  if (worstImpact !== null && worstImpact > maxImpact) {
+    throw new Error(
+      `DFlow quote rejected: price impact ${worstImpact.toFixed(4)}% exceeds ${maxImpact}%`,
+    );
+  }
+}
 
 function toTransactionInstruction(instruction) {
   if (!instruction?.programId || !Array.isArray(instruction.accounts)) {
@@ -69,8 +112,17 @@ class DFlowSDK {
   ) {
     const headers = this.getHeaders();
     const slippageBps = Math.floor(Number(slippage) * 10000);
-    if (!Number.isFinite(slippageBps) || slippageBps < 0) {
-      throw new Error("Invalid DFlow slippage");
+    const maxSlippageBps = Number.isFinite(MAX_SLIPPAGE_BPS)
+      ? Math.max(0, Math.floor(MAX_SLIPPAGE_BPS))
+      : 10000;
+    if (
+      !Number.isFinite(slippageBps) ||
+      slippageBps < 0 ||
+      slippageBps > maxSlippageBps
+    ) {
+      throw new Error(
+        `Invalid DFlow slippage: ${slippageBps} bps; maximum is ${maxSlippageBps} bps`,
+      );
     }
 
     const quoteParams = {
@@ -81,6 +133,7 @@ class DFlowSDK {
       transactionVersion: "v0",
     };
     const quote = await this.getQuote(ctx, quoteParams, headers);
+    assertQuoteQuality(quote);
 
     const swapBody = {
       userPublicKey: user.toBase58 ? user.toBase58() : String(user),

@@ -47,7 +47,32 @@
 
 由于两个钱包都设置了 `isDflow=true`，支持 DFlow 的 AMM 会优先使用 DFlow 返回的交易指令，不能仅凭 `limit`、`price`、`fee` 判断最终链上费用。
 
-### 2.3 `firstBuy`
+### 2.3 线路级 `slippage`
+
+可以在 `ExecuteLine` 顶层配置统一滑点。例如：
+
+```json
+{
+  "slippage": 0.2
+}
+```
+
+`slippage` 使用小数比例，`0.2` 表示 20%。配置后会覆盖 `walletConfig`、买卖阶段和 `firstWallet` 中的滑点，并应用到 DFlow、Jupiter、OKX、Raydium、Pump AMM 和 Pump.fun 交易。未配置时字段保持缺省，各交易服务继续使用自己的默认值。允许范围是 `0` 到 `1`。
+
+### 2.4 DFlow 滑点单位与保护
+
+项目传给 DFlow 的 `slippage` 使用小数比例，DFlow SDK 会转换成 basis points：
+
+| 项目值 | DFlow `slippageBps` | 百分比 |
+| ---: | ---: | ---: |
+| `0.001` | `10` | `0.1%` |
+| `0.02` | `200` | `2%` |
+| `0.05` | `500` | `5%` |
+| `0.2` | `2000` | `20%` |
+
+当前批量 DFlow 买入默认使用 `0.05`（5%），用于容纳并发交易造成的报价变化，也可用 `DFLOW_BATCH_SLIPPAGE` 调整。`DFLOW_MAX_SLIPPAGE_BPS` 默认是 `10000`（100%），因此线路配置 `0.2`（20%）可以正常传给 DFlow；部署仍可用该环境变量设置更严格的上限。`DFLOW_MAX_PRICE_IMPACT_PCT` 默认是 `10`（10%）。超过任一限制时不会构造交易。滑点保护只限制报价生成后的可接受变化；因此代码还会检查 DFlow 报价自身的 `priceImpactPct`，防止报价阶段已经选中远离市场价的订单。
+
+### 2.5 `firstBuy`
 
 ```json
 {
@@ -82,7 +107,7 @@ POST /v1/execute/buyToken
 
 其中 `tid` 使用 `/v1/execute/checkToken` 返回的真实 `ExecuteToken.tid`。执行后两个主钱包分别买入 1.85 SOL 和 2.95 SOL。
 
-### 2.4 `firstSell`
+### 2.6 `firstSell`
 
 只有第二个钱包有：
 

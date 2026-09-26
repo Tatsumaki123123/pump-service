@@ -18,6 +18,7 @@ module.exports = (app) => {
     needFirstWallet: { type: Boolean, default: false },
     minFollowStates: { type: Number, default: 0 },
     maxBuyTax: { type: Number },
+    slippage: { type: Number },
   });
 
   return mongoose.model("ExecuteLine", schema);

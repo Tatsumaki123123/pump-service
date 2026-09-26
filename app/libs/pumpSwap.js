@@ -424,6 +424,7 @@ class PumpSwapSDK {
       poolDetail,
       isAxiom,
       tokenProgramId,
+      slippage,
     } = params;
 
     const accounts = await this.getAccounts({
@@ -438,7 +439,28 @@ class PumpSwapSDK {
     //   accounts.map((account, index) => [index + 1, account.pubkey.toBase58()])
     // );
     const baseAmountIn = BigInt(Math.floor(tokenAmount * 10 ** 6));
-    const minQuoteAmountOut = BigInt(0);
+    let minQuoteAmountOut = 0n;
+    if (slippage !== undefined && slippage !== null) {
+      const normalizedSlippage = Number(slippage);
+      if (
+        !Number.isFinite(normalizedSlippage) ||
+        normalizedSlippage < 0 ||
+        normalizedSlippage > 1
+      ) {
+        throw new Error("slippage must be between 0 and 1");
+      }
+      const baseReserve = BigInt(
+        Math.floor(Number(poolDetail.reserves.token) * 10 ** 6),
+      );
+      const quoteReserve = BigInt(
+        Math.floor(Number(poolDetail.reserves.native) * LAMPORTS_PER_SOL),
+      );
+      const expectedQuoteAmountOut =
+        (quoteReserve * baseAmountIn) / (baseReserve + baseAmountIn);
+      const slippageBps = BigInt(Math.floor(normalizedSlippage * 10000));
+      minQuoteAmountOut =
+        (expectedQuoteAmountOut * (10000n - slippageBps)) / 10000n;
+    }
     const data = Buffer.alloc(8 + 8 + 8); // 24 bytes total
     data.set(SELL_DISCRIMINATOR, 0);
     data.writeBigUInt64LE(BigInt(baseAmountIn), 8); // Write base_amount_in as little-endian u64

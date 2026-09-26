@@ -34,7 +34,10 @@ const GMGN_FEES_VAULT = new PublicKey(
 );
 const GMGN_FEE = 0.0004;
 
-const SLIPPAGE_BASIS_POINTS = 0.6;
+// DFlow/Jupiter slippage is passed as a fraction: 0.05 = 5%.
+const SLIPPAGE_BASIS_POINTS = Number(
+  process.env.DFLOW_BATCH_SLIPPAGE || 0.05,
+);
 class RaydiumLaunch extends Service {
   async batchBuyToken(token, wallets) {
     const { ctx } = this;
@@ -52,7 +55,7 @@ class RaydiumLaunch extends Service {
           if (!wallet.isDflow) {
             return null;
           }
-          const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
+          const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
           const { buyAmount, price } = wallet;
           return dflowSwap.getBuyInstructions(ctx, {
             user: wallet.keypair.publicKey,
@@ -65,8 +68,8 @@ class RaydiumLaunch extends Service {
         }),
       );
       for (let i = 0; i < wallets.length; i++) {
-        const slippage = i === 0 ? 0.001 : SLIPPAGE_BASIS_POINTS;
         const wallet = wallets[i];
+        const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
         const { buyAmount, limit, price, fee } = wallet;
@@ -227,7 +230,7 @@ class RaydiumLaunch extends Service {
       const { blockhash } = await connection.getLatestBlockhash();
       const sellTxns = [];
       const newWallets = [];
-      const slippage = wallets.length === 1 ? 0.01 : SLIPPAGE_BASIS_POINTS;
+      const defaultSlippage = wallets.length === 1 ? 0.01 : SLIPPAGE_BASIS_POINTS;
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
@@ -251,6 +254,7 @@ class RaydiumLaunch extends Service {
       const len = newWallets.length > 5 ? 5 : newWallets.length;
       for (let i = 0; i < len; i++) {
         const wallet = newWallets[i];
+        const slippage = wallet.slippage ?? defaultSlippage;
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
         const tokenAmount = wallet.tokenAmount;

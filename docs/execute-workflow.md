@@ -34,7 +34,7 @@ ExecuteWallet          ExecuteToken
 
 | 模型 | 关键字段 | 职责 | 主要被谁读写 |
 | --- | --- | --- | --- |
-| `ExecuteLine` | `lineId`、`walletConfig`、`firstWallet`、`needFirstWallet`、`sourceWeb`、`groupSort`、`withdrawAddress`、`autoSwap` | 线路级配置：钱包数量和每个钱包的充值/买入/卖出策略、代币来源、机器人地址、提现地址 | `executeSwap`、`executeToken`、`autoSwap`、控制器线路配置接口 |
+| `ExecuteLine` | `lineId`、`walletConfig`、`slippage`、`firstWallet`、`needFirstWallet`、`sourceWeb`、`groupSort`、`withdrawAddress`、`autoSwap` | 线路级配置：钱包数量和每个钱包的充值/买入/卖出策略、统一滑点、代币来源、机器人地址、提现地址 | `executeSwap`、`executeToken`、`autoSwap`、控制器线路配置接口 |
 | `ExecuteData` | `eid`、`line`、`active`、`bossAddress`、`privateKey`、`walletsExist`、`createTime` | 一次执行批次的 boss 钱包和生命周期状态 | `executeSwap` 创建/切换/查询；`axiomWallet` 按时间或 `eid` 反查批次 |
 | `ExecuteWallet` | `address`、`privateKey`、`eid`、`isActive`、`createTime` | 批次下的执行钱包；`eid` 将钱包绑定到一个批次 | `executeSwap` 生成/替换/查询；`walletAdmin` 读取私钥和归集资金 |
 | `ExecuteToken` | `tid`、`token`、`pool`、`amm`、`eid`、`line`、`status`、`buyStatus`、`buyStartTime` | 批次内的代币任务和买卖状态 | `executeSwap.checkToken/buyToken/sellToken`、代币列表接口、自动交易 |
@@ -53,6 +53,7 @@ ExecuteWallet          ExecuteToken
 线路数据保存在 `ExecuteLine`。其中最重要的是：
 
 - `walletConfig`：数组下标与执行钱包下标对应。每个元素至少包含 `transferAmount`，并可包含 `firstBuy`、`secondBuy`、`thirdBuy`、`multiBuy` 等阶段配置。
+- `slippage`：可选的线路级滑点，小数比例（例如 `0.2` 表示 20%），配置后覆盖钱包、阶段和 `firstWallet` 的滑点；未配置时使用各交易服务默认值。
 - `firstWallet` / `needFirstWallet`：可选的额外首个钱包。`position` 决定放在主钱包之前还是之后，`type` 决定它参与哪个买入阶段。
 - `sourceWeb` 和 `groupSort`：决定代币列表从 Debot 还是 Ave 获取，以及筛选条件。
 - `minFollowStates`：`checkToken` 时的最小关注地址数门槛。

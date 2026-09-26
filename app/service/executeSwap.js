@@ -135,6 +135,26 @@ class ExecuteSwap extends Service {
     return executeWalletConfig;
   }
 
+  normalizeLineSlippage(value) {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+    const slippage = Number(value);
+    if (!Number.isFinite(slippage) || slippage < 0 || slippage > 1) {
+      throw new Error("slippage must be between 0 and 1");
+    }
+    return slippage;
+  }
+
+  async getLineSlippage(line) {
+    const lineData = await this.ctx.model.ExecuteLine.findOne({
+      lineId: line,
+    })
+      .select("slippage")
+      .lean();
+    return this.normalizeLineSlippage(lineData?.slippage);
+  }
+
   async generateNewBoss(line) {
     const { ctx } = this;
     const boss = Keypair.generate();
@@ -888,6 +908,7 @@ class ExecuteSwap extends Service {
     console.log(chalk.green("getWalletsWithConfig:", line, type));
     const wallets = await this.getWallets(line);
     const walletConfigs = await this.getWalletConfig(line);
+    const lineSlippage = await this.getLineSlippage(line);
     const data = walletConfigs.flatMap((config, index) => {
       const wallet = wallets[index];
       if (type === "all") {
@@ -897,6 +918,9 @@ class ExecuteSwap extends Service {
           .map((stage) => ({
             ...wallet,
             ...stage.config,
+            ...(lineSlippage === undefined
+              ? {}
+              : { slippage: lineSlippage }),
             stageEnable: true,
           }));
       }
@@ -905,6 +929,7 @@ class ExecuteSwap extends Service {
         {
           ...wallet,
           ...stage.config,
+          ...(lineSlippage === undefined ? {} : { slippage: lineSlippage }),
           stageEnable: stage.enable,
         },
       ];
@@ -921,17 +946,21 @@ class ExecuteSwap extends Service {
     const wallets = await this.getWallets(line);
     const walletConfigs = await this.getWalletConfig(line);
     if (String(type).toLowerCase() === "all") {
+      const lineData = await this.ctx.model.ExecuteLine.findOne({
+        lineId: line,
+      }).lean();
+      const lineSlippage = this.normalizeLineSlippage(lineData?.slippage);
       const newWallets = wallets.map((wallet, index) =>
         this.normalizeWalletRouting({
           ...wallet,
           ...(walletConfigs[index] || {}),
+          ...(lineSlippage === undefined
+            ? {}
+            : { slippage: lineSlippage }),
           sellRatio: 1,
           stageEnable: true,
         }),
       );
-      const lineData = await this.ctx.model.ExecuteLine.findOne({
-        lineId: line,
-      }).lean();
       const { firstWallet, needFirstWallet } = lineData;
       if (
         !firstWallet ||
@@ -942,7 +971,7 @@ class ExecuteSwap extends Service {
       }
 
       const firstWalletConfig = {
-        ...this.buildFirstWalletConfig(firstWallet),
+        ...this.buildFirstWalletConfig(firstWallet, lineSlippage),
         sellRatio: 1,
         stageEnable: true,
       };
@@ -952,6 +981,7 @@ class ExecuteSwap extends Service {
     }
 
     const stageTypes = [type];
+    const lineSlippage = await this.getLineSlippage(line);
     const data = walletConfigs.flatMap((config, index) => {
       const wallet = wallets[index];
       return stageTypes
@@ -960,6 +990,7 @@ class ExecuteSwap extends Service {
         .map((stage) => ({
           ...wallet,
           ...stage.config,
+          ...(lineSlippage === undefined ? {} : { slippage: lineSlippage }),
           stageEnable: true,
         }));
     });
@@ -969,7 +1000,7 @@ class ExecuteSwap extends Service {
       .map((wallet) => this.normalizeWalletRouting(wallet));
   }
 
-  buildFirstWalletConfig(firstWallet) {
+  buildFirstWalletConfig(firstWallet, lineSlippage) {
     const keypair = Keypair.fromSecretKey(bs58.decode(firstWallet.privateKey));
     const { privateKey, ...config } = firstWallet;
     return {
@@ -982,6 +1013,7 @@ class ExecuteSwap extends Service {
       price: 0,
       fee: 0.00002,
       ...config,
+      ...(lineSlippage === undefined ? {} : { slippage: lineSlippage }),
       isDflow: config.isDflow ?? config.isDlfow ?? false,
       isFirstWallet: true,
       isBundle: firstWallet.isBundle !== false,
@@ -998,7 +1030,11 @@ class ExecuteSwap extends Service {
       const firstType = this.normalizeStageType(firstWallet.type);
       const typeKey = `${firstType}Buy`;
       if (type === firstType || type === "all") {
-        const firstWalletConfig = this.buildFirstWalletConfig(firstWallet);
+        const lineSlippage = this.normalizeLineSlippage(lineData.slippage);
+        const firstWalletConfig = this.buildFirstWalletConfig(
+          firstWallet,
+          lineSlippage,
+        );
         firstWalletConfig[typeKey] = true;
         if (firstWallet.position === "after") {
           if (type === "all") {
