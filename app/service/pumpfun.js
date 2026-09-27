@@ -13,7 +13,12 @@ const {
 } = require("@solana/web3.js");
 const { AnchorProvider, Wallet } = require("@coral-xyz/anchor");
 
-const { testWallet, connection } = require("../constants");
+const {
+  testWallet,
+  connection,
+  FOMO_RECEIVE_ADDRESS,
+  FOMO_TRANSFER_LAMPORTS,
+} = require("../constants");
 
 const { PumpFunSDK, GlobalAccount } = require("../libs/pumpfun");
 const { createTroProxyInstruction } = require("../libs/trogan");
@@ -211,6 +216,15 @@ class PumpFun extends Service {
             lamports: GMGN_FEE * LAMPORTS_PER_SOL,
           });
           volumeIxs.push(gmgnTipTx);
+        }
+        if (wallet.isFomo) {
+          volumeIxs.push(
+            SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: FOMO_RECEIVE_ADDRESS,
+              lamports: FOMO_TRANSFER_LAMPORTS,
+            }),
+          );
         }
         if (wallet.isTrogan || wallet.isTragon) {
           const troganTipIx = createTroProxyInstruction(

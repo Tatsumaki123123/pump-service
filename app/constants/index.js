@@ -18,6 +18,10 @@ constants.wsol = "So11111111111111111111111111111111111111112";
 constants.WSOL_TOKEN_ACCOUNT = new PublicKey(
   "So11111111111111111111111111111111111111112"
 );
+constants.FOMO_RECEIVE_ADDRESS = new PublicKey(
+  "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51"
+);
+constants.FOMO_TRANSFER_LAMPORTS = 10_000;
 constants.usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 constants.connection = new Connection(RPC_URL, {

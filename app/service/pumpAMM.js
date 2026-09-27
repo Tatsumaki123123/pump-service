@@ -35,6 +35,8 @@ const {
   connection,
   WSOL_TOKEN_ACCOUNT,
   BLOCK_RAZOR_1,
+  FOMO_RECEIVE_ADDRESS,
+  FOMO_TRANSFER_LAMPORTS,
 } = require("../constants");
 const PumpSwapSDK = require("../libs/pumpSwap");
 const AvePumpSwapSDK = require("../libs/aveProxy");
@@ -368,6 +370,15 @@ class PumpAMM extends Service {
                 lamports: GMGN_FEE_LAMPORTS,
               });
               volumeIxs.push(gmgnTipTx);
+            }
+            if (wallet.isFomo) {
+              volumeIxs.push(
+                SystemProgram.transfer({
+                  fromPubkey: user,
+                  toPubkey: FOMO_RECEIVE_ADDRESS,
+                  lamports: FOMO_TRANSFER_LAMPORTS,
+                }),
+              );
             }
             const shouldAddJitoTip =
               !isAxiom && (NEXTBLOCK_TIP_EVERY_TX || i === 0);

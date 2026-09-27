@@ -15,7 +15,12 @@ const {
 const { AnchorProvider, Wallet } = require("@coral-xyz/anchor");
 const BN = require("bn.js");
 const chalk = require("chalk");
-const { connection, BLOCK_RAZOR_1 } = require("../constants");
+const {
+  connection,
+  BLOCK_RAZOR_1,
+  FOMO_RECEIVE_ADDRESS,
+  FOMO_TRANSFER_LAMPORTS,
+} = require("../constants");
 const { getRaydiumLaunchSwapInstructions } = require("../utils/raydium");
 const { getSPLBalanceAmount, sendV0Transaction } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
@@ -124,6 +129,15 @@ class RaydiumLaunch extends Service {
               lamports: GMGN_FEE * LAMPORTS_PER_SOL,
             });
             volumeIxs.push(gmgnTipTx);
+          }
+          if (wallet.isFomo) {
+            volumeIxs.push(
+              SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: FOMO_RECEIVE_ADDRESS,
+                lamports: FOMO_TRANSFER_LAMPORTS,
+              }),
+            );
           }
         }
         if (wallet.isTrogan || wallet.isTragon) {
