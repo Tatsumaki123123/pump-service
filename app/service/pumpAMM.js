@@ -243,8 +243,10 @@ class PumpAMM extends Service {
       const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
       const func = async (wallets) => {
         const buyTxns = [];
-        const jipAcc = ctx.service.jito.getTipAcc();
-        const tipAmount = ctx.service.jito.getTipAmount();
+        const isNozomi =
+          String(sendOptions.batchPlatform || "").toLowerCase() === "nozomi";
+        let jipAcc = ctx.service.jito.getTipAcc(sendOptions);
+        const tipAmount = ctx.service.jito.getTipAmount(sendOptions);
         let bundleHasTip = false;
         const dflowBuyData = await Promise.all(
           wallets.map((wallet, i) => {
@@ -264,6 +266,9 @@ class PumpAMM extends Service {
           }),
         );
         for (let i = 0; i < wallets.length; i++) {
+          if (isNozomi) {
+            jipAcc = ctx.service.jito.getTipAcc(sendOptions);
+          }
           const wallet = wallets[i];
           const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
           const keypair = wallet.keypair;
@@ -308,7 +313,11 @@ class PumpAMM extends Service {
               lookupTables,
               jupSwapData.lookupTableAccounts,
             );
-            if (!isAxiom && (NEXTBLOCK_TIP_EVERY_TX || i === 0)) {
+            if (
+              !isAxiom &&
+              !isNozomi &&
+              (NEXTBLOCK_TIP_EVERY_TX || i === 0)
+            ) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
                 toPubkey: jipAcc,
@@ -381,7 +390,9 @@ class PumpAMM extends Service {
               );
             }
             const shouldAddJitoTip =
-              !isAxiom && (NEXTBLOCK_TIP_EVERY_TX || i === 0);
+              !isAxiom &&
+              !isNozomi &&
+              (NEXTBLOCK_TIP_EVERY_TX || i === 0);
             if (shouldAddJitoTip) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -405,6 +416,7 @@ class PumpAMM extends Service {
               wallets.length > 1 &&
               !jitoTipIx &&
               !isAxiom &&
+              !isNozomi &&
               (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
             ) {
               jitoTipIx = SystemProgram.transfer({
@@ -414,6 +426,22 @@ class PumpAMM extends Service {
               });
               volumeIxs.push(jitoTipIx);
             }
+          }
+          if (isAxiom && !isNozomi) {
+            jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: tipAmount,
+            });
+            volumeIxs.push(jitoTipIx);
+          }
+          if (isNozomi) {
+            jitoTipIx = SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: tipAmount,
+            });
+            volumeIxs.push(jitoTipIx);
           }
           if (wallet.isTrogan || wallet.isTragon) {
             const troganTipIx = createTroProxyInstruction(
@@ -455,6 +483,11 @@ class PumpAMM extends Service {
                 /(encoding overruns Uint8Array|exceeds maximum allowed size)/.test(
                   error.message,
                 );
+              if (canSplitTip && (isNozomi || isAxiom)) {
+                throw new Error(
+                  `${isNozomi ? "Nozomi" : "Axiom"} transaction is too large after adding the required bundle tip; reduce the swap instruction size or use a more compact lookup table.`,
+                );
+              }
               if (!canSplitTip) {
                 if (
                   wallet.isAxiom &&
@@ -663,20 +696,29 @@ class PumpAMM extends Service {
         }
         // return;
         if (buyTxns.length > 0) {
+          const allTxns = buyTxns.map((item) => item.tx);
           const axiomTxns = buyTxns
             .filter((item) => item.isAxiom)
             .map((item) => item.tx);
           const bundleTxns = buyTxns
             .filter((item) => !item.isAxiom)
             .map((item) => item.tx);
+          if (isNozomi) {
+            const batchResult = await ctx.service.jito.sendBundle(
+              allTxns,
+              sendOptions,
+            );
+            console.log("Pump AMM Nozomi batch result", batchResult);
+            console.log(chalk.green("Buy transactions completed."));
+            return;
+          }
           if (axiomTxns.length > 0) {
-            const rpcResult =
-              await ctx.service.jito.sendTransactionsConcurrentlyByRpc(
-                axiomTxns,
-                undefined,
-                sendOptions,
-              );
-            console.log("Axiom RPC result", rpcResult);
+            const axiomBundleResults = await Promise.all(
+              axiomTxns.map((axiomTxn) =>
+                ctx.service.jito.sendBundle([axiomTxn], sendOptions),
+              ),
+            );
+            console.log("Axiom bundle results", axiomBundleResults);
           }
           if (bundleTxns.length > 0) {
             const bundleResult = await ctx.service.jito.sendBundle(

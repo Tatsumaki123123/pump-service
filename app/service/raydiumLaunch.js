@@ -44,17 +44,20 @@ const SLIPPAGE_BASIS_POINTS = Number(
   process.env.DFLOW_BATCH_SLIPPAGE || 0.05,
 );
 class RaydiumLaunch extends Service {
-  async batchBuyToken(token, wallets) {
+  async batchBuyToken(token, wallets, type = "", sendOptions = {}) {
     const { ctx } = this;
     console.log(
       chalk.green("\nRaydiumLaunch batchBuyToken----", wallets.length)
     );
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
+      const isNozomi =
+        String(sendOptions.batchPlatform || "").toLowerCase() === "nozomi";
       const { blockhash } = await connection.getLatestBlockhash();
       const buyTxns = [];
       let existJitoIx = false;
-      const jipAcc = ctx.service.jito.getTipAcc();
+      let jipAcc = ctx.service.jito.getTipAcc(sendOptions);
+      const tipAmount = ctx.service.jito.getTipAmount(sendOptions);
       const dflowBuyData = await Promise.all(
         wallets.map((wallet, i) => {
           if (!wallet.isDflow) {
@@ -73,6 +76,9 @@ class RaydiumLaunch extends Service {
         }),
       );
       for (let i = 0; i < wallets.length; i++) {
+        if (isNozomi) {
+          jipAcc = ctx.service.jito.getTipAcc(sendOptions);
+        }
         const wallet = wallets[i];
         const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
         const keypair = wallet.keypair;
@@ -151,16 +157,16 @@ class RaydiumLaunch extends Service {
             volumeIxs.push(troganTipIx);
           }
         }
-        if (wallets.length === 1) {
+        if (wallets.length === 1 && !isNozomi) {
           await sendV0Transaction(keypair, volumeIxs, lookupTableAccounts);
           // await sendAstralaneTransaction(keypair, volumeIxs, blockhash);
           return;
         } else {
-          if (existJitoIx === false && i === wallets.length - 1) {
+          if (isNozomi || (existJitoIx === false && i === wallets.length - 1)) {
             const jitoTipIx = SystemProgram.transfer({
               fromPubkey: user,
               toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
+              lamports: isNozomi ? tipAmount : fee * LAMPORTS_PER_SOL,
             });
             volumeIxs.push(jitoTipIx);
           }
@@ -196,7 +202,18 @@ class RaydiumLaunch extends Service {
       }
       console.log("buyTxns", buyTxns.length);
       if (buyTxns.length > 1) {
-        const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
+        const bundleResult = await ctx.service.jito.sendBundle(
+          buyTxns,
+          sendOptions,
+        );
+        console.log(bundleResult);
+        console.log(chalk.green("Buy transactions completed."));
+        return true;
+      } else if (buyTxns.length === 1 && isNozomi) {
+        const bundleResult = await ctx.service.jito.sendBundle(
+          buyTxns,
+          sendOptions,
+        );
         console.log(bundleResult);
         console.log(chalk.green("Buy transactions completed."));
         return true;

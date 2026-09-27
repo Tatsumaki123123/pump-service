@@ -19,6 +19,7 @@ module.exports = (app) => {
     minFollowStates: { type: Number, default: 0 },
     maxBuyTax: { type: Number },
     slippage: { type: Number },
+    batchPlatform: { type: String },
   });
 
   return mongoose.model("ExecuteLine", schema);

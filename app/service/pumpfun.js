@@ -179,11 +179,13 @@ class PumpFun extends Service {
     }
   }
 
-  async batchBuyToken(token, wallets) {
+  async batchBuyToken(token, wallets, type = "", sendOptions = {}) {
     const { ctx } = this;
     console.log(chalk.green("\nPump fun batchBuyToken----", wallets.length));
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
+      const isNozomi =
+        String(sendOptions.batchPlatform || "").toLowerCase() === "nozomi";
       const { blockhash } = await connection.getLatestBlockhash();
       const buyTxns = [];
       let existJitoIx = false;
@@ -208,7 +210,8 @@ class PumpFun extends Service {
         );
         volumeIxs = [...buyTx.instructions];
 
-        const jipAcc = ctx.service.jito.getTipAcc();
+        const jipAcc = ctx.service.jito.getTipAcc(sendOptions);
+        const tipAmount = ctx.service.jito.getTipAmount(sendOptions);
         if (wallet.isGmgn) {
           const gmgnTipTx = SystemProgram.transfer({
             fromPubkey: user,
@@ -240,19 +243,34 @@ class PumpFun extends Service {
           const jitoTipIx = SystemProgram.transfer({
             fromPubkey: user,
             toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
+            lamports: isNozomi ? tipAmount : fee * LAMPORTS_PER_SOL,
           });
           volumeIxs.push(jitoTipIx);
           existJitoIx = true;
         }
 
-        if (existJitoIx === false && i !== 0 && i === wallets.length - 1) {
+        if (
+          !isNozomi &&
+          existJitoIx === false &&
+          i !== 0 &&
+          i === wallets.length - 1
+        ) {
           const jitoTipIx = SystemProgram.transfer({
             fromPubkey: user,
             toPubkey: jipAcc,
             lamports: fee * LAMPORTS_PER_SOL,
           });
           volumeIxs.push(jitoTipIx);
+        }
+
+        if (isNozomi && (wallet.isTrogan || wallet.isTragon)) {
+          volumeIxs.push(
+            SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports: tipAmount,
+            }),
+          );
         }
 
         try {
@@ -294,7 +312,7 @@ class PumpFun extends Service {
         //   await connection.confirmTransaction(signature, "processed");
         // }
         // return;
-        if (buyTxns.length === 1) {
+        if (buyTxns.length === 1 && !isNozomi) {
           const transferTx = buyTxns[0];
           const signature = await connection.sendTransaction(transferTx, {
             skipPreflight: false,
@@ -302,7 +320,10 @@ class PumpFun extends Service {
           await connection.confirmTransaction(signature, "processed");
           return true;
         }
-        const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
+        const bundleResult = await ctx.service.jito.sendBundle(
+          buyTxns,
+          sendOptions,
+        );
         console.log(bundleResult);
         console.log(chalk.green("Buy transactions completed."));
         return true;

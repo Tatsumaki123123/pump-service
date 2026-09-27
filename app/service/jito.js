@@ -54,6 +54,33 @@ const QUICKNODE_PARAM_STYLE = (
   process.env.QUICKNODE_PARAM_STYLE || "both"
 ).toLowerCase();
 const QUICKNODE_WAIT_MS = Number(process.env.QUICKNODE_WAIT_MS || 30000);
+const NOZOMI_ENDPOINT = (
+  process.env.NOZOMI_ENDPOINT || "https://nozomi.temporal.xyz"
+).replace(/\/$/, "");
+const NOZOMI_API_KEY = process.env.NOZOMI_API_KEY || "";
+const NOZOMI_TIP_LAMPORTS = Number(
+  process.env.NOZOMI_TIP_LAMPORTS || 1_000_000,
+);
+const NOZOMI_WAIT_MS = Number(process.env.NOZOMI_WAIT_MS || 30000);
+const nozomiTipAccounts = [
+  "TEMPaMeCRFAS9EKF53Jd6KpHxgL47uWLcpFArU1Fanq",
+  "noz3jAjPiHuBPqiSPkkugaJDkJscPuRhYnSpbi8UvC4",
+  "noz3str9KXfpKknefHji8L1mPgimezaiUyCHYMDv1GE",
+  "noz6uoYCDijhu1V7cutCpwxNiSovEwLdRHPwmgCGDNo",
+  "noz9EPNcT7WH6Sou3sr3GGjHQYVkN3DNirpbvDkv9YJ",
+  "nozc5yT15LazbLTFVZzoNZCwjh3yUtW86LoUyqsBu4L",
+  "nozFrhfnNGoyqwVuwPAW4aaGqempx4PU6g6D9CJMv7Z",
+  "nozievPk7HyK1Rqy1MPJwVQ7qQg2QoJGyP71oeDwbsu",
+  "noznbgwYnBLDHu8wcQVCEw6kDrXkPdKkydGJGNXGvL7",
+  "nozNVWs5N8mgzuD3qigrCG2UoKxZttxzZ85pvAQVrbP",
+  "nozpEGbwx4BcGp6pvEdAh1JoC2CQGZdU6HbNP1v2p6P",
+  "nozrhjhkCr3zXT3BiT4WCodYCUFeQvcdUkM7MqhKqge",
+  "nozrwQtWhEdrA6W8dkbt9gnUaMs52PdAv5byipnadq3",
+  "nozUacTVWub3cL4mJmGCYjKZTnE9RbdY5AP46iQgbPJ",
+  "nozWCyTPppJjRuw2fpzDhhWbW355fzosWSzrrMYB1Qk",
+  "nozWNju6dY353eMkMqURqwQEoM3SFgEKC6psLCSfUne",
+  "nozxNBgWohjR75vdspfxR5H9ceC7XXH99xpxhVGt3Bb",
+];
 const BUNDLE_STATUS_POLL_MS = Number(process.env.BUNDLE_STATUS_POLL_MS || 50);
 const quickNodeConnection = QUICKNODE_RPC_URL
   ? new Connection(QUICKNODE_RPC_URL, "confirmed")
@@ -447,10 +474,9 @@ class Jito extends Service {
     return sentSignatures;
   }
 
-  // Fire every transaction at the RPC concurrently (not sequentially) so they hit
-  // the same leader in the same slot; this is how independent Axiom txns co-land
-  // in one block without a bundle. skipPreflight avoids the extra roundtrip; the
-  // caller has already simulated each tx before this point.
+  // Fire every transaction at the RPC concurrently as an explicit fallback.
+  // skipPreflight avoids the extra roundtrip; the caller has already simulated
+  // each tx before this point.
   async sendTransactionsConcurrentlyByRpc(bundledTxns, signatures, options = {}) {
     signatures =
       signatures || bundledTxns.map((tx) => getTransactionSignature(tx));
@@ -513,6 +539,10 @@ class Jito extends Service {
       throw new Error("sendBundle requires at least one signed transaction");
     }
 
+    if (String(options.batchPlatform || "").toLowerCase() === "nozomi") {
+      return await this.sendBundleNozomi(bundledTxns, options);
+    }
+
     if (bundleTouchesJitoNoBundleAccount(bundledTxns)) {
       if (rpcFallbackAllowed(options)) {
         console.log(
@@ -542,9 +572,112 @@ class Jito extends Service {
       return await this.sendBundleJito(bundledTxns, options);
     }
     if (BUNDLE_PROVIDER === "quicknode") {
-      return await this.setQuickNodeBundle(bundledTxns, options);
+      if (bundledTxns.length <= 5) {
+        return await this.setQuickNodeBundle(bundledTxns, options);
+      }
+
+      const quickNodeBundles = [];
+      for (let i = 0; i < bundledTxns.length; i += 5) {
+        quickNodeBundles.push(bundledTxns.slice(i, i + 5));
+      }
+      console.log(
+        chalk.yellow(
+          `QuickNode bundle exceeds 5 transactions; sending ${quickNodeBundles.length} bundles concurrently.`,
+        ),
+      );
+      const bundleOptions =
+        options.waitForLanding === false
+          ? options
+          : { ...options, waitForLanding: false };
+      const bundleIds = await Promise.all(
+        quickNodeBundles.map((transactions) =>
+          this.setQuickNodeBundle(transactions, bundleOptions),
+        ),
+      );
+      if (options.waitForLanding !== false) {
+        await this.waitForBundleTransactions(
+          bundledTxns.map((tx) => getTransactionSignature(tx)),
+          QUICKNODE_WAIT_MS,
+          { any: options.waitForAnyLanding === true },
+        );
+      }
+      return bundleIds;
     }
     return await this.sendBundleNextBlock(bundledTxns, options);
+  }
+
+  async sendBundleNozomi(bundledTxns, options = {}) {
+    if (bundledTxns.length > 16) {
+      throw new Error(
+        `Nozomi batch supports up to 16 transactions, got ${bundledTxns.length}`,
+      );
+    }
+
+    const serializedTransactions = bundledTxns.map((tx, index) => {
+      const serialized = tx.serialize();
+      if (serialized.length < 66 || serialized.length > 1232) {
+        throw new Error(
+          `Nozomi transaction ${index} size ${serialized.length} is outside the allowed 66-1232 byte range`,
+        );
+      }
+      return Buffer.from(serialized);
+    });
+    const bodyLength = serializedTransactions.reduce(
+      (total, serialized) => total + 2 + serialized.length,
+      0,
+    );
+    if (bodyLength > 19_744) {
+      throw new Error(
+        `Nozomi batch body is ${bodyLength} bytes; the maximum is 19744 bytes`,
+      );
+    }
+
+    const body = Buffer.allocUnsafe(bodyLength);
+    let offset = 0;
+    for (const serialized of serializedTransactions) {
+      body.writeUInt16BE(serialized.length, offset);
+      offset += 2;
+      serialized.copy(body, offset);
+      offset += serialized.length;
+    }
+
+    const endpoint = (options.nozomiEndpoint || NOZOMI_ENDPOINT).replace(
+      /\/$/,
+      "",
+    );
+    const apiKey = options.nozomiApiKey || NOZOMI_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        "Nozomi batch requires NOZOMI_API_KEY (or sendOptions.nozomiApiKey)",
+      );
+    }
+    const response = await fetch(
+      `${endpoint}/api/sendBatch?c=${encodeURIComponent(apiKey)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body,
+      },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Nozomi sendBatch failed (${response.status}): ${errorText}`,
+      );
+    }
+
+    const signatures = bundledTxns.map((tx) => getTransactionSignature(tx));
+    console.log(
+      chalk.green(
+        `Nozomi batch accepted (${bundledTxns.length} txns): ${signatures.join(", ")}`,
+      ),
+    );
+    if (options.waitForLanding !== false) {
+      await this.waitForBundleTransactions(signatures, NOZOMI_WAIT_MS, {
+        any: options.waitForAnyLanding === true,
+      });
+    }
+    return signatures;
   }
   async waitForHeliusBundle(bundleId, signatures, timeoutMs = 30000, options = {}) {
     const deadline = Date.now() + timeoutMs;
@@ -1076,7 +1209,15 @@ class Jito extends Service {
     }
   }
 
-  getTipAmount() {
+  getTipAmount(options = {}) {
+    if (String(options.batchPlatform || "").toLowerCase() === "nozomi") {
+      return Math.max(
+        Math.floor(
+          Number(process.env.NOZOMI_TIP_LAMPORTS || NOZOMI_TIP_LAMPORTS),
+        ),
+        1_000_000,
+      );
+    }
     const lamports = Math.floor(
       Number(
         process.env.BUNDLE_TIP_SOL ||
@@ -1090,7 +1231,10 @@ class Jito extends Service {
     return lamports;
   }
 
-  getTipAcc() {
+  getTipAcc(options = {}) {
+    if (String(options.batchPlatform || "").toLowerCase() === "nozomi") {
+      return this.getNozomiTipAcc();
+    }
     if (BUNDLE_PROVIDER === "helius_jito" || BUNDLE_PROVIDER === "helius") {
       return this.getHeliusTipAcc();
     }
@@ -1111,6 +1255,11 @@ class Jito extends Service {
   getHeliusTipAcc() {
     const index = Math.floor(Math.random() * heliusTipAccounts.length);
     return new PublicKey(heliusTipAccounts[index]);
+  }
+
+  getNozomiTipAcc() {
+    const index = Math.floor(Math.random() * nozomiTipAccounts.length);
+    return new PublicKey(nozomiTipAccounts[index]);
   }
 
   getNextBlockTipAcc() {

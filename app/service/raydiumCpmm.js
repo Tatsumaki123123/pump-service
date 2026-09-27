@@ -45,16 +45,19 @@ const SLIPPAGE_BASIS_POINTS = Number(
   process.env.DFLOW_BATCH_SLIPPAGE || 0.05,
 );
 class RaydiumCpmm extends Service {
-  async batchBuyToken(token, wallets, type = "") {
+  async batchBuyToken(token, wallets, type = "", sendOptions = {}) {
     const { ctx } = this;
     console.log(chalk.green("\nRaydiumCpmm batchBuyToken----", wallets.length));
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
+      const isNozomi =
+        String(sendOptions.batchPlatform || "").toLowerCase() === "nozomi";
 
       const func = async (wallets) => {
         const { blockhash } = await connection.getLatestBlockhash();
         const buyTxns = [];
-        const jipAcc = ctx.service.jito.getTipAcc();
+        let jipAcc = ctx.service.jito.getTipAcc(sendOptions);
+        const tipAmount = ctx.service.jito.getTipAmount(sendOptions);
 
         const needsPoolDetail = wallets.some(
           (wallet) =>
@@ -85,6 +88,9 @@ class RaydiumCpmm extends Service {
         );
 
         for (let i = 0; i < wallets.length; i++) {
+          if (isNozomi) {
+            jipAcc = ctx.service.jito.getTipAcc(sendOptions);
+          }
           const wallet = wallets[i];
           const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
           const keypair = wallet.keypair;
@@ -172,14 +178,14 @@ class RaydiumCpmm extends Service {
               volumeIxs.push(troganTipIx);
             }
           }
-          if (wallets.length > 1) {
+          if (wallets.length > 1 || isNozomi) {
             const jitoTipIx = SystemProgram.transfer({
               fromPubkey: user,
               toPubkey: jipAcc,
-              lamports: fee * LAMPORTS_PER_SOL,
+              lamports: isNozomi ? tipAmount : fee * LAMPORTS_PER_SOL,
             });
             volumeIxs.push(jitoTipIx);
-          } else {
+          } else if (!isNozomi) {
             await sendV0Transaction(keypair, volumeIxs, lookupTableAccounts);
             return true;
           }
@@ -213,7 +219,17 @@ class RaydiumCpmm extends Service {
           }
         }
         if (buyTxns.length > 1) {
-          const bundleResult = await ctx.service.jito.sendBundle(buyTxns);
+          const bundleResult = await ctx.service.jito.sendBundle(
+            buyTxns,
+            sendOptions,
+          );
+          console.log(bundleResult);
+          console.log(chalk.green("Buy transactions completed."));
+        } else if (buyTxns.length === 1 && isNozomi) {
+          const bundleResult = await ctx.service.jito.sendBundle(
+            buyTxns,
+            sendOptions,
+          );
           console.log(bundleResult);
           console.log(chalk.green("Buy transactions completed."));
         } else if (buyTxns.length === 1) {

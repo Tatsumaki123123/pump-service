@@ -351,6 +351,12 @@ class ExecuteSwap extends Service {
     const token = tokenInfo.token;
     const line = tokenInfo.line;
     console.log(chalk.green(`\nStep 3: Buying ${token}`));
+    const lineData = await ctx.model.ExecuteLine.findOne({ lineId: line })
+      .select("batchPlatform")
+      .lean();
+    const sendOptions = {
+      batchPlatform: lineData?.batchPlatform,
+    };
 
     const configWallets = await this.getWalletsWithLineFirstWallet(line, type);
     const wallets = [];
@@ -361,7 +367,13 @@ class ExecuteSwap extends Service {
       }
     });
     if (wallets && wallets.length > 0 && token) {
-      await this.batchBuyTokenByAmm(tokenInfo.amm, token, wallets, type);
+      await this.batchBuyTokenByAmm(
+        tokenInfo.amm,
+        token,
+        wallets,
+        type,
+        sendOptions,
+      );
 
       await ctx.model.ExecuteToken.updateOne(
         { tid: tokenInfo.tid },
@@ -380,9 +392,19 @@ class ExecuteSwap extends Service {
     }
 
     if (amm === RAYDIUM_CPMM_NAME) {
-      await ctx.service.raydiumCpmm.batchBuyToken(token, wallets, type);
+      await ctx.service.raydiumCpmm.batchBuyToken(
+        token,
+        wallets,
+        type,
+        sendOptions,
+      );
     } else if (amm === RAYDIUM_LANUCH_NAME) {
-      await ctx.service.raydiumLaunch.batchBuyToken(token, wallets, type);
+      await ctx.service.raydiumLaunch.batchBuyToken(
+        token,
+        wallets,
+        type,
+        sendOptions,
+      );
     } else if (amm === PUMP_AMM_NAME) {
       await ctx.service.pumpAMM.batchBuyToken(
         token,
@@ -391,7 +413,12 @@ class ExecuteSwap extends Service {
         sendOptions,
       );
     } else if (amm === PUMP_FUN_NAME) {
-      await ctx.service.pumpfun.batchBuyToken(token, wallets, type);
+      await ctx.service.pumpfun.batchBuyToken(
+        token,
+        wallets,
+        type,
+        sendOptions,
+      );
     } else {
       throw new Error("Not pump token");
     }
@@ -436,9 +463,11 @@ class ExecuteSwap extends Service {
     bundledWallets,
     afterWallets,
     type,
+    sendOptions = {},
   ) {
     const hasAfterWallets = afterWallets.length > 0;
     await this.dispatchBatchBuyToken(amm, token, bundledWallets, type, {
+      ...sendOptions,
       waitForAnyLanding: hasAfterWallets,
       waitForLanding: true,
     });
@@ -455,18 +484,25 @@ class ExecuteSwap extends Service {
       await sleep(AFTER_WALLET_DELAY_MS / 1000);
     }
     await this.dispatchStandaloneWallets(amm, token, afterWallets, type, {
+      ...sendOptions,
       skipPreflight: true,
       sleepAfter: false,
       waitForLanding: false,
     });
   }
 
-  async batchBuyTokenByAmm(amm, token, wallets, type) {
+  async batchBuyTokenByAmm(amm, token, wallets, type, sendOptions = {}) {
     const standaloneWallets = wallets.filter((wallet) =>
       this.isStandaloneFirstWalletBuy(wallet),
     );
     if (standaloneWallets.length === 0) {
-      return this.dispatchBatchBuyToken(amm, token, wallets, type);
+      return this.dispatchBatchBuyToken(
+        amm,
+        token,
+        wallets,
+        type,
+        sendOptions,
+      );
     }
 
     if (type !== "all") {
@@ -480,13 +516,20 @@ class ExecuteSwap extends Service {
         (wallet) => wallet.position === "after",
       );
 
-      await this.dispatchStandaloneWallets(amm, token, beforeWallets, type);
+      await this.dispatchStandaloneWallets(
+        amm,
+        token,
+        beforeWallets,
+        type,
+        sendOptions,
+      );
       await this.dispatchAfterWalletsNextSlot(
         amm,
         token,
         bundledWallets,
         afterWallets,
         type,
+        sendOptions,
       );
       return true;
     }
@@ -519,6 +562,7 @@ class ExecuteSwap extends Service {
         token,
         beforeWallets,
         stageType,
+        sendOptions,
       );
       await this.dispatchAfterWalletsNextSlot(
         amm,
@@ -526,6 +570,7 @@ class ExecuteSwap extends Service {
         bundledWallets,
         afterWallets,
         stageType,
+        sendOptions,
       );
       await sleep(0.5);
     }
@@ -608,6 +653,10 @@ class ExecuteSwap extends Service {
     }
     const token = tokenInfo.token;
     console.log(chalk.green(`Step 3: Buy ${token}, ${walletAddress} `));
+    const lineData = await ctx.model.ExecuteLine.findOne({ lineId: tokenInfo.line })
+      .select("batchPlatform")
+      .lean();
+    const sendOptions = { batchPlatform: lineData?.batchPlatform };
     const wallets = await this.getWalletsWithConfig(tokenInfo.line);
     const wallet = wallets.find(
       (item) => item.publicKey.toBase58() === walletAddress,
@@ -615,11 +664,26 @@ class ExecuteSwap extends Service {
     if (wallet) {
       const wallets = [wallet];
       if (tokenInfo.amm === RAYDIUM_CPMM_NAME) {
-        const res = await ctx.service.raydiumCpmm.batchBuyToken(token, wallets);
+        const res = await ctx.service.raydiumCpmm.batchBuyToken(
+          token,
+          wallets,
+          "",
+          sendOptions,
+        );
       } else if (tokenInfo.amm === PUMP_AMM_NAME) {
-        const res = await ctx.service.pumpAMM.batchBuyToken(token, wallets);
+        const res = await ctx.service.pumpAMM.batchBuyToken(
+          token,
+          wallets,
+          "",
+          sendOptions,
+        );
       } else if (tokenInfo.amm === PUMP_FUN_NAME) {
-        const res = await ctx.service.pumpfun.batchBuyToken(token, wallets);
+        const res = await ctx.service.pumpfun.batchBuyToken(
+          token,
+          wallets,
+          "",
+          sendOptions,
+        );
       } else {
         throw new Error("Not amm");
       }

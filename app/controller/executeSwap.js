@@ -390,6 +390,7 @@ class ExecuteSwap extends BaseController {
         minFollowStates: Number(res.minFollowStates || 0),
         maxBuyTax: res.maxBuyTax,
         slippage: res.slippage,
+        batchPlatform: res.batchPlatform,
         sourceWeb: res.sourceWeb,
         groupSort: res.groupSort,
         autoStep: res.autoStep,
