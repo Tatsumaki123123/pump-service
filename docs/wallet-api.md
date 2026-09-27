@@ -259,18 +259,18 @@ curl -X POST http://localhost:8899/v1/execute/getWalletPrivateKey \
 
 私钥接口属于高敏感接口。不要把响应写入日志、前端页面、聊天记录或公开监控系统；生产环境应立即将默认密钥修改为随机高强度密钥，并限制接口访问来源。
 
-## 4. 导出全部钱包私钥
+## 4. 导出当前线路激活钱包私钥
 
 ```http
 POST /v1/execute/getWalletPrivateKeys
 ```
 
-输入访问密钥后，返回 `ExecuteWallet` 中全部钱包的 Base58 私钥，每行一个私钥。请求支持 `key` 或 `password` 字段。
+输入线路和访问密钥后，返回当前线路活动批次中 `isActive=true` 钱包的 Base58 私钥，每行一个私钥。请求支持 `key` 或 `password` 字段。
 
 ```bash
 curl -X POST http://localhost:8899/v1/execute/getWalletPrivateKeys \
   -H "Content-Type: application/json" \
-  -d '{"password":"basketball"}'
+  -d '{"line":1,"password":"basketball"}'
 ```
 
 返回示例：

@@ -184,14 +184,26 @@ class WalletAdmin extends Service {
     };
   }
 
-  async getWalletPrivateKeys(key) {
+  async getWalletPrivateKeys(line, key) {
     const accessKey = await this.ctx.service.appData.getWalletKey();
     if (typeof key !== "string" || key !== accessKey) {
       throw new Error("Invalid key");
     }
 
+    if (line === undefined || line === null || line === "") {
+      throw new Error("line is required");
+    }
+
+    const executeData = await this.ctx.model.ExecuteData.findOne(
+      { line, active: true },
+      { eid: 1 },
+    ).lean();
+    if (!executeData) {
+      throw new Error("Active execute data not found");
+    }
+
     const wallets = await this.ctx.model.ExecuteWallet.find(
-      {},
+      { eid: executeData.eid, isActive: true },
       { address: 1, privateKey: 1 },
     )
       .sort({ _id: 1 })

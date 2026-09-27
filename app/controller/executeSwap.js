@@ -136,8 +136,9 @@ class ExecuteSwap extends BaseController {
 
   async getWalletPrivateKeys() {
     const { ctx } = this;
-    const { key, password } = ctx.request.body;
+    const { line, key, password } = ctx.request.body;
     const res = await ctx.service.walletAdmin.getWalletPrivateKeys(
+      line,
       key ?? password,
     );
     this.success(res);
