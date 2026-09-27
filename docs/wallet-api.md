@@ -259,7 +259,30 @@ curl -X POST http://localhost:8899/v1/execute/getWalletPrivateKey \
 
 私钥接口属于高敏感接口。不要把响应写入日志、前端页面、聊天记录或公开监控系统；生产环境应立即将默认密钥修改为随机高强度密钥，并限制接口访问来源。
 
-## 4. 归集钱包 SOL 余额
+## 4. 导出全部钱包私钥
+
+```http
+POST /v1/execute/getWalletPrivateKeys
+```
+
+输入访问密钥后，返回 `ExecuteWallet` 中全部钱包的 Base58 私钥，每行一个私钥。请求支持 `key` 或 `password` 字段。
+
+```bash
+curl -X POST http://localhost:8899/v1/execute/getWalletPrivateKeys \
+  -H "Content-Type: application/json" \
+  -d '{"password":"basketball"}'
+```
+
+返回示例：
+
+```json
+{
+  "code": 0,
+  "data": "私钥1\n私钥2\n私钥3"
+}
+```
+
+## 5. 归集钱包 SOL 余额
 
 ```http
 POST /v1/execute/transferWalletBalance
@@ -364,7 +387,7 @@ curl -X POST http://localhost:8899/v1/execute/transferWalletBalance \
 
 该接口会实际转移链上资产，调用前请确认 `AppData.receiveAddress` 和钱包数组无误。按当前接口设计，余额归集接口不额外校验 `key`。
 
-## 5. 从提取地址转入 SOL
+## 6. 从提取地址转入 SOL
 
 ```http
 POST /v1/execute/transferFromReceiveAddress
@@ -445,7 +468,7 @@ curl -X POST http://localhost:8899/v1/execute/transferFromReceiveAddress \
 
 调用前请确认源钱包余额至少包含转账金额和交易手续费，并确认 `AppData.receiveAddress` 与 `AppData.receivePrivateKey` 属于同一个钱包。该接口会实际转移链上资产。
 
-## 6. 领取 Pump AMM Cashback
+## 7. 领取 Pump AMM Cashback
 
 ```http
 POST /v1/execute/claimCashback

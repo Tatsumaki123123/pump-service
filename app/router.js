@@ -33,6 +33,10 @@ module.exports = (app) => {
     controller.executeSwap.getWalletPrivateKey,
   );
   router.post(
+    "/v1/execute/getWalletPrivateKeys",
+    controller.executeSwap.getWalletPrivateKeys,
+  );
+  router.post(
     "/v1/execute/transferWalletBalance",
     controller.executeSwap.transferWalletBalance,
   );

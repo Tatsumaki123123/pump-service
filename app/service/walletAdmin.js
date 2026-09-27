@@ -184,6 +184,27 @@ class WalletAdmin extends Service {
     };
   }
 
+  async getWalletPrivateKeys(key) {
+    const accessKey = await this.ctx.service.appData.getWalletKey();
+    if (typeof key !== "string" || key !== accessKey) {
+      throw new Error("Invalid key");
+    }
+
+    const wallets = await this.ctx.model.ExecuteWallet.find(
+      {},
+      { address: 1, privateKey: 1 },
+    )
+      .sort({ _id: 1 })
+      .lean();
+
+    return wallets
+      .map((wallet) => {
+        keypairFromWallet(wallet);
+        return wallet.privateKey;
+      })
+      .join("\n");
+  }
+
   async transferWalletBalance(wallets) {
     const receiveAddress = await this.ctx.service.appData.getReceiveAddress();
     const recipient = new PublicKey(

@@ -134,6 +134,15 @@ class ExecuteSwap extends BaseController {
     this.success(res);
   }
 
+  async getWalletPrivateKeys() {
+    const { ctx } = this;
+    const { key, password } = ctx.request.body;
+    const res = await ctx.service.walletAdmin.getWalletPrivateKeys(
+      key ?? password,
+    );
+    this.success(res);
+  }
+
   async transferWalletBalance() {
     const { ctx } = this;
     const { wallets } = ctx.request.body;
