@@ -422,23 +422,6 @@ class AvePumpSwapSDK {
       encodeAveExtraField(aveFeeBps),
     ]);
 
-    console.log("AVE instruction", {
-      programId: AVE_PROGRAM_ID.toBase58(),
-      buyAmount,
-      maxQuoteAmountIn: maxQuoteAmountIn.toString(),
-      aveFeeLamports: aveFeeLamports.toString(),
-      pumpQuoteAmountIn: pumpQuoteAmountIn.toString(),
-      expectedBaseAmountOut: quote.expectedBaseAmountOut.toString(),
-      baseAmountOut: baseAmountOut.toString(),
-      baseReserve: quote.poolBaseAmount,
-      quoteReserve: quote.poolQuoteAmount,
-      lpFeeBasisPoints: quote.lpFeeBasisPoints.toString(),
-      protocolFeeBasisPoints: quote.protocolFeeBasisPoints.toString(),
-      aveFeeBps,
-      data: instructionData.toString("hex"),
-      accounts: accounts.map((item) => item.pubkey.toBase58()),
-    });
-
     return new TransactionInstruction({
       keys: accounts,
       programId: AVE_PROGRAM_ID,

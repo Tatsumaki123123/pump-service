@@ -1,0 +1,119 @@
+{
+  "lineName": "1-2 MING",
+  "walletConfig": [
+    {
+      "transferAmount": 4,
+      "limit": 200000,
+      "price": 0,
+      "fee": 0.00001,
+      "firstBuy": {
+        "enable": true,
+        "isAxiom": true,
+        "buyAmount": 2.95
+      }
+    },
+    {
+      "transferAmount": 3,
+      "limit": 200000,
+      "price": 0,
+      "fee": 0.00001,
+      "firstBuy": {
+        "enable": true,
+        "isAxiom": true,
+        "buyAmount": 1.65
+      },
+      "firstSell": {
+        "enable": true,
+        "setRatio": 1
+      }
+    }
+  ],
+  "firstWallet": {
+    "address": "Hx26qyRVpsUig1uDju54g93HoXhY3j1k6AxX6VJXbNWY",
+    "buyAmount": 0.12,
+    "position": "before",
+    "type": "firstBuy",
+    "isAve": false,
+    "isBundle": true
+  },
+  "needFirstWallet": false,
+  "minFollowStates": 2,
+  "maxBuyTax": 1.5,
+  "slippage": 0.15,
+  "sourceWeb": "ave",
+  "groupSort": {
+    "sort_field": "created_at",
+    "sort_order": "desc",
+    "wallet_count": 1,
+    "mcp_min": 9000,
+    "mcp_max": 50000,
+    "create_day": 1,
+    "create_day_end": 0,
+    "category": "pump_out_new",
+    "address": ["AdVXffXLe1RRTRjL1A2Nuz7PUdDUHcGdQovW2zjwmzur"],
+    "favId": 87660,
+    "groupId": 117024,
+    "duration": 6
+  },
+  "autoStep": [
+    {
+      "method": "buy",
+      "type": "first",
+      "sleep": 1
+    }
+  ],
+  "lineBots": [
+    {
+      "address": "5aLY85pyxiuX3fd4RgM3Yc1e3MAL6b7UgaZz6MS3JUfG",
+      "name": "套利--5aLY"
+    },
+    {
+      "address": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+      "name": "套利--kEFi"
+    },
+    {
+      "address": "8avtb3GZapmpYWUjXoJYCXfATRBhH8SGQkyDSoqF6CPC",
+      "name": "套利--8avt"
+    },
+    {
+      "address": "Ar2Y6o1QmrRAskjii1cRfijeKugHH13ycxW5cd7rro1x",
+      "name": "套利--Ar2Y"
+    },
+    {
+      "address": "7BNaxx6KdUYrjACNQZ9He26NBFoFxujQMAfNLnArLGH5",
+      "name": "套利--7BNa"
+    },
+    {
+      "address": "56S29mZ3wqvw8hATuUUFqKhGcSGYFASRRFNT38W8q7G3",
+      "name": "套利--56S2"
+    },
+    {
+      "address": "FSz6mptAxKrjDjaJYQiGiCGGwsxL4WgWjsh9sGhw4BZX",
+      "name": "套利--FSz6"
+    },
+    {
+      "address": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+      "name": "套利--SQHK"
+    },
+    {
+      "address": "BxMo47JcFjZFM9bpNCibdapL67PVBgTk6JJa6WVU7qwk",
+      "name": "套利--BxMo"
+    },
+    {
+      "address": "sssssDdMNAWKingjpEojkTNdVuZrBe7FsJLaGtexe7d",
+      "name": "套利--ssss"
+    },
+    {
+      "address": "GVVP8N7jnxgr3QdtR461bsuCNNQmuNu4DBW2Ab4tzKVp",
+      "name": "套利--GVVP"
+    },
+    {
+      "address": "omegoMAe1AMY5MFKQQr3JwXVy8F4eCvmBAfcpo8XAfq",
+      "name": "套利--omeg"
+    },
+    {
+      "address": "8zkgFGVZrDLieViwqiXFCydSX6WL5hsxmUu55yBdsNsZ",
+      "name": "套利--8zkg"
+    }
+  ]
+}

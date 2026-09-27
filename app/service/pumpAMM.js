@@ -282,7 +282,6 @@ class PumpAMM extends Service {
           let volumeIxs = [];
           let jitoTipIx = null;
           let walletLookupTables = lookupTables;
-          console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
           if (wallet.isOkx) {
             const okxIxs = await okxSwap.getBuyInstructions(ctx, {
               user,
@@ -402,7 +401,7 @@ class PumpAMM extends Service {
               volumeIxs.push(jitoTipIx);
             }
 
-            if (isAxiom && AXIOM_TIP_LAMPORTS > 0) {
+            if (isAxiom && !isNozomi && AXIOM_TIP_LAMPORTS > 0) {
               volumeIxs.push(
                 SystemProgram.transfer({
                   fromPubkey: user,
@@ -576,23 +575,6 @@ class PumpAMM extends Service {
               );
             }
 
-            // 模拟交易
-            if (wallet.isAxiom) {
-              console.log(
-                "Axiom tx instructions",
-                volumeIxs.map((ix, index) => ({
-                  index,
-                  programId: ix.programId.toBase58(),
-                  data: Buffer.from(ix.data || []).toString("hex"),
-                  accounts: ix.keys.map((key) => ({
-                    pubkey: key.pubkey.toBase58(),
-                    signer: key.isSigner,
-                    writable: key.isWritable,
-                  })),
-                })),
-              );
-            }
-
             let simulationResult = await connection.simulateTransaction(tx, {
               commitment: "confirmed",
             });
@@ -660,9 +642,6 @@ class PumpAMM extends Service {
                   JSON.stringify(simulationResult.value.logs || []),
               );
             }
-            console.log(
-              chalk.green("simulation success", keypair.publicKey.toString()),
-            );
             buyTxns.push({ tx, isAxiom });
             if (jitoTipIx) {
               bundleHasTip = true;
@@ -691,7 +670,6 @@ class PumpAMM extends Service {
                 `Simulation failed for tx ${i}: ${JSON.stringify(simulationResult.value.err)}`,
               );
             }
-            console.log(chalk.green("simulation success", i));
           }
         }
         // return;
@@ -1153,7 +1131,6 @@ class PumpAMM extends Service {
 
     const keypair = wallet.keypair;
     const user = keypair.publicKey;
-    console.log(chalk.green("Build buy:", user.toBase58()));
     const { buyAmount } = wallet;
     if (isAxiom) {
       const axiomBuy = await createAxiomBuyInstructions({
@@ -1168,7 +1145,6 @@ class PumpAMM extends Service {
       wallet.extraSigners = axiomBuy.signers;
       proxyBuyIxs = axiomBuy.instructions;
     } else if (wallet.isAve) {
-      console.log(chalk.green("AVE buy:", user.toBase58()));
       const proxyBuyIx = await avePumpSwap.createBuyInstruction({
         tokenMint: tokenMint,
         user: user,

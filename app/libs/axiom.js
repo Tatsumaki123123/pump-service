@@ -220,19 +220,6 @@ async function createAxiomBuyInstructions({
     ? quote.baseAmountOut
     : AXIOM_MIN_BASE_AMOUNT_OUT;
   const baseAmountOut = minBaseAmountOut.toString();
-  console.log("Axiom quote calc", {
-    quoteAmount: quoteAmount.toString(),
-    platformFeeLamports: platformFeeLamports.toString(),
-    quoteAmountIn: quoteAmountIn.toString(),
-    baseReserve: quote.poolBaseAmount.toString(),
-    quoteReserve: quote.poolQuoteAmount.toString(),
-    lpFeeBasisPoints: quote.lpFeeBasisPoints.toString(),
-    protocolFeeBasisPoints: quote.protocolFeeBasisPoints.toString(),
-    isCashback: quote.isCashback,
-    expectedBaseAmountOut: quote.baseAmountOut.toString(),
-    baseAmountOut,
-  });
-
   const createTokenAtaIx = createAssociatedTokenAccountIdempotentInstruction(
     user,
     userBaseTokenAccount,
@@ -344,17 +331,6 @@ async function createAxiomBuyInstructions({
       { pubkey: AXIOM_PROGRAM_ID, isSigner: false, isWritable: false },
     ],
     data: encodeAxiomBuyData(maxQuoteAmountIn, baseAmountOut),
-  });
-
-  console.log("Axiom instruction", {
-    programId: AXIOM_PROGRAM_ID.toBase58(),
-    tempWsol: tempWsol.toBase58(),
-    tempWsolBump,
-    createData: createWsolIx.data.toString("hex"),
-    buyData: buyIx.data.toString("hex"),
-    feeLamports: platformFeeLamports.toString(),
-    feeDestination: AXIOM_FEE_DESTINATION.toBase58(),
-    buyAccounts: buyIx.keys.map((item) => item.pubkey.toBase58()),
   });
 
   const tokenAtaExists = await connection.getAccountInfo(userBaseTokenAccount);
