@@ -299,6 +299,18 @@ class PumpAMM extends Service {
               lookupTables,
               dflowSwapData.lookupTableAccounts,
             );
+            if (
+              !isAxiom &&
+              !isNozomi &&
+              (NEXTBLOCK_TIP_EVERY_TX || i === 0)
+            ) {
+              jitoTipIx = SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: jipAcc,
+                lamports: tipAmount,
+              });
+              volumeIxs.push(jitoTipIx);
+            }
           } else if (wallet.isJup) {
             const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
               user,
