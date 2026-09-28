@@ -19,7 +19,7 @@ constants.WSOL_TOKEN_ACCOUNT = new PublicKey(
   "So11111111111111111111111111111111111111112"
 );
 constants.FOMO_RECEIVE_ADDRESS = new PublicKey(
-  "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51"
+  "R4rNJHaffSUotNmqSKNEfDcJE8A7zJUkaoM5Jkd7cYX"
 );
 constants.FOMO_TRANSFER_LAMPORTS = 10_000;
 constants.usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";

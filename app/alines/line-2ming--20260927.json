@@ -2,25 +2,83 @@
   "lineName": "1-2 MING",
   "walletConfig": [
     {
-      "transferAmount": 4,
+      "transferAmount": 1,
       "limit": 200000,
       "price": 0,
       "fee": 0.00001,
       "firstBuy": {
         "enable": true,
-        "isAxiom": true,
-        "buyAmount": 2.95
+        "isDflow": true,
+        "isTragon": true,
+        "buyAmount": 0.8
       }
     },
     {
-      "transferAmount": 3,
+      "transferAmount": 1,
       "limit": 200000,
       "price": 0,
       "fee": 0.00001,
       "firstBuy": {
         "enable": true,
-        "isAxiom": true,
-        "buyAmount": 1.65
+        "isDflow": true,
+        "isGmgn": true,
+        "buyAmount": 0.7
+      }
+    },
+    {
+      "transferAmount": 1,
+      "limit": 200000,
+      "price": 0,
+      "fee": 0.00001,
+      "firstBuy": {
+        "enable": true,
+        "isDflow": true,
+        "isTragon": true,
+        "buyAmount": 0.8
+      }
+    },
+    {
+      "transferAmount": 0.5,
+      "limit": 200000,
+      "price": 0,
+      "fee": 0.00001,
+      "firstBuy": {
+        "enable": true,
+        "isDflow": true,
+        "isGmgn": true,
+        "buyAmount": 0.3
+      },
+      "firstSell": {
+        "enable": true,
+        "setRatio": 1
+      }
+    },
+    {
+      "transferAmount": 1.5,
+      "limit": 200000,
+      "price": 0,
+      "fee": 0.00001,
+      "firstBuy": {
+        "enable": true,
+        "isDflow": true,
+        "isTragon": true,
+        "buyAmount": 1.1
+      },
+      "firstSell": {
+        "enable": true,
+        "setRatio": 1
+      }
+    },
+    {
+      "transferAmount": 1,
+      "limit": 200000,
+      "price": 0,
+      "fee": 0.00001,
+      "multiBuy": {
+        "enable": true,
+        "isDflow": true,
+        "isTragon": true,
+        "buyAmount": 0.7
       },
       "firstSell": {
         "enable": true,
@@ -39,17 +97,17 @@
   "needFirstWallet": false,
   "minFollowStates": 2,
   "maxBuyTax": 1.5,
-  "slippage": 0.15,
+  "slippage": 0.2,
   "sourceWeb": "ave",
   "groupSort": {
     "sort_field": "created_at",
     "sort_order": "desc",
     "wallet_count": 1,
-    "mcp_min": 9000,
+    "mcp_min": 3000,
     "mcp_max": 50000,
-    "create_day": 1,
+    "create_day": 2,
     "create_day_end": 0,
-    "category": "pump_out_new",
+    "category": "stonk_out_new",
     "address": ["AdVXffXLe1RRTRjL1A2Nuz7PUdDUHcGdQovW2zjwmzur"],
     "favId": 87660,
     "groupId": 117024,

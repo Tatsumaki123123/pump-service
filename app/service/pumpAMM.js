@@ -101,7 +101,7 @@ const AXIOM_TIP_ACCOUNT = new PublicKey(
     "7sMh3XCdHUGWQzjqDc91QoYsyb5eVozrXSyBskLPUXaG",
 );
 const AXIOM_TIP_LAMPORTS = Number(
-  process.env.AXIOM_TIP_LAMPORTS || 139798,
+  process.env.AXIOM_TIP_LAMPORTS || 10_000,
 );
 
 // DFlow/Jupiter slippage is passed as a fraction: 0.05 = 5%.
