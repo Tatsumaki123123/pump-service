@@ -240,7 +240,12 @@ class PumpAMM extends Service {
       const { blockhash } = await connection.getLatestBlockhash();
 
       const tokenProgramId = await getTokenProgramId(tokenMint);
-      const poolDetail = await getPoolsWithPrices(tokenMint, ctx);
+      const needsPoolDetail = wallets.some(
+        (wallet) => !wallet.isOkx && !wallet.isDflow && !wallet.isJup,
+      );
+      const poolDetail = needsPoolDetail
+        ? await getPoolsWithPrices(tokenMint, ctx)
+        : undefined;
       const func = async (wallets) => {
         const buyTxns = [];
         const isNozomi =
@@ -283,14 +288,30 @@ class PumpAMM extends Service {
           let jitoTipIx = null;
           let walletLookupTables = lookupTables;
           if (wallet.isOkx) {
-            const okxIxs = await okxSwap.getBuyInstructions(ctx, {
+            const okxIxs = await okxSwap.getLocalBuyInstructions(ctx, {
               user,
               tokenMint,
               buyAmount: buyAmount,
               slippage,
-              poolDetail,
+              tokenProgramId,
             });
-            volumeIxs = [...okxIxs];
+            volumeIxs = [
+              ...(limit
+                ? [
+                    ComputeBudgetProgram.setComputeUnitLimit({
+                      units: limit,
+                    }),
+                  ]
+                : []),
+              ...(price
+                ? [
+                    ComputeBudgetProgram.setComputeUnitPrice({
+                      microLamports: price,
+                    }),
+                  ]
+                : []),
+              ...okxIxs,
+            ];
           } else if (wallet.isDflow) {
             const dflowSwapData = dflowBuyData[i];
             volumeIxs = [...dflowSwapData.instructions];

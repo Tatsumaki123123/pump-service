@@ -21,6 +21,7 @@ const {
 } = require("../constants");
 
 const { PumpFunSDK, GlobalAccount } = require("../libs/pumpfun");
+const OKXSwapSDK = require("../libs/okxRouterV2");
 const { createTroProxyInstruction } = require("../libs/trogan");
 
 const { sendV0Transaction, getSPLBalance } = require("../utils/solana");
@@ -33,6 +34,7 @@ const provider = new AnchorProvider(connection, provider_wallet, {
 });
 
 const pfSwap = new PumpFunSDK(provider);
+const okxSwap = new OKXSwapSDK();
 
 const TIP_ACCOUNT = new PublicKey(
   "6rYLG55Q9RpsPGvqdPNJs4z5WTxJVatMB8zV3WJhs5EK"
@@ -197,18 +199,40 @@ class PumpFun extends Service {
         const slippageBasisPoints = getWalletSlippageBasisPoints(wallet);
         let volumeIxs = [];
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
-        const buyTx = await pfSwap.buy(
-          user,
-          tokenMint,
-          BigInt(buyAmount * LAMPORTS_PER_SOL),
-          slippageBasisPoints,
-          {
-            unitLimit: limit,
-            unitPrice: price,
-          },
-          "processed"
-        );
-        volumeIxs = [...buyTx.instructions];
+        if (wallet.isOkx) {
+          const okxIxs = await okxSwap.getLocalBuyInstructions(ctx, {
+            user,
+            tokenMint,
+            buyAmount,
+            slippage: Number(slippageBasisPoints) / 10_000,
+          });
+          volumeIxs = [
+            ...(limit
+              ? [ComputeBudgetProgram.setComputeUnitLimit({ units: limit })]
+              : []),
+            ...(price
+              ? [
+                  ComputeBudgetProgram.setComputeUnitPrice({
+                    microLamports: price,
+                  }),
+                ]
+              : []),
+            ...okxIxs,
+          ];
+        } else {
+          const buyTx = await pfSwap.buy(
+            user,
+            tokenMint,
+            BigInt(buyAmount * LAMPORTS_PER_SOL),
+            slippageBasisPoints,
+            {
+              unitLimit: limit,
+              unitPrice: price,
+            },
+            "processed"
+          );
+          volumeIxs = [...buyTx.instructions];
+        }
 
         const jipAcc = ctx.service.jito.getTipAcc(sendOptions);
         const tipAmount = ctx.service.jito.getTipAmount(sendOptions);

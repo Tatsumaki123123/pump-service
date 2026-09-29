@@ -7,6 +7,9 @@ const {
 } = require("@solana/web3.js");
 
 const crypto = require("crypto");
+const {
+  createLocalOkxBuyInstructions,
+} = require("./okxLocalRouter");
 
 /**
  * okxRouter
@@ -14,13 +17,17 @@ const crypto = require("crypto");
  */
 const SOLANA_CHAIN_ID = "501";
 const CLIENT_CONFIG = {
-  apiKey: "cf60893d-2b6d-4f4e-97f9-b6f18c887b42",
-  secretKey: "BEB7804D176CE9630A14821C7E1833D9",
-  apiPassphrase: "Youarebeautiful.1234",
-  projectId: "8b31b7f024e326c88c39a2ca3ceda15e",
+  apiKey: process.env.OKX_API_KEY || "",
+  secretKey: process.env.OKX_API_SECRET_KEY || process.env.OKX_SECRET_KEY || "",
+  apiPassphrase:
+    process.env.OKX_API_PASSPHRASE || process.env.OKX_PASSPHRASE || "",
+  projectId: process.env.OKX_PROJECT_ID || process.env.OKX_PROJECT || "",
 };
 
-const OKX_BASE_URL = "https://web3.okx.com";
+const OKX_BASE_URL = (process.env.OKX_BASE_URL || "https://web3.okx.com").replace(
+  /\/$/,
+  "",
+);
 
 async function createTransaction(instructionsData) {
   if (!Array.isArray(instructionsData)) {
@@ -60,6 +67,10 @@ async function createTransaction(instructionsData) {
 }
 
 class OKXRouterSDK {
+  async getLocalBuyInstructions(ctx, params) {
+    return createLocalOkxBuyInstructions(params);
+  }
+
   async getBuyInstructions(ctx, params) {
     const { user, tokenMint, buyAmount, slippage = 0.1 } = params;
 
@@ -149,6 +160,20 @@ class OKXRouterSDK {
   }
 
   getHeaders(method, requestPath, queryString = "", body = "") {
+    const missingConfig = [
+      ["OKX_API_KEY", CLIENT_CONFIG.apiKey],
+      ["OKX_API_SECRET_KEY", CLIENT_CONFIG.secretKey],
+      ["OKX_API_PASSPHRASE", CLIENT_CONFIG.apiPassphrase],
+      ["OKX_PROJECT_ID", CLIENT_CONFIG.projectId],
+    ]
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+    if (missingConfig.length > 0) {
+      throw new Error(
+        `OKX credentials are not configured: ${missingConfig.join(", ")}`,
+      );
+    }
+
     const timestamp = new Date().toISOString();
 
     // 构造预哈希字符串
