@@ -23,9 +23,22 @@ const CLIENT_CONFIG = {
 const OKX_BASE_URL = "https://web3.okx.com";
 
 async function createTransaction(instructionsData) {
+  if (!Array.isArray(instructionsData)) {
+    throw new Error("OKX returned invalid instructionLists");
+  }
+
   const transactions = [];
 
   for (const instr of instructionsData) {
+    if (
+      !instr ||
+      !instr.programId ||
+      !Array.isArray(instr.accounts) ||
+      typeof instr.data !== "string"
+    ) {
+      throw new Error("OKX returned an invalid instruction");
+    }
+
     const dataBuffer = Buffer.from(instr.data, "base64");
 
     const keys = instr.accounts.map((account) => ({
@@ -61,16 +74,21 @@ class OKXRouterSDK {
         userWalletAddress: user.toBase58(),
       });
 
-      const data = res?.data?.data;
-      if (data && data.instructionLists) {
-        const instructions = data.instructionLists;
-        return createTransaction(instructions);
-      } else {
-        throw new Error("Can not get OKX instruction");
+      const responseData = res?.data;
+      const payload = Array.isArray(responseData?.data)
+        ? responseData.data[0]
+        : responseData?.data || responseData;
+      const instructions = payload?.instructionLists;
+      if (!Array.isArray(instructions) || instructions.length === 0) {
+        throw new Error(
+          `Can not get OKX instruction: ${responseData?.msg || responseData?.code || "instructionLists is empty"}`,
+        );
       }
-      return;
+      return await createTransaction(instructions);
     } catch (error) {
-      console.error(error);
+      throw new Error(`OKX buy instructions failed: ${error.message}`, {
+        cause: error,
+      });
     }
   }
 
@@ -88,16 +106,21 @@ class OKXRouterSDK {
         userWalletAddress: user.toBase58(),
       });
 
-      const data = res?.data?.data;
-      if (data && data.instructionLists) {
-        const instructions = data.instructionLists;
-        return createTransaction(instructions);
-      } else {
-        throw new Error("Can not get OKX instruction");
+      const responseData = res?.data;
+      const payload = Array.isArray(responseData?.data)
+        ? responseData.data[0]
+        : responseData?.data || responseData;
+      const instructions = payload?.instructionLists;
+      if (!Array.isArray(instructions) || instructions.length === 0) {
+        throw new Error(
+          `Can not get OKX instruction: ${responseData?.msg || responseData?.code || "instructionLists is empty"}`,
+        );
       }
-      return;
+      return await createTransaction(instructions);
     } catch (error) {
-      console.error(error);
+      throw new Error(`OKX sell instructions failed: ${error.message}`, {
+        cause: error,
+      });
     }
   }
 
