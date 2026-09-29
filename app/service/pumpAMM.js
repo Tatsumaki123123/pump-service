@@ -41,6 +41,7 @@ const {
 const PumpSwapSDK = require("../libs/pumpSwap");
 const AvePumpSwapSDK = require("../libs/aveProxy");
 const OKXSwapSDK = require("../libs/okxRouterV2");
+const { setLocalOkxAmmExpectedAmountOut } = require("../libs/okxLocalRouter");
 const JupSDK = require("../libs/jup");
 const DFlowSDK = require("../libs/dflow");
 const { createAxiomBuyInstructions } = require("../libs/axiom");
@@ -72,6 +73,8 @@ const TRANSACTION_FEE = 5000;
 const MAX_TRANSACTION_SIZE = 1232;
 const DEFAULT_PROXY_PUMP_SWAP_LOOKUP_TABLE =
   "4j834PBihsChsKWF4SZCY4K9tVNHc5JFpw1vEDJgbW29";
+const DEFAULT_OKX_LOOKUP_TABLE =
+  "GP57a1T8vJjeAnF2zfKT1bnZysNwVprLaw6Mjw2d1gPy";
 const DEFAULT_AXIOM_LOOKUP_TABLE =
   "4vX5U9XsiY11infmC13d6VFPjvUqtuRw744r4o94dyow";
 const AXIOM_COMPUTE_BUDGET_MARKER = new PublicKey(
@@ -129,6 +132,16 @@ function getChainBuyBaseAmountOut(logs) {
   return null;
 }
 
+function getOkxAmmAmountOut(logs) {
+  for (let i = (logs || []).length - 1; i >= 0; i--) {
+    const match = logs[i].match(
+      /Program log: SwapEvent \{ dex: PumpfunammBuy2, .*amount_out:\s*(\d+)/,
+    ) || logs[i].match(/Program log: final_out:\s*(\d+)/);
+    if (match) return BigInt(match[1]);
+  }
+  return null;
+}
+
 function getMinBaseAmountOut(baseAmountOut, slippage) {
   const normalizedSlippage = Number(slippage);
   if (
@@ -175,13 +188,18 @@ class PumpAMM extends Service {
     this.lookupTablesByRoute = new Map();
   }
 
-  getLookupTableAddresses(isAxiom = false) {
+  getLookupTableAddresses(isAxiom = false, isOkx = false) {
     const configuredAddresses = isAxiom
       ? [process.env.AXIOM_LOOKUP_TABLES || DEFAULT_AXIOM_LOOKUP_TABLE]
       : [
           process.env.PROXY_PUMP_SWAP_LOOKUP_TABLE ||
             DEFAULT_PROXY_PUMP_SWAP_LOOKUP_TABLE,
           process.env.PUMP_AMM_LOOKUP_TABLES,
+          ...(isOkx
+            ? [
+                process.env.OKX_LOOKUP_TABLES || DEFAULT_OKX_LOOKUP_TABLE,
+              ]
+            : []),
         ];
 
     return configuredAddresses
@@ -190,13 +208,13 @@ class PumpAMM extends Service {
       .filter(Boolean);
   }
 
-  async getProxyPumpSwapLookupTables(isAxiom = false) {
-    const route = isAxiom ? "axiom" : "pumpAmm";
+  async getProxyPumpSwapLookupTables(isAxiom = false, isOkx = false) {
+    const route = isAxiom ? "axiom" : isOkx ? "okxPumpAmm" : "pumpAmm";
     if (this.lookupTablesByRoute.has(route)) {
       return this.lookupTablesByRoute.get(route);
     }
 
-    const lookupTableAddresses = this.getLookupTableAddresses(isAxiom);
+    const lookupTableAddresses = this.getLookupTableAddresses(isAxiom, isOkx);
     const lookupTables = [];
     this.lookupTablesByRoute.set(route, lookupTables);
 
@@ -241,7 +259,7 @@ class PumpAMM extends Service {
 
       const tokenProgramId = await getTokenProgramId(tokenMint);
       const needsPoolDetail = wallets.some(
-        (wallet) => !wallet.isOkx && !wallet.isDflow && !wallet.isJup,
+        (wallet) => !wallet.isDflow && !wallet.isJup,
       );
       const poolDetail = needsPoolDetail
         ? await getPoolsWithPrices(tokenMint, ctx)
@@ -280,7 +298,7 @@ class PumpAMM extends Service {
           const user = keypair.publicKey;
           const { buyAmount, limit, price, fee, isAxiom, isAve } = wallet;
           let lookupTableAccounts =
-            await this.getProxyPumpSwapLookupTables(isAxiom);
+            await this.getProxyPumpSwapLookupTables(isAxiom && !wallet.isOkx, wallet.isOkx);
           const lookupTables = lookupTableAccounts.length
             ? lookupTableAccounts
             : undefined;
@@ -294,6 +312,8 @@ class PumpAMM extends Service {
               buyAmount: buyAmount,
               slippage,
               tokenProgramId,
+              route: "pumpAmm",
+              poolDetail,
             });
             volumeIxs = [
               ...(limit
@@ -312,6 +332,18 @@ class PumpAMM extends Service {
                 : []),
               ...okxIxs,
             ];
+            if (
+              !isAxiom &&
+              !isNozomi &&
+              (NEXTBLOCK_TIP_EVERY_TX || i === 0)
+            ) {
+              jitoTipIx = SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: jipAcc,
+                lamports: tipAmount,
+              });
+              volumeIxs.push(jitoTipIx);
+            }
           } else if (wallet.isDflow) {
             const dflowSwapData = dflowBuyData[i];
             volumeIxs = [...dflowSwapData.instructions];
@@ -674,6 +706,21 @@ class PumpAMM extends Service {
                   " " +
                   JSON.stringify(simulationResult.value.logs || []),
               );
+            }
+            if (wallet.isOkx) {
+              const amountOut = getOkxAmmAmountOut(simulationResult.value.logs);
+              if (amountOut === null || amountOut <= 0n) {
+                throw new Error("OKX Pump AMM simulation did not return an output quote");
+              }
+              setLocalOkxAmmExpectedAmountOut(txInstructions, amountOut);
+              const quotedMessageV0 = new TransactionMessage({
+                payerKey: user,
+                recentBlockhash: blockhash,
+                instructions: txInstructions,
+              }).compileToV0Message(walletLookupTables);
+              tx = new VersionedTransaction(quotedMessageV0);
+              tx.sign([keypair, ...(wallet.extraSigners || [])]);
+              assertTxSize(tx, "quoted OKX swap tx");
             }
             buyTxns.push({ tx, isAxiom });
             if (jitoTipIx) {

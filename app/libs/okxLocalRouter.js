@@ -16,8 +16,12 @@ const {
   createSyncNativeInstruction,
   getAssociatedTokenAddressSync,
 } = require("@solana/spl-token");
-
-const { connection } = require("../constants");
+const { connection, PUMP_AMM_PROGRAM_ID } = require("../constants");
+const {
+  getCoinCreatorVaultAuthorityPda,
+  getCoinCreatorVaultAtaPda,
+  getUserVolumeAccumulatorPda,
+} = require("./pool");
 const { GlobalAccount } = require("./pumpfun/globalAccount");
 const { BondingCurveAccount } = require("./pumpfun/bondingCurveAccount");
 
@@ -56,7 +60,36 @@ const DEFAULT_PLATFORM_FEE_ACCOUNT = new PublicKey(
   process.env.OKX_PLATFORM_FEE_ACCOUNT ||
     "Af35pWcCUZkXYpTGpEbakhrhtV1q86LTDF9hNmHiccph",
 );
-
+const PUMP_AMM_GLOBAL_CONFIG = new PublicKey(
+  "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+);
+const PUMP_AMM_EVENT_AUTHORITY = new PublicKey(
+  "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+);
+const PUMP_AMM_GLOBAL_VOLUME = new PublicKey(
+  "C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw",
+);
+const PUMP_AMM_FEE_CONFIG = new PublicKey(
+  "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx",
+);
+const PUMP_AMM_PROTOCOL_FEE_RECIPIENT = new PublicKey(
+  process.env.PUMP_AMM_PROTOCOL_FEE_RECIPIENT ||
+    "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
+);
+const PUMP_AMM_PROTOCOL_FEE_TOKEN_ACCOUNT = new PublicKey(
+  process.env.PUMP_AMM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT ||
+    "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
+);
+const PUMP_AMM_BUYBACK_RECIPIENT = new PublicKey(
+  process.env.PUMP_AMM_BUYBACK_FEE_RECIPIENT ||
+    "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD",
+);
+const PUMP_AMM_BUYBACK_TOKEN_ACCOUNT = getAssociatedTokenAddressSync(
+  NATIVE_MINT,
+  PUMP_AMM_BUYBACK_RECIPIENT,
+  true,
+  TOKEN_PROGRAM_ID,
+);
 function parseLamports(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -112,6 +145,20 @@ function writeU64(data, offset, value) {
   data.writeBigUInt64LE(normalized, offset);
 }
 
+function setLocalOkxAmmExpectedAmountOut(instructions, amountOut) {
+  const swap = instructions.find(
+    (ix) =>
+      ix.programId.equals(OKX_ROUTER_PROGRAM_ID) &&
+      ix.data.length === 48 &&
+      ix.data.subarray(0, 8).equals(ROUTER_DISCRIMINATOR) &&
+      ix.data[38] === 112,
+  );
+  if (!swap || BigInt(amountOut) <= 0n) {
+    throw new Error("Cannot apply Pump AMM output quote to OKX swap");
+  }
+  writeU64(swap.data, 24, amountOut);
+}
+
 function createSwapTocInstruction({
   payer,
   sourceTokenAccount,
@@ -127,6 +174,7 @@ function createSwapTocInstruction({
   remainingAccounts,
   amountIn,
   expectedAmountOut,
+  routeDexIndex,
   slippageBps,
   commissionInfo,
   platformFeeRate,
@@ -140,7 +188,7 @@ function createSwapTocInstruction({
   writeU64(data, 24, expectedAmountOut);
   data.writeUInt16LE(slippageBps, 32);
   data.writeUInt32LE(1, 34);
-  data.writeUInt8(110, 38); // Dex::PumpfunBuy3 from the supplied IDL.
+  data.writeUInt8(routeDexIndex, 38);
   data.writeUInt16LE(10_000, 39);
   data.writeUInt8(1, 41);
   data.writeUInt32LE(commissionInfo >>> 0, 42);
@@ -179,6 +227,7 @@ function createSwapTocInstruction({
 async function getPumpfunAccounts(
   tokenMint,
   saAuthority,
+  sourceTokenSa,
   destinationTokenSa,
   destinationTokenProgram,
 ) {
@@ -233,15 +282,7 @@ async function getPumpfunAccounts(
     accounts: [
       account(PUMP_PROGRAM_ID),
       account(saAuthority, true),
-      account(
-        getAssociatedTokenAddressSync(
-          NATIVE_MINT,
-          saAuthority,
-          true,
-          TOKEN_PROGRAM_ID,
-        ),
-        true,
-      ),
+      account(sourceTokenSa, true),
       account(destinationTokenSa, true),
       account(globalAddress),
       account(globalAccount.feeRecipient, true),
@@ -263,12 +304,88 @@ async function getPumpfunAccounts(
   };
 }
 
+function getPumpAmmAccounts({
+  tokenMint,
+  saAuthority,
+  sourceTokenSa,
+  destinationTokenSa,
+  tokenProgramId,
+  poolDetail,
+}) {
+  if (!poolDetail?.address || !poolDetail.poolData) {
+    throw new Error("Pump AMM pool detail is required for the OKX route");
+  }
+  const { poolData } = poolDetail;
+  const coinCreatorVaultAuthority = getCoinCreatorVaultAuthorityPda(
+    poolData.coinCreator,
+    PUMP_AMM_PROGRAM_ID,
+  )[0];
+  const coinCreatorVaultAta = getCoinCreatorVaultAtaPda(
+    coinCreatorVaultAuthority,
+    TOKEN_PROGRAM_ID,
+    NATIVE_MINT,
+  )[0];
+  const userVolumeAccumulator = getUserVolumeAccumulatorPda(saAuthority);
+  const poolV2 = getPda("pool-v2", PUMP_AMM_PROGRAM_ID, tokenMint);
+  const account = (pubkey, isWritable = false) => ({
+    pubkey,
+    isSigner: false,
+    isWritable,
+  });
+  const accounts = [
+    account(PUMP_AMM_PROGRAM_ID),
+    account(saAuthority, true),
+    account(sourceTokenSa, true),
+    account(destinationTokenSa, true),
+    account(poolDetail.address, true),
+    account(PUMP_AMM_GLOBAL_CONFIG),
+    account(tokenMint),
+    account(NATIVE_MINT),
+    account(poolData.poolBaseTokenAccount, true),
+    account(poolData.poolQuoteTokenAccount, true),
+    account(PUMP_AMM_PROTOCOL_FEE_RECIPIENT),
+    account(PUMP_AMM_PROTOCOL_FEE_TOKEN_ACCOUNT, true),
+    account(tokenProgramId),
+    account(TOKEN_PROGRAM_ID),
+    account(SystemProgram.programId),
+    account(ASSOCIATED_TOKEN_PROGRAM_ID),
+    account(PUMP_AMM_EVENT_AUTHORITY),
+    account(coinCreatorVaultAta, true),
+    account(coinCreatorVaultAuthority),
+    account(PUMP_AMM_GLOBAL_VOLUME, true),
+    account(userVolumeAccumulator, true),
+    account(PUMP_AMM_FEE_CONFIG),
+    account(PUMPFUN_FEE_PROGRAM),
+  ];
+  if (poolData.is_cashback) {
+    accounts.push(
+      account(
+        getAssociatedTokenAddressSync(
+          NATIVE_MINT,
+          userVolumeAccumulator,
+          true,
+          TOKEN_PROGRAM_ID,
+        ),
+        true,
+      ),
+    );
+  }
+  accounts.push(
+    account(poolV2),
+    account(PUMP_AMM_BUYBACK_RECIPIENT),
+    account(PUMP_AMM_BUYBACK_TOKEN_ACCOUNT, true),
+  );
+  return accounts;
+}
+
 async function createLocalOkxBuyInstructions({
   user,
   tokenMint,
   buyAmount,
   slippage = 0.05,
   tokenProgramId = TOKEN_2022_PROGRAM_ID,
+  route = "pumpfun",
+  poolDetail,
 }) {
   const buyLamports = parseLamports(buyAmount);
   const platformFeeLamports = BigInt(
@@ -299,18 +416,12 @@ async function createLocalOkxBuyInstructions({
     true,
     tokenProgramId,
   );
-  const pumpfun = await getPumpfunAccounts(
-    tokenMint,
-    saAuthority,
-    destinationTokenSa,
-    tokenProgramId,
-  );
-  const quote = quotePumpfunBuy(
-    amountIn,
-    pumpfun.globalAccount,
-    pumpfun.curveAccount,
-    slippage,
-  );
+  if (route !== "pumpfun" && route !== "pumpAmm") {
+    throw new Error(`Unsupported OKX local buy route: ${route}`);
+  }
+  if (route === "pumpAmm" && !poolDetail?.poolData) {
+    throw new Error("Pump AMM pool detail is required for the OKX route");
+  }
   const slippageBps = Math.max(
     0,
     Math.min(10_000, Math.floor(Number(slippage) * 10_000)),
@@ -319,28 +430,14 @@ async function createLocalOkxBuyInstructions({
   const commissionInfo = Number(process.env.OKX_COMMISSION_INFO || 0);
   const platformFeeAccount = DEFAULT_PLATFORM_FEE_ACCOUNT;
   const sourceSeed = `okx-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
-  const sourceSaSeed = `okxs-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
   const sourceTokenAccount = await PublicKey.createWithSeed(
     user,
     sourceSeed,
     TOKEN_PROGRAM_ID,
   );
-  const sourceTokenSa = await PublicKey.createWithSeed(
-    user,
-    sourceSaSeed,
-    TOKEN_PROGRAM_ID,
-  );
   const rent = await connection.getMinimumBalanceForRentExemption(
     AccountLayout.span,
   );
-  // The router forwards the temporary source account to Pumpfun as the
-  // source token SA. It is initialized below with saAuthority as owner.
-  pumpfun.accounts[2] = {
-    pubkey: sourceTokenSa,
-    isSigner: false,
-    isWritable: true,
-  };
-
   const createSource = SystemProgram.createAccountWithSeed({
     fromPubkey: user,
     basePubkey: user,
@@ -350,15 +447,79 @@ async function createLocalOkxBuyInstructions({
     space: AccountLayout.span,
     programId: TOKEN_PROGRAM_ID,
   });
-  const createSourceSa = SystemProgram.createAccountWithSeed({
-    fromPubkey: user,
-    basePubkey: user,
-    seed: sourceSaSeed,
-    newAccountPubkey: sourceTokenSa,
-    lamports: rent,
-    space: AccountLayout.span,
-    programId: TOKEN_PROGRAM_ID,
-  });
+  let sourceTokenSa;
+  let sourceSaInstructions;
+  let remainingAccounts;
+  let expectedAmountOut;
+  let routeDexIndex;
+  if (route === "pumpAmm") {
+    sourceTokenSa = getAssociatedTokenAddressSync(
+      NATIVE_MINT,
+      saAuthority,
+      true,
+      TOKEN_PROGRAM_ID,
+    );
+    sourceSaInstructions = [
+      createAssociatedTokenAccountIdempotentInstruction(
+        user,
+        sourceTokenSa,
+        saAuthority,
+        NATIVE_MINT,
+        TOKEN_PROGRAM_ID,
+      ),
+    ];
+    remainingAccounts = getPumpAmmAccounts({
+      tokenMint,
+      saAuthority,
+      sourceTokenSa,
+      destinationTokenSa,
+      tokenProgramId,
+      poolDetail,
+    });
+    // pumpAmm's on-chain output can differ from pool-balance arithmetic.
+    // The caller simulates this draft and replaces the quote before sending.
+    expectedAmountOut = 1n;
+    routeDexIndex = 112; // Dex::PumpfunammBuy2
+  } else {
+    const sourceSaSeed = `okxs-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
+    sourceTokenSa = await PublicKey.createWithSeed(
+      user,
+      sourceSaSeed,
+      TOKEN_PROGRAM_ID,
+    );
+    sourceSaInstructions = [
+      SystemProgram.createAccountWithSeed({
+        fromPubkey: user,
+        basePubkey: user,
+        seed: sourceSaSeed,
+        newAccountPubkey: sourceTokenSa,
+        lamports: rent,
+        space: AccountLayout.span,
+        programId: TOKEN_PROGRAM_ID,
+      }),
+      createInitializeAccountInstruction(
+        sourceTokenSa,
+        NATIVE_MINT,
+        saAuthority,
+        TOKEN_PROGRAM_ID,
+      ),
+    ];
+    const pumpfun = await getPumpfunAccounts(
+      tokenMint,
+      saAuthority,
+      sourceTokenSa,
+      destinationTokenSa,
+      tokenProgramId,
+    );
+    expectedAmountOut = quotePumpfunBuy(
+      amountIn,
+      pumpfun.globalAccount,
+      pumpfun.curveAccount,
+      slippage,
+    ).expectedAmountOut;
+    remainingAccounts = pumpfun.accounts;
+    routeDexIndex = 110; // Dex::PumpfunBuy3
+  }
   const eventAuthority = getPda("__event_authority", OKX_ROUTER_PROGRAM_ID);
   const swap = createSwapTocInstruction({
     payer: user,
@@ -372,9 +533,10 @@ async function createLocalOkxBuyInstructions({
     destinationTokenSa,
     destinationTokenProgram: tokenProgramId,
     eventAuthority,
-    remainingAccounts: pumpfun.accounts,
+    remainingAccounts,
     amountIn,
-    expectedAmountOut: quote.expectedAmountOut,
+    expectedAmountOut,
+    routeDexIndex,
     slippageBps,
     commissionInfo,
     platformFeeRate,
@@ -401,13 +563,7 @@ async function createLocalOkxBuyInstructions({
       tokenMint,
       tokenProgramId,
     ),
-    createSourceSa,
-    createInitializeAccountInstruction(
-      sourceTokenSa,
-      NATIVE_MINT,
-      saAuthority,
-      TOKEN_PROGRAM_ID,
-    ),
+    ...sourceSaInstructions,
     createAssociatedTokenAccountIdempotentInstruction(
       user,
       destinationTokenSa,
@@ -415,6 +571,22 @@ async function createLocalOkxBuyInstructions({
       tokenMint,
       tokenProgramId,
     ),
+    ...(route === "pumpAmm" && poolDetail.poolData.is_cashback
+      ? [
+          createAssociatedTokenAccountIdempotentInstruction(
+            user,
+            getAssociatedTokenAddressSync(
+              NATIVE_MINT,
+              getUserVolumeAccumulatorPda(saAuthority),
+              true,
+              TOKEN_PROGRAM_ID,
+            ),
+            getUserVolumeAccumulatorPda(saAuthority),
+            NATIVE_MINT,
+            TOKEN_PROGRAM_ID,
+          ),
+        ]
+      : []),
     swap,
     createCloseAccountInstruction(
       sourceTokenAccount,
@@ -428,6 +600,7 @@ async function createLocalOkxBuyInstructions({
 
 module.exports = {
   createLocalOkxBuyInstructions,
+  setLocalOkxAmmExpectedAmountOut,
   OKX_ROUTER_PROGRAM_ID,
   PUMPFUN_BUY_EXACT_SOL_IN_DISCRIMINATOR,
 };
