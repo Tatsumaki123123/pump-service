@@ -304,6 +304,7 @@ class PumpAMM extends Service {
             : undefined;
           let volumeIxs = [];
           let jitoTipIx = null;
+          let troganTipIx = null;
           let walletLookupTables = lookupTables;
           if (wallet.isOkx) {
             const okxIxs = await okxSwap.getLocalBuyInstructions(ctx, {
@@ -508,7 +509,7 @@ class PumpAMM extends Service {
             volumeIxs.push(jitoTipIx);
           }
           if (wallet.isTrogan || wallet.isTragon) {
-            const troganTipIx = createTroProxyInstruction(
+            troganTipIx = createTroProxyInstruction(
               user,
               jipAcc,
               undefined,
@@ -615,7 +616,30 @@ class PumpAMM extends Service {
                 }).compileToV0Message(walletLookupTables);
                 tx = new VersionedTransaction(compactMessageV0);
                 tx.sign([keypair, ...(wallet.extraSigners || [])]);
-                assertTxSize(tx, "compact swap tx");
+                try {
+                  assertTxSize(tx, "compact swap tx");
+                } catch (compactError) {
+                  if (
+                    !troganTipIx ||
+                    troganTipIx.keys[3].pubkey.equals(SystemProgram.programId)
+                  ) {
+                    throw compactError;
+                  }
+                  troganTipIx.keys[3].pubkey = SystemProgram.programId;
+                  const unmarkedMessageV0 = new TransactionMessage({
+                    payerKey: user,
+                    recentBlockhash: blockhash,
+                    instructions: swapIxs,
+                  }).compileToV0Message(walletLookupTables);
+                  tx = new VersionedTransaction(unmarkedMessageV0);
+                  tx.sign([keypair, ...(wallet.extraSigners || [])]);
+                  assertTxSize(tx, "compact swap tx without Trojan marker");
+                  console.log(
+                    chalk.yellow(
+                      "Removed Trojan jitodontfront marker because the swap transaction was too large.",
+                    ),
+                  );
+                }
                 console.log(
                   chalk.yellow(
                     "Removed compute budget instructions because swap tx is still too large.",
@@ -732,6 +756,9 @@ class PumpAMM extends Service {
             }
           } catch (error) {
             console.error(error);
+            if (buyTxns.length === 0) {
+              throw error;
+            }
             break;
           }
         }
