@@ -42,7 +42,7 @@ const PUMPFUN_FEE_CONFIG = new PublicKey(
 );
 const PUMPFUN_FEE_PROGRAM = new PublicKey(
   process.env.OKX_PUMPFUN_FEE_PROGRAM ||
-    "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGd6VojVZ",
+    "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
 );
 const PUMPFUN_EXTRA_ACCOUNT = new PublicKey(
   process.env.OKX_PUMPFUN_EXTRA_ACCOUNT ||
