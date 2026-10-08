@@ -6,6 +6,7 @@ const {
 
 const AVE_API_URL = "https://api.gejbckf.com/";
 const AVE_TOKEN_INFO_API_URL = "https://cyjm22.com/";
+const AVE_TOKEN_DETAIL_API_URL = "https://primpom.com/";
 const AVE_AUTH_BASE_URL =
   process.env.AVE_AUTH_BASE_URL ||
   process.env.AVE_BASE_URL ||
@@ -268,9 +269,13 @@ class Ave extends Service {
 
   async getTokenInfo(tokenAddress) {
     const tokenId = `${tokenAddress}-solana`;
-    const uri = `${AVE_TOKEN_INFO_API_URL}v2api/token_info/v1/token/detail?token_id=${tokenId}&cache_use=false`;
-
-    const res = await this.requestAve(uri);
+    const url = new URL(
+      "v2api/token_info/v1/token/detail",
+      AVE_TOKEN_DETAIL_API_URL,
+    );
+    url.searchParams.set("token_id", tokenId);
+    url.searchParams.set("cache_use", "false");
+    const res = await this.requestAve(url.toString());
     const data = res.data?.data;
 
     // const devData = await this.getTokenDev(tokenAddress);

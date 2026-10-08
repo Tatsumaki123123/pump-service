@@ -163,7 +163,7 @@ controller.executeSwap.start
    - 当前线路机器人钱包合计持仓是否超过 1000。
 5. 补齐代币元数据，优先级为：
    - 调用方提供的 `symbol` / `pool` / `amm`；
-   - Ave 的 `getTokenInfo`；
+   - Ave 的 `getTokenInfo`（detail 接口使用 `mint-solana`）；
    - 现有 `ExecuteToken` 中的池子和 AMM；
    - Pump AMM 池扫描；
    - Raydium CPMM 池查询；
