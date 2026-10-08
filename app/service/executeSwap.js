@@ -1238,6 +1238,7 @@ class ExecuteSwap extends Service {
     if (!forceCheck) {
       const otherData = await ctx.model.ExecuteToken.findOne({
         eid: { $ne: eid },
+        line: { $ne: executeData.line },
         token: token,
         status: "buy",
       });
