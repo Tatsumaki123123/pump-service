@@ -8,9 +8,11 @@ module.exports = () => {
       this.app.emit("error", err, this);
       // Network clients use status -1 (or no status) when a request never
       // receives an HTTP response. Koa only accepts valid HTTP status codes.
+      const hasStatus = err.status !== undefined && err.status !== null;
       const rawStatus = Number(err.status);
-      const status =
-        Number.isInteger(rawStatus) && rawStatus >= 400 && rawStatus <= 599
+      const status = !hasStatus
+        ? 200
+        : Number.isInteger(rawStatus) && rawStatus >= 400 && rawStatus <= 599
           ? rawStatus
           : 500;
       const error =
