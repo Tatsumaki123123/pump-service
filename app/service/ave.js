@@ -5,7 +5,8 @@ const {
 } = require("node:crypto");
 
 const AVE_API_URL = "https://api.gejbckf.com/";
-const AVE_TOKEN_INFO_API_URL = "https://cyjm22.com/";
+const AVE_TOKEN_INFO_API_URL =
+  process.env.AVE_TOKEN_INFO_BASE_URL || "https://yiyulu.com/";
 const AVE_TOKEN_DETAIL_API_URL = "https://primpom.com/";
 const AVE_AUTH_BASE_URL =
   process.env.AVE_AUTH_BASE_URL ||
