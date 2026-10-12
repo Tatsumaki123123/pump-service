@@ -171,12 +171,15 @@ function getPadreBuyBaseAmountOut(logs, pool, user) {
   return null;
 }
 
+function isPadreRouteInstruction(instruction) {
+  return !!instruction &&
+    instruction.programId.equals(PADRE_PROGRAM_ID) &&
+    instruction.data.length === 60 &&
+    instruction.data.subarray(0, 8).equals(ROUTE_DISCRIMINATOR);
+}
+
 function setPadreRouteMinFinalOut(instruction, minFinalOut) {
-  if (
-    !instruction.programId.equals(PADRE_PROGRAM_ID) ||
-    instruction.data.length !== 60 ||
-    !instruction.data.subarray(0, 8).equals(ROUTE_DISCRIMINATOR)
-  ) {
+  if (!isPadreRouteInstruction(instruction)) {
     throw new Error("Invalid Padre route instruction");
   }
   instruction.data.writeBigUInt64LE(BigInt(minFinalOut), ROUTE_MIN_FINAL_OUT_OFFSET);
@@ -352,5 +355,6 @@ module.exports = {
   getPadreNonceAccount,
   getPadreSwapAccounts,
   getPadreBuyBaseAmountOut,
+  isPadreRouteInstruction,
   setPadreRouteMinFinalOut,
 };

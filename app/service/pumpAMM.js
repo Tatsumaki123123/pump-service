@@ -52,13 +52,13 @@ const {
 } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const {
-  PADRE_PROGRAM_ID,
   createPadreRouteInstruction,
   createPadrePumpAmmHopKeys,
   createPadreNonceInstructions,
   getPadreNonceAccount,
   getPadreSwapAccounts,
   getPadreBuyBaseAmountOut,
+  isPadreRouteInstruction,
   setPadreRouteMinFinalOut,
 } = require("../libs/padre");
 const moment = require("moment");
@@ -716,9 +716,7 @@ class PumpAMM extends Service {
                 chainBaseAmountOut,
                 slippage,
               );
-              const padreRouteIx = txInstructions.find((ix) =>
-                ix.programId.equals(PADRE_PROGRAM_ID),
-              );
+              const padreRouteIx = txInstructions.find(isPadreRouteInstruction);
               setPadreRouteMinFinalOut(padreRouteIx, minBaseAmountOut);
               const quotedMessageV0 = new TransactionMessage({
                 payerKey: user,
