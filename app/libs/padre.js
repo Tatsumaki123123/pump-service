@@ -326,7 +326,7 @@ function createPadreNonceInstructions(
         keys: [
           { pubkey: nonceAccount, isSigner: false, isWritable: true },
           { pubkey: user, isSigner: true, isWritable: true },
-          readonly(SystemProgram.programId),
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
       }),
     );
