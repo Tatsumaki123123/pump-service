@@ -279,6 +279,8 @@ class PumpAMM extends Service {
         : undefined;
       const func = async (wallets) => {
         const buyTxns = [];
+        const isPadreBundle = wallets.length > 1 &&
+          wallets.every((wallet) => wallet.isPadre);
         const isNozomi =
           String(sendOptions.batchPlatform || "").toLowerCase() === "nozomi";
         let jipAcc = ctx.service.jito.getTipAcc(sendOptions);
@@ -425,10 +427,12 @@ class PumpAMM extends Service {
               wallets.length === 1 &&
               PUMP_AMM_DONT_FRONT &&
               PUMP_AMM_DONT_FRONT_PROVIDERS.has(BUNDLE_PROVIDER);
+            // Different Padre wallets have different signers. Only the first
+            // bundle transaction may carry the Jito protection marker.
             if (
               shouldAddAxiomDontFront ||
               shouldAddPumpAmmDontFront ||
-              wallet.isPadre
+              (wallet.isPadre && i === 0)
             ) {
               setComputeUnitLimitIx.keys.push({
                 pubkey: shouldAddAxiomDontFront
@@ -490,7 +494,9 @@ class PumpAMM extends Service {
             const shouldAddJitoTip =
               !isAxiom &&
               !isNozomi &&
-              (NEXTBLOCK_TIP_EVERY_TX || i === 0);
+              (isPadreBundle
+                ? i === wallets.length - 1
+                : NEXTBLOCK_TIP_EVERY_TX || i === 0);
             if (shouldAddJitoTip) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -515,6 +521,7 @@ class PumpAMM extends Service {
               !jitoTipIx &&
               !isAxiom &&
               !isNozomi &&
+              !isPadreBundle &&
               (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
             ) {
               jitoTipIx = SystemProgram.transfer({
@@ -533,7 +540,7 @@ class PumpAMM extends Service {
             });
             volumeIxs.push(jitoTipIx);
           }
-          if (isNozomi) {
+          if (isNozomi && (!isPadreBundle || i === wallets.length - 1)) {
             jitoTipIx = SystemProgram.transfer({
               fromPubkey: user,
               toPubkey: jipAcc,
@@ -581,9 +588,9 @@ class PumpAMM extends Service {
                 /(encoding overruns Uint8Array|exceeds maximum allowed size)/.test(
                   error.message,
                 );
-              if (canSplitTip && (isNozomi || isAxiom)) {
+              if (canSplitTip && (isNozomi || isAxiom || wallet.isPadre)) {
                 throw new Error(
-                  `${isNozomi ? "Nozomi" : "Axiom"} transaction is too large after adding the required bundle tip; reduce the swap instruction size or use a more compact lookup table.`,
+                  `${isNozomi ? "Nozomi" : isAxiom ? "Axiom" : "Padre"} transaction is too large after adding the required bundle tip; reduce the swap instruction size or use a more compact lookup table.`,
                 );
               }
               if (!canSplitTip) {
@@ -825,7 +832,7 @@ class PumpAMM extends Service {
             }
           } catch (error) {
             console.error(error);
-            if (buyTxns.length === 0) {
+            if (buyTxns.length === 0 || isPadreBundle) {
               throw error;
             }
             break;
