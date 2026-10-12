@@ -28,6 +28,7 @@ const chalk = require("chalk");
 
 const {
   getPoolsWithPrices,
+  getBuyTokenAmountBuyPoolDetail,
   getUserVolumeAccumulatorPda,
 } = require("../libs/pool");
 
@@ -51,6 +52,13 @@ const {
   getTokenProgramId,
 } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
+const {
+  createPadreRouteInstruction,
+  createPadrePumpAmmHopKeys,
+  createPadreNonceInstructions,
+  getPadreNonceAccount,
+  getPadreSwapAccounts,
+} = require("../libs/padre");
 const moment = require("moment");
 const { sleep, splitIntoBundles } = require("../utils/utils");
 const { getRandomAccount } = require("../utils/slot0trade");
@@ -95,6 +103,9 @@ const PUMP_AMM_DONT_FRONT_PROVIDERS = new Set(["jito"]);
 const PUMP_AMM_DONT_FRONT_MARKER = new PublicKey(
   process.env.PUMP_AMM_DONT_FRONT_MARKER ||
     "jitodontfront81111111TradeWithAxiomDotTrade",
+);
+const PADRE_DONT_FRONT_MARKER = new PublicKey(
+  "jitodontfront11111111111TradeWithPadreDotGg",
 );
 const AVE_COMPUTE_UNIT_LIMIT = Number(
   process.env.AVE_COMPUTE_UNIT_LIMIT || 500000,
@@ -259,7 +270,7 @@ class PumpAMM extends Service {
 
       const tokenProgramId = await getTokenProgramId(tokenMint);
       const needsPoolDetail = wallets.some(
-        (wallet) => !wallet.isDflow && !wallet.isJup,
+        (wallet) => wallet.isPadre || (!wallet.isDflow && !wallet.isJup),
       );
       const poolDetail = needsPoolDetail
         ? await getPoolsWithPrices(tokenMint, ctx)
@@ -273,7 +284,7 @@ class PumpAMM extends Service {
         let bundleHasTip = false;
         const dflowBuyData = await Promise.all(
           wallets.map((wallet, i) => {
-            if (!wallet.isDflow) {
+            if (!wallet.isDflow || wallet.isPadre) {
               return null;
             }
             const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
@@ -296,9 +307,14 @@ class PumpAMM extends Service {
           const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
-          const { buyAmount, limit, price, fee, isAxiom, isAve } = wallet;
+          const { buyAmount, limit, price, fee } = wallet;
+          const isAxiom = !wallet.isPadre && wallet.isAxiom;
+          const isAve = !wallet.isPadre && wallet.isAve;
           let lookupTableAccounts =
-            await this.getProxyPumpSwapLookupTables(isAxiom && !wallet.isOkx, wallet.isOkx);
+            await this.getProxyPumpSwapLookupTables(
+              isAxiom && !wallet.isOkx,
+              wallet.isOkx && !wallet.isPadre,
+            );
           const lookupTables = lookupTableAccounts.length
             ? lookupTableAccounts
             : undefined;
@@ -306,7 +322,7 @@ class PumpAMM extends Service {
           let jitoTipIx = null;
           let troganTipIx = null;
           let walletLookupTables = lookupTables;
-          if (wallet.isOkx) {
+          if (wallet.isOkx && !wallet.isPadre) {
             const okxIxs = await okxSwap.getLocalBuyInstructions(ctx, {
               user,
               tokenMint,
@@ -345,7 +361,7 @@ class PumpAMM extends Service {
               });
               volumeIxs.push(jitoTipIx);
             }
-          } else if (wallet.isDflow) {
+          } else if (wallet.isDflow && !wallet.isPadre) {
             const dflowSwapData = dflowBuyData[i];
             volumeIxs = [...dflowSwapData.instructions];
             lookupTableAccounts = dflowSwapData.lookupTableAccounts;
@@ -365,7 +381,7 @@ class PumpAMM extends Service {
               });
               volumeIxs.push(jitoTipIx);
             }
-          } else if (wallet.isJup) {
+          } else if (wallet.isJup && !wallet.isPadre) {
             const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
               user,
               tokenMint,
@@ -403,14 +419,21 @@ class PumpAMM extends Service {
             const shouldAddPumpAmmDontFront =
               !isAxiom &&
               !isAve &&
+              !wallet.isPadre &&
               wallets.length === 1 &&
               PUMP_AMM_DONT_FRONT &&
               PUMP_AMM_DONT_FRONT_PROVIDERS.has(BUNDLE_PROVIDER);
-            if (shouldAddAxiomDontFront || shouldAddPumpAmmDontFront) {
+            if (
+              shouldAddAxiomDontFront ||
+              shouldAddPumpAmmDontFront ||
+              wallet.isPadre
+            ) {
               setComputeUnitLimitIx.keys.push({
                 pubkey: shouldAddAxiomDontFront
                   ? AXIOM_COMPUTE_BUDGET_MARKER
-                  : PUMP_AMM_DONT_FRONT_MARKER,
+                  : wallet.isPadre
+                    ? PADRE_DONT_FRONT_MARKER
+                    : PUMP_AMM_DONT_FRONT_MARKER,
                 isSigner: false,
                 isWritable: false,
               });
@@ -423,14 +446,22 @@ class PumpAMM extends Service {
                   : price,
               });
 
-            const proxyBuyIxs = await this.genBuyProxyIxs({
-              tokenMint,
-              wallet,
-              poolDetail,
-              slippage,
-              isAxiom,
-              tokenProgramId,
-            });
+            const proxyBuyIxs = wallet.isPadre
+              ? await this.genPadreBuyIxs({
+                  tokenMint,
+                  wallet,
+                  poolDetail,
+                  slippage,
+                  tokenProgramId,
+                })
+              : await this.genBuyProxyIxs({
+                  tokenMint,
+                  wallet,
+                  poolDetail,
+                  slippage,
+                  isAxiom,
+                  tokenProgramId,
+                });
             volumeIxs = [
               setComputeUnitLimitIx,
               setComputeUnitPriceIx,
@@ -1275,6 +1306,62 @@ class PumpAMM extends Service {
     }
 
     return proxyBuyIxs;
+  }
+
+  async genPadreBuyIxs({
+    tokenMint,
+    wallet,
+    poolDetail,
+    slippage,
+    tokenProgramId,
+  }) {
+    if (!poolDetail) {
+      throw new Error("Padre Pump AMM route requires pool detail");
+    }
+    const user = wallet.keypair.publicKey;
+    const { inputTokenAccount, outputTokenAccount } = getPadreSwapAccounts(
+      user,
+      tokenMint,
+      tokenProgramId,
+    );
+    const buyAmount = Number(wallet.buyAmount);
+    if (!Number.isFinite(buyAmount) || buyAmount <= 0) {
+      throw new Error("Padre buyAmount must be a positive number");
+    }
+    const buyAmountLamports = BigInt(
+      Math.trunc(buyAmount * LAMPORTS_PER_SOL),
+    );
+    if (buyAmountLamports === 0n) {
+      throw new Error("Padre buyAmount must be at least one lamport");
+    }
+    const expectedOut = getBuyTokenAmountBuyPoolDetail(
+      buyAmount,
+      poolDetail,
+    );
+    const { minBaseAmountOut } = getMinBaseAmountOut(expectedOut, slippage);
+    const hopKeys = createPadrePumpAmmHopKeys({
+      tokenMint,
+      user,
+      inputTokenAccount,
+      outputTokenAccount,
+      poolDetail,
+    });
+    const padreInstruction = createPadreRouteInstruction({
+      user,
+      inputAmount: buyAmountLamports,
+      minFinalOut: minBaseAmountOut,
+      inputTokenAccount,
+      outputTokenAccount,
+      outputMint: tokenMint,
+      hopKeys,
+      hopProtocol: 3,
+    });
+    const nonceAccount = getPadreNonceAccount(user);
+    const nonceInfo = await connection.getAccountInfo(nonceAccount, "confirmed");
+    return [
+      ...createPadreNonceInstructions(user, undefined, !!nonceInfo),
+      padreInstruction,
+    ];
   }
 }
 

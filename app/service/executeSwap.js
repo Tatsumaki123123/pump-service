@@ -929,6 +929,7 @@ class ExecuteSwap extends Service {
     const stageTrogan = buyStages.some(
       (stage) => stage.isTrogan === true || stage.isTragon === true,
     );
+    const stagePadre = buyStages.some((stage) => stage.isPadre === true);
     return {
       ...config,
       isDflow:
@@ -937,6 +938,7 @@ class ExecuteSwap extends Service {
         stageDflow,
       isJup: config.isJup ?? stageJup,
       isTrogan: config.isTrogan ?? config.isTragon ?? stageTrogan,
+      isPadre: config.isPadre ?? stagePadre,
     };
   }
   /**
