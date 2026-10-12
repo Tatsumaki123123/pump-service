@@ -52,6 +52,8 @@ const {
 } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const {
+  PADRE_FEE_RECIPIENT,
+  PADRE_FEE_BASIS_POINTS,
   createPadreRouteInstruction,
   createPadrePumpAmmHopKeys,
   createPadreNonceInstructions,
@@ -1373,10 +1375,13 @@ class PumpAMM extends Service {
     if (!Number.isFinite(buyAmount) || buyAmount <= 0) {
       throw new Error("Padre buyAmount must be a positive number");
     }
-    const buyAmountLamports = BigInt(
+    const totalAmountLamports = BigInt(
       Math.trunc(buyAmount * LAMPORTS_PER_SOL),
     );
-    if (buyAmountLamports === 0n) {
+    const buyAmountLamports = totalAmountLamports *
+      (10000n - BigInt(PADRE_FEE_BASIS_POINTS)) / 10000n;
+    if (buyAmountLamports === 0n ||
+        buyAmountLamports * BigInt(PADRE_FEE_BASIS_POINTS) / 10000n === 0n) {
       throw new Error("Padre buyAmount must be at least one lamport");
     }
     const hopKeys = createPadrePumpAmmHopKeys({
@@ -1397,6 +1402,8 @@ class PumpAMM extends Service {
       outputMint: tokenMint,
       hopKeys,
       hopProtocol: 3,
+      feeBasisPoints: PADRE_FEE_BASIS_POINTS,
+      feeRecipient: PADRE_FEE_RECIPIENT,
     });
     const nonceAccount = getPadreNonceAccount(user);
     const nonceInfo = await connection.getAccountInfo(nonceAccount, "confirmed");

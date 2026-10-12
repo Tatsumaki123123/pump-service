@@ -22,6 +22,10 @@ const {
 const PADRE_PROGRAM_ID = new PublicKey(
   "term9YPb9mzAsABaqN71A4xdbxHmpBNZavpBiQKZzN3",
 );
+const PADRE_FEE_RECIPIENT = new PublicKey(
+  "J5XGHmzrRmnYWbmw45DbYkdZAU2bwERFZ11qCDXPvFB5",
+);
+const PADRE_FEE_BASIS_POINTS = 100;
 const pumpSwapEventCoder = new BorshCoder(pumpSwapIdl);
 const ROUTE_MIN_FINAL_OUT_OFFSET = 47;
 const ROUTE_DISCRIMINATOR = Buffer.from([
@@ -77,6 +81,12 @@ const u64 = (value) => {
   return data;
 };
 
+const u16 = (value) => {
+  const data = Buffer.alloc(2);
+  data.writeUInt16LE(value, 0);
+  return data;
+};
+
 // Padre's Route instruction creates the temporary WSOL account and the output
 // ATA, invokes the Pump AMM hop, then closes the temporary WSOL account.
 function createPadreRouteInstruction({
@@ -89,12 +99,18 @@ function createPadreRouteInstruction({
   outputMint,
   hopProtocol = 3,
   hopKeys,
+  feeBasisPoints = 0,
+  feeRecipient,
 }) {
   if (!outputMint) {
     throw new Error("Padre route requires an output mint");
   }
   if (!Array.isArray(hopKeys) || hopKeys.length > 255) {
     throw new Error("Padre route requires valid hop accounts");
+  }
+  if (!Number.isInteger(feeBasisPoints) || feeBasisPoints < 0 || feeBasisPoints > 10000 ||
+      (feeBasisPoints > 0 && !feeRecipient)) {
+    throw new Error("Padre route requires valid fee settings");
   }
 
   const setups = [
@@ -114,7 +130,7 @@ function createPadreRouteInstruction({
     Buffer.from([hopProtocol, hopKeys.length, 1]),
     u64(inputAmount),
     u64(minFinalOut),
-    Buffer.from([0, 0]),
+    u16(feeBasisPoints),
     Buffer.from([closes.length]),
     Buffer.from([0, 0]),
   ]);
@@ -145,6 +161,11 @@ function createPadreRouteInstruction({
       readonly(ASSOCIATED_TOKEN_PROGRAM_ID),
       ...setupAccounts,
       ...hopKeys,
+      ...(feeBasisPoints > 0 ? [
+        { pubkey: inputTokenAccount, isSigner: false, isWritable: true },
+        { pubkey: feeRecipient, isSigner: false, isWritable: true },
+        readonly(inputMint),
+      ] : []),
       ...closeAccounts,
     ],
   });
@@ -349,6 +370,8 @@ function createPadreNonceInstructions(
 
 module.exports = {
   PADRE_PROGRAM_ID,
+  PADRE_FEE_RECIPIENT,
+  PADRE_FEE_BASIS_POINTS,
   createPadreRouteInstruction,
   createPadrePumpAmmHopKeys,
   createPadreNonceInstructions,

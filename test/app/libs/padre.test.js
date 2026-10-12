@@ -3,6 +3,9 @@ const bs58 = require('bs58');
 const { PublicKey, SystemProgram, TransactionInstruction } = require('@solana/web3.js');
 const {
   PADRE_PROGRAM_ID,
+  PADRE_FEE_RECIPIENT,
+  PADRE_FEE_BASIS_POINTS,
+  createPadreRouteInstruction,
   createPadreNonceInstructions,
   getPadreNonceAccount,
   isPadreRouteInstruction,
@@ -10,6 +13,64 @@ const {
 } = require('../../../app/libs/padre');
 
 describe('Padre Route quote patch', () => {
+  it('matches the platform fee fields and account order', () => {
+    const platformRoute = Buffer.from(bs58.decode(
+      'hbfuVEmSEBDfEQ2XJQiC4k2ya54mu2UnvEQpkdxMxhs2YyDpTZErxVAbMDqPBJvfq2VFXCrv6pZJKGxLZD',
+    ));
+    const user = new PublicKey('4UewoZUyBxNqQrz85zANSyU6Yb8zuSHyUtmisM1Tumc5');
+    const inputTokenAccount = new PublicKey('GShCUdkt992CqxNabqFr5YDfcC7bvJXkosYaKX7A2jQw');
+    const inputMint = new PublicKey('So11111111111111111111111111111111111111112');
+    const outputTokenAccount = new PublicKey('C9cpFVz8HDvd2b5AuESo3A9QAjUTvdv9s9WRd4MoGffw');
+    const outputMint = new PublicKey('7dvY8Ww9hYUeM2zN6vLXrn2JGwymjfbupQu4yz76pump');
+    const platformAccounts = [
+      'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA',
+      '6uvDnRAvtjvHFdyYExf14wWYwsZnnQCeuc7sF9uhZK4i',
+      'ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw',
+      '7dvY8Ww9hYUeM2zN6vLXrn2JGwymjfbupQu4yz76pump',
+      'So11111111111111111111111111111111111111112',
+      'GShCUdkt992CqxNabqFr5YDfcC7bvJXkosYaKX7A2jQw',
+      'C9cpFVz8HDvd2b5AuESo3A9QAjUTvdv9s9WRd4MoGffw',
+      'DdfKZWRJM3e7KPkZJVL1TnNuMMbe8kXaJSeSbhefK6dM',
+      'GmbSVeSpEHVH1Tnvik8UyR4bBkSSesGCJyrXPBM2LELk',
+      '7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX',
+      'X5QPJcpph4mBAJDzc4hRziFftSbcygV59kRb2Fu6Je1',
+      'GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR',
+      '5Rh4xrZ1ubRiFpJyJLfkSkoLvP7AXyvddZKyCGaChzhG',
+      '65Meho5q6mu9wYtJktnR22ehXUgv2D24KuSKanvKyUtq',
+      '5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx',
+      'pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ',
+      'C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw',
+      'ArBxm6HakFi7JM4xeBgGGp5m4dqskkAP33TutHk3stN8',
+      'J942qcQEJzUWDPSdoKHdp6Ez8dKwKxf8uP9cep7FcryS',
+      '3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR',
+      '6rVkF4HSgy1jrnC3HogfRgPHrq4CtLg5f11URpsC4i9D',
+    ];
+    const hopKeys = platformAccounts.map((account) => ({
+      pubkey: new PublicKey(account), isSigner: false, isWritable: false,
+    }));
+    const route = createPadreRouteInstruction({
+      user,
+      inputAmount: 9_900_000n,
+      minFinalOut: platformRoute.readBigUInt64LE(47),
+      inputTokenAccount,
+      outputTokenAccount,
+      outputMint,
+      hopKeys,
+      feeBasisPoints: PADRE_FEE_BASIS_POINTS,
+      feeRecipient: PADRE_FEE_RECIPIENT,
+    });
+
+    assert.deepEqual(route.data, platformRoute);
+    assert.deepEqual(route.keys.slice(-5).map(({ pubkey }) => pubkey.toBase58()), [
+      inputTokenAccount.toBase58(),
+      PADRE_FEE_RECIPIENT.toBase58(),
+      inputMint.toBase58(),
+      inputTokenAccount.toBase58(),
+      inputMint.toBase58(),
+    ]);
+    assert.equal(9_900_000n * BigInt(PADRE_FEE_BASIS_POINTS) / 10_000n, 99_000n);
+  });
+
   it('builds the initial nonce instructions with the successful Terminal account layout', () => {
     const user = new PublicKey('6GVXG2rJMEQELudVzTf1JnSZ8kVuXMCobcGdDQP4W4FP');
     const nonce = Buffer.from(bs58.decode('DVGvGmyf25ww42')).readUInt16LE(8);
