@@ -134,6 +134,17 @@ const SLIPPAGE_BASIS_POINTS = Number(
 const BUY_SLIPPAGE_ERROR = "BuySlippageBelowMinBaseAmountOut";
 const BASIS_POINTS_DENOMINATOR = 10000n;
 
+function usesDedicatedPumpRoute(wallet) {
+  return wallet.isAxiom || wallet.isPadre || wallet.isAve ||
+    wallet.isProxy || wallet.isOkx || wallet.isDflow ||
+    wallet.isGmgn || wallet.isFomo || wallet.isTrogan ||
+    wallet.isTragon;
+}
+
+function requiresPumpPool(wallet) {
+  return usesDedicatedPumpRoute(wallet) && !wallet.isDflow;
+}
+
 function getChainBuyBaseAmountOut(logs) {
   if (
     !Array.isArray(logs) ||
@@ -279,11 +290,29 @@ class PumpAMM extends Service {
 
       const tokenProgramId = await getTokenProgramId(tokenMint);
       const needsPoolDetail = wallets.some(
-        (wallet) => wallet.isProxy || wallet.isPadre || (!wallet.isDflow && !wallet.isJup),
+        (wallet) => requiresPumpPool(wallet) ||
+          (!wallet.isDflow && !wallet.isJup),
       );
-      const poolDetail = needsPoolDetail
-        ? await getPoolsWithPrices(tokenMint, ctx)
-        : undefined;
+      let poolDetail;
+      let useJupFallback = false;
+      if (needsPoolDetail) {
+        try {
+          poolDetail = await getPoolsWithPrices(tokenMint, ctx);
+        } catch (error) {
+          if (error.code !== "NO_WSOL_PUMP_POOL") throw error;
+          useJupFallback = true;
+          console.log(
+            chalk.yellow(
+              `No WSOL Pump AMM pool for ${tokenMint.toBase58()}; routing ordinary wallets through Jupiter.`,
+            ),
+          );
+        }
+      }
+      if (useJupFallback && wallets.some(requiresPumpPool)) {
+        throw new Error(
+          `No WSOL Pump AMM pool for ${tokenMint.toBase58()}; configured dedicated-route wallets require their Pump route`,
+        );
+      }
       const func = async (wallets) => {
         const buyTxns = [];
         const isPadreBundle = wallets.length > 1 &&
@@ -295,7 +324,8 @@ class PumpAMM extends Service {
         let bundleHasTip = false;
         const dflowBuyData = await Promise.all(
           wallets.map((wallet, i) => {
-            if (!wallet.isDflow || wallet.isPadre || wallet.isProxy) {
+            if (!wallet.isDflow || wallet.isPadre || wallet.isProxy ||
+                wallet.isAxiom || wallet.isAve || wallet.isOkx) {
               return null;
             }
             const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
@@ -373,7 +403,8 @@ class PumpAMM extends Service {
               });
               volumeIxs.push(jitoTipIx);
             }
-          } else if (wallet.isDflow && !wallet.isPadre && !isProxy) {
+          } else if (wallet.isDflow && !wallet.isPadre && !isProxy &&
+                     !wallet.isAxiom && !wallet.isAve && !wallet.isOkx) {
             const dflowSwapData = dflowBuyData[i];
             volumeIxs = [...dflowSwapData.instructions];
             lookupTableAccounts = dflowSwapData.lookupTableAccounts;
@@ -393,12 +424,17 @@ class PumpAMM extends Service {
               });
               volumeIxs.push(jitoTipIx);
             }
-          } else if (wallet.isJup && !wallet.isPadre && !isProxy) {
+          } else if (
+            (wallet.isJup || useJupFallback) &&
+            !usesDedicatedPumpRoute(wallet)
+          ) {
             const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
               user,
               tokenMint,
               buyAmount,
-              slippage,
+              slippage: useJupFallback
+                ? wallet.slippage ?? 0.01
+                : slippage,
               connection,
             });
             volumeIxs = [...jupSwapData.instructions];
@@ -994,6 +1030,24 @@ class PumpAMM extends Service {
       const tokenMint = new PublicKey(token);
       const tokenProgramId = await getTokenProgramId(tokenMint);
 
+      let poolDetail;
+      try {
+        poolDetail = await getPoolsWithPrices(tokenMint, ctx);
+      } catch (error) {
+        if (error.code !== "NO_WSOL_PUMP_POOL") throw error;
+        if (wallets.some(usesDedicatedPumpRoute)) {
+          throw new Error(
+            `No WSOL Pump AMM pool for ${tokenMint.toBase58()}; configured dedicated-route wallets require their Pump route`,
+          );
+        }
+        return this.batchSellTokenByJupiter(
+          tokenMint,
+          wallets,
+          tokenProgramId,
+          getWalletSellPercent,
+        );
+      }
+
       const seenSellWallets = new Set();
       const uniqueWallets = wallets.filter((wallet) => {
         const walletAddress = wallet.keypair.publicKey.toBase58();
@@ -1040,10 +1094,7 @@ class PumpAMM extends Service {
       newWallets.reverse();
 
       const func = async (wallets) => {
-        const [{ blockhash }, poolDetail] = await Promise.all([
-          connection.getLatestBlockhash(),
-          getPoolsWithPrices(tokenMint, ctx),
-        ]);
+        const { blockhash } = await connection.getLatestBlockhash();
         const sellTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
         const tipAmount = ctx.service.jito.getTipAmount();
@@ -1214,6 +1265,81 @@ class PumpAMM extends Service {
     } else {
       throw new Error("batch sell Token: param error");
     }
+  }
+
+  async batchSellTokenByJupiter(tokenMint, wallets, tokenProgramId, getWalletSellPercent) {
+    const { ctx } = this;
+    const seen = new Set();
+    const uniqueWallets = wallets.filter((wallet) => {
+      const address = wallet.keypair.publicKey.toBase58();
+      if (seen.has(address)) return false;
+      seen.add(address);
+      return true;
+    });
+    const sellWallets = [];
+    for (const wallet of uniqueWallets) {
+      const owner = wallet.keypair.publicKey;
+      const tokenAccount = getAssociatedTokenAddressSync(
+        tokenMint,
+        owner,
+        false,
+        tokenProgramId,
+      );
+      const accounts = await connection.getParsedTokenAccountsByOwner(
+        owner,
+        { mint: tokenMint },
+        "confirmed",
+      );
+      const source = accounts.value.find(({ pubkey }) => pubkey.equals(tokenAccount));
+      const balanceRaw = source
+        ? BigInt(source.account.data.parsed.info.tokenAmount.amount)
+        : 0n;
+      const percentBasisPoints = BigInt(Math.round(getWalletSellPercent(wallet) * 100));
+      const amountRaw = balanceRaw * percentBasisPoints / 10000n;
+      if (amountRaw > 0n) sellWallets.push({ wallet, amountRaw });
+    }
+    if (sellWallets.length === 0) return true;
+
+    for (const batch of splitIntoBundles(sellWallets.reverse())) {
+      const { blockhash } = await connection.getLatestBlockhash();
+      const transactions = [];
+      for (const { wallet, amountRaw } of batch) {
+        const keypair = wallet.keypair;
+        const user = keypair.publicKey;
+        const swapData = await jupSwap.getSellInstructions(ctx, {
+          user,
+          tokenMint,
+          tokenAmount: amountRaw.toString(),
+          slippage: wallet.slippage ?? 0.01,
+          connection,
+        });
+        const instructions = [...swapData.instructions];
+        if (batch.length > 1 && transactions.length === 0) {
+          instructions.push(SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: ctx.service.jito.getTipAcc(),
+            lamports: ctx.service.jito.getTipAmount(),
+          }));
+        }
+        const message = new TransactionMessage({
+          payerKey: user,
+          recentBlockhash: blockhash,
+          instructions,
+        }).compileToV0Message(swapData.lookupTableAccounts);
+        const transaction = new VersionedTransaction(message);
+        transaction.sign([keypair]);
+        if (transaction.serialize().length > MAX_TRANSACTION_SIZE) {
+          throw new Error(`Jupiter sell transaction is too large for ${user.toBase58()}`);
+        }
+        transactions.push(transaction);
+      }
+      if (transactions.length > 1) {
+        await ctx.service.jito.sendBundle(transactions);
+      } else {
+        await ctx.service.jito.sendTransactionsByRpc(transactions);
+      }
+    }
+    return true;
   }
 
   async getBuyAmmIxs({

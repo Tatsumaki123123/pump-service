@@ -160,9 +160,11 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
   const quoteMints = [...new Set(mappedPools.map((item) =>
     item.poolData.quoteMint.toBase58(),
   ))];
-  throw new Error(
-    `No Pump AMM WSOL quote pool for ${mintAddress.toBase58()}; available quote mints: ${quoteMints.join(", ")}. Configure this wallet to use Jupiter routing (isJup) for SOL buys.`,
+  const error = new Error(
+    `No Pump AMM WSOL quote pool for ${mintAddress.toBase58()}; available quote mints: ${quoteMints.join(", ")}`,
   );
+  error.code = "NO_WSOL_PUMP_POOL";
+  throw error;
 };
 
 const getPoolsWithQuoteMint = async (mintAddress) => {

@@ -2,6 +2,8 @@
 
 本文基于当前代码整理这四个模型以及 `executeSwap`、`executeToken`、`autoSwap` 服务之间的调用关系，重点说明一次线路执行从启动、建钱包、检查代币、买卖到回收的完整链路。
 
+Pump AMM 买卖需要代币与 WSOL 的报价池。若链上有 Pump AMM 池但没有 WSOL 报价池，未配置专用路由的普通钱包会改用 Jupiter 进行 SOL 买入或代币卖出，默认滑点为 1%（线路显式设置滑点时以线路配置为准）。配置了 Axiom、Padre、Ave、代理、OKX 等专用路由的钱包仍使用原路由；这些路由当前依赖 WSOL Pump AMM 池，缺少该池时会明确报错，不会静默改走 Jupiter。Jupiter 请求未设置平台手续费，但仍需支付所选交易池的费用、链上手续费以及现有批量发送配置的 tip。
+
 ## 1. 一句话概览
 
 `ExecuteLine` 定义“怎么执行”，`ExecuteData` 定义“当前哪一批执行实例”，`ExecuteWallet` 保存该批次实际使用的钱包，`ExecuteToken` 保存该批次处理过的代币任务。
