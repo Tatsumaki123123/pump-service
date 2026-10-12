@@ -4,6 +4,8 @@ const {
   TransactionInstruction,
 } = require("@solana/web3.js");
 const { randomInt } = require("node:crypto");
+const { BorshCoder } = require("@coral-xyz/anchor");
+const pumpSwapIdl = require("../IDL/pumpswap-idl.json");
 const {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   NATIVE_MINT,
@@ -20,6 +22,8 @@ const {
 const PADRE_PROGRAM_ID = new PublicKey(
   "term9YPb9mzAsABaqN71A4xdbxHmpBNZavpBiQKZzN3",
 );
+const pumpSwapEventCoder = new BorshCoder(pumpSwapIdl);
+const ROUTE_MIN_FINAL_OUT_OFFSET = 47;
 const ROUTE_DISCRIMINATOR = Buffer.from([
   229, 23, 203, 151, 122, 227, 173, 42,
 ]);
@@ -144,6 +148,38 @@ function createPadreRouteInstruction({
       ...closeAccounts,
     ],
   });
+}
+
+function getPadreBuyBaseAmountOut(logs, pool, user) {
+  for (let i = (logs || []).length - 1; i >= 0; i--) {
+    const match = logs[i].match(/^Program data: ([A-Za-z0-9+/=]+)$/);
+    if (!match) continue;
+    let event;
+    try {
+      event = pumpSwapEventCoder.events.decode(match[1]);
+    } catch (_) {
+      continue;
+    }
+    if (
+      event?.name === "BuyEvent" &&
+      event.data.pool.equals(pool) &&
+      event.data.user.equals(user)
+    ) {
+      return BigInt(event.data.base_amount_out.toString());
+    }
+  }
+  return null;
+}
+
+function setPadreRouteMinFinalOut(instruction, minFinalOut) {
+  if (
+    !instruction.programId.equals(PADRE_PROGRAM_ID) ||
+    instruction.data.length !== 60 ||
+    !instruction.data.subarray(0, 8).equals(ROUTE_DISCRIMINATOR)
+  ) {
+    throw new Error("Invalid Padre route instruction");
+  }
+  instruction.data.writeBigUInt64LE(BigInt(minFinalOut), ROUTE_MIN_FINAL_OUT_OFFSET);
 }
 
 function getPadreSwapAccounts(user, tokenMint, tokenProgramId) {
@@ -315,4 +351,6 @@ module.exports = {
   createPadreNonceInstructions,
   getPadreNonceAccount,
   getPadreSwapAccounts,
+  getPadreBuyBaseAmountOut,
+  setPadreRouteMinFinalOut,
 };

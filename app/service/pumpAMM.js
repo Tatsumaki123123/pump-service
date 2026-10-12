@@ -28,7 +28,6 @@ const chalk = require("chalk");
 
 const {
   getPoolsWithPrices,
-  getBuyTokenAmountBuyPoolDetail,
   getUserVolumeAccumulatorPda,
 } = require("../libs/pool");
 
@@ -53,11 +52,14 @@ const {
 } = require("../utils/solana");
 const { createTroProxyInstruction } = require("../libs/trogan");
 const {
+  PADRE_PROGRAM_ID,
   createPadreRouteInstruction,
   createPadrePumpAmmHopKeys,
   createPadreNonceInstructions,
   getPadreNonceAccount,
   getPadreSwapAccounts,
+  getPadreBuyBaseAmountOut,
+  setPadreRouteMinFinalOut,
 } = require("../libs/padre");
 const moment = require("moment");
 const { sleep, splitIntoBundles } = require("../utils/utils");
@@ -699,6 +701,44 @@ class PumpAMM extends Service {
               commitment: "confirmed",
             });
 
+            if (wallet.isPadre) {
+              const chainBaseAmountOut = getPadreBuyBaseAmountOut(
+                simulationResult.value.logs,
+                poolDetail.address,
+                user,
+              );
+              if (chainBaseAmountOut === null || chainBaseAmountOut <= 0n) {
+                throw new Error(
+                  `Padre Pump AMM quote unavailable: ${JSON.stringify(simulationResult.value.err)} ${JSON.stringify(simulationResult.value.logs || [])}`,
+                );
+              }
+              const { slippageBps, minBaseAmountOut } = getMinBaseAmountOut(
+                chainBaseAmountOut,
+                slippage,
+              );
+              const padreRouteIx = txInstructions.find((ix) =>
+                ix.programId.equals(PADRE_PROGRAM_ID),
+              );
+              setPadreRouteMinFinalOut(padreRouteIx, minBaseAmountOut);
+              const quotedMessageV0 = new TransactionMessage({
+                payerKey: user,
+                recentBlockhash: blockhash,
+                instructions: txInstructions,
+              }).compileToV0Message(walletLookupTables);
+              tx = new VersionedTransaction(quotedMessageV0);
+              tx.sign([keypair, ...(wallet.extraSigners || [])]);
+              assertTxSize(tx, "quoted Padre swap tx");
+              console.log("PADRE_PUMP_AMM_CHAIN_QUOTE", {
+                user: user.toBase58(),
+                chainBaseAmountOut: chainBaseAmountOut.toString(),
+                minBaseAmountOut: minBaseAmountOut.toString(),
+                slippageBps: slippageBps.toString(),
+              });
+              simulationResult = await connection.simulateTransaction(tx, {
+                commitment: "confirmed",
+              });
+            }
+
             if (simulationResult.value.err) {
               const chainBaseAmountOut = getChainBuyBaseAmountOut(
                 simulationResult.value.logs,
@@ -1334,11 +1374,6 @@ class PumpAMM extends Service {
     if (buyAmountLamports === 0n) {
       throw new Error("Padre buyAmount must be at least one lamport");
     }
-    const expectedOut = getBuyTokenAmountBuyPoolDetail(
-      buyAmount,
-      poolDetail,
-    );
-    const { minBaseAmountOut } = getMinBaseAmountOut(expectedOut, slippage);
     const hopKeys = createPadrePumpAmmHopKeys({
       tokenMint,
       user,
@@ -1349,7 +1384,9 @@ class PumpAMM extends Service {
     const padreInstruction = createPadreRouteInstruction({
       user,
       inputAmount: buyAmountLamports,
-      minFinalOut: minBaseAmountOut,
+      // Probe the exact Pump AMM output in simulation before setting the
+      // slippage floor on the signed transaction.
+      minFinalOut: 0n,
       inputTokenAccount,
       outputTokenAccount,
       outputMint: tokenMint,
