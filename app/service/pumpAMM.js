@@ -1035,11 +1035,11 @@ class PumpAMM extends Service {
         poolDetail = await getPoolsWithPrices(tokenMint, ctx);
       } catch (error) {
         if (error.code !== "NO_WSOL_PUMP_POOL") throw error;
-        if (wallets.some(usesDedicatedPumpRoute)) {
-          throw new Error(
-            `No WSOL Pump AMM pool for ${tokenMint.toBase58()}; configured dedicated-route wallets require their Pump route`,
-          );
-        }
+        console.log(
+          chalk.yellow(
+            `No WSOL Pump AMM pool for ${tokenMint.toBase58()}; routing sell through Jupiter.`,
+          ),
+        );
         return this.batchSellTokenByJupiter(
           tokenMint,
           wallets,
