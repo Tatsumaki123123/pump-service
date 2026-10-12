@@ -5,6 +5,12 @@ module.exports = (app) => {
   const { router, controller } = app;
   router.get("/", controller.home.index);
 
+  router.post("/v1/fomo/importWallet", controller.fomo.importWallet);
+  router.post("/v1/fomo/getWallets", controller.fomo.getWallets);
+  router.post("/v1/fomo/updateWallet", controller.fomo.updateWallet);
+  router.post("/v1/fomo/deleteWallet", controller.fomo.deleteWallet);
+  router.post("/v1/fomo/sellToken", controller.fomo.sellToken);
+
   router.post("/v1/execute/start", controller.executeSwap.start);
 
   router.post(

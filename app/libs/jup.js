@@ -59,11 +59,12 @@ class JupSDK {
       slippage,
       connection,
       useSharedAccounts = false,
+      outputMint = NATIVE_MINT,
     } = params;
     const quoteResponse = await this.getQuote(
       ctx,
       tokenMint.toBase58(),
-      NATIVE_MINT.toBase58(),
+      outputMint.toBase58 ? outputMint.toBase58() : String(outputMint),
       tokenAmount,
       slippage,
     );
