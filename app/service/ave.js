@@ -73,10 +73,22 @@ function aveTokenToDB(item) {
   const isToken0 = target_token === token0_address;
   const symbol = isToken0 ? token0_symbol : token1_symbol;
   const logoUrl = isToken0 ? token0_logo_url : token1_logo_url;
+  const baseToken = isToken0
+    ? {
+        token1_address,
+        token1_symbol,
+        token1_logo_url,
+      }
+    : {
+        token1_address: token0_address,
+        token1_symbol: token0_symbol,
+        token1_logo_url: token0_logo_url,
+      };
   return {
     token: item.target_token,
     symbol: symbol,
     icon: getAveLogoUrl(logoUrl || item.logo_url),
+    ...baseToken,
     mkt_cap: item.market_cap,
     create_time: item.created_at,
     amm: item.amm,

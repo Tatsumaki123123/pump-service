@@ -309,6 +309,11 @@ class PumpAMM extends Service {
         }
       }
       if (useJupFallback && wallets.some(requiresPumpPool)) {
+        if (wallets.some((wallet) => wallet.isAxiom)) {
+          throw new Error(
+            `Axiom multi-hop buy for non-WSOL Pump AMM pool ${tokenMint.toBase58()} is not implemented; the current Axiom instruction builder only supports WSOL quote pools`,
+          );
+        }
         throw new Error(
           `No WSOL Pump AMM pool for ${tokenMint.toBase58()}; configured dedicated-route wallets require their Pump route`,
         );

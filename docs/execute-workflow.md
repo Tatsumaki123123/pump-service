@@ -147,6 +147,8 @@ controller.executeSwap.start
 4. 查询该线路被标记为 `ReserveToken.type=bad` 的代币。
 5. 从来源列表中排除上述两类代币，返回可选列表。
 
+AVE 普通列表会在每个代币条目中返回交易对另一侧的 `token1_address`、`token1_symbol` 和 `token1_logo_url`。这些字段保留 AVE 原始值（图标可为相对路径）；目标代币位于交易对的 token1 侧时，字段取 token0 侧。其他来源未提供交易对元数据时不返回这些字段。
+
 `POST /v1/executetoken/tokenList` 传入非 `default` 的 `listType` 时，会直接查询 `ReserveToken`，不会走上述来源网站列表逻辑。
 
 当前 `executeToken.initTokenList(line)` 方法为空，因此 `POST /v1/executetoken/initTokenList` 目前没有实际初始化动作。
