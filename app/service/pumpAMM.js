@@ -39,6 +39,11 @@ const {
   FOMO_TRANSFER_LAMPORTS,
 } = require("../constants");
 const PumpSwapSDK = require("../libs/pumpSwap");
+const {
+  createProxyBuyInstruction,
+  getProxyBuyInstruction,
+  setProxyBuyMinBaseAmountOut,
+} = require("../libs/pumpProxy");
 const AvePumpSwapSDK = require("../libs/aveProxy");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const { setLocalOkxAmmExpectedAmountOut } = require("../libs/okxLocalRouter");
@@ -274,7 +279,7 @@ class PumpAMM extends Service {
 
       const tokenProgramId = await getTokenProgramId(tokenMint);
       const needsPoolDetail = wallets.some(
-        (wallet) => wallet.isPadre || (!wallet.isDflow && !wallet.isJup),
+        (wallet) => wallet.isProxy || wallet.isPadre || (!wallet.isDflow && !wallet.isJup),
       );
       const poolDetail = needsPoolDetail
         ? await getPoolsWithPrices(tokenMint, ctx)
@@ -282,7 +287,7 @@ class PumpAMM extends Service {
       const func = async (wallets) => {
         const buyTxns = [];
         const isPadreBundle = wallets.length > 1 &&
-          wallets.every((wallet) => wallet.isPadre);
+          wallets.every((wallet) => wallet.isPadre && !wallet.isProxy);
         const isNozomi =
           String(sendOptions.batchPlatform || "").toLowerCase() === "nozomi";
         let jipAcc = ctx.service.jito.getTipAcc(sendOptions);
@@ -290,7 +295,7 @@ class PumpAMM extends Service {
         let bundleHasTip = false;
         const dflowBuyData = await Promise.all(
           wallets.map((wallet, i) => {
-            if (!wallet.isDflow || wallet.isPadre) {
+            if (!wallet.isDflow || wallet.isPadre || wallet.isProxy) {
               return null;
             }
             const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
@@ -314,12 +319,13 @@ class PumpAMM extends Service {
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
           const { buyAmount, limit, price, fee } = wallet;
-          const isAxiom = !wallet.isPadre && wallet.isAxiom;
-          const isAve = !wallet.isPadre && wallet.isAve;
+          const isProxy = wallet.isProxy === true;
+          const isAxiom = !isProxy && !wallet.isPadre && wallet.isAxiom;
+          const isAve = !isProxy && !wallet.isPadre && wallet.isAve;
           let lookupTableAccounts =
             await this.getProxyPumpSwapLookupTables(
               isAxiom && !wallet.isOkx,
-              wallet.isOkx && !wallet.isPadre,
+              wallet.isOkx && !wallet.isPadre && !isProxy,
             );
           const lookupTables = lookupTableAccounts.length
             ? lookupTableAccounts
@@ -328,7 +334,7 @@ class PumpAMM extends Service {
           let jitoTipIx = null;
           let troganTipIx = null;
           let walletLookupTables = lookupTables;
-          if (wallet.isOkx && !wallet.isPadre) {
+          if (wallet.isOkx && !wallet.isPadre && !isProxy) {
             const okxIxs = await okxSwap.getLocalBuyInstructions(ctx, {
               user,
               tokenMint,
@@ -367,7 +373,7 @@ class PumpAMM extends Service {
               });
               volumeIxs.push(jitoTipIx);
             }
-          } else if (wallet.isDflow && !wallet.isPadre) {
+          } else if (wallet.isDflow && !wallet.isPadre && !isProxy) {
             const dflowSwapData = dflowBuyData[i];
             volumeIxs = [...dflowSwapData.instructions];
             lookupTableAccounts = dflowSwapData.lookupTableAccounts;
@@ -387,7 +393,7 @@ class PumpAMM extends Service {
               });
               volumeIxs.push(jitoTipIx);
             }
-          } else if (wallet.isJup && !wallet.isPadre) {
+          } else if (wallet.isJup && !wallet.isPadre && !isProxy) {
             const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
               user,
               tokenMint,
@@ -425,7 +431,7 @@ class PumpAMM extends Service {
             const shouldAddPumpAmmDontFront =
               !isAxiom &&
               !isAve &&
-              !wallet.isPadre &&
+              (!wallet.isPadre || isProxy) &&
               wallets.length === 1 &&
               PUMP_AMM_DONT_FRONT &&
               PUMP_AMM_DONT_FRONT_PROVIDERS.has(BUNDLE_PROVIDER);
@@ -434,12 +440,12 @@ class PumpAMM extends Service {
             if (
               shouldAddAxiomDontFront ||
               shouldAddPumpAmmDontFront ||
-              (wallet.isPadre && i === 0)
+              (wallet.isPadre && !isProxy && i === 0)
             ) {
               setComputeUnitLimitIx.keys.push({
                 pubkey: shouldAddAxiomDontFront
                   ? AXIOM_COMPUTE_BUDGET_MARKER
-                  : wallet.isPadre
+                  : wallet.isPadre && !isProxy
                     ? PADRE_DONT_FRONT_MARKER
                     : PUMP_AMM_DONT_FRONT_MARKER,
                 isSigner: false,
@@ -454,7 +460,7 @@ class PumpAMM extends Service {
                   : price,
               });
 
-            const proxyBuyIxs = wallet.isPadre
+            const proxyBuyIxs = wallet.isPadre && !isProxy
               ? await this.genPadreBuyIxs({
                   tokenMint,
                   wallet,
@@ -590,14 +596,14 @@ class PumpAMM extends Service {
                 /(encoding overruns Uint8Array|exceeds maximum allowed size)/.test(
                   error.message,
                 );
-              if (canSplitTip && (isNozomi || isAxiom || wallet.isPadre)) {
+              if (canSplitTip && (isNozomi || isAxiom || (wallet.isPadre && !isProxy))) {
                 throw new Error(
                   `${isNozomi ? "Nozomi" : isAxiom ? "Axiom" : "Padre"} transaction is too large after adding the required bundle tip; reduce the swap instruction size or use a more compact lookup table.`,
                 );
               }
               if (!canSplitTip) {
                 if (
-                  wallet.isAxiom &&
+                  isAxiom &&
                   /encoding overruns Uint8Array/.test(error.message)
                 ) {
                   throw new Error(
@@ -639,7 +645,7 @@ class PumpAMM extends Service {
               try {
                 assertTxSize(tx, "swap tx");
               } catch (sizeError) {
-                if (wallet.isAxiom) {
+                if (isAxiom) {
                   throw new Error(
                     "Axiom transaction is too large. Configure AXIOM_LOOKUP_TABLES with the Axiom address lookup table used by the source transaction.",
                   );
@@ -710,7 +716,7 @@ class PumpAMM extends Service {
               commitment: "confirmed",
             });
 
-            if (wallet.isPadre) {
+            if (wallet.isPadre && !isProxy) {
               const chainBaseAmountOut = getPadreBuyBaseAmountOut(
                 simulationResult.value.logs,
                 poolDetail.address,
@@ -752,10 +758,11 @@ class PumpAMM extends Service {
               );
               const buyExactQuoteInIx =
                 pSwap.getBuyExactQuoteInInstruction(txInstructions);
-              const aveBuyIx = buyExactQuoteInIx
+              const proxyBuyIx = getProxyBuyInstruction(txInstructions);
+              const aveBuyIx = buyExactQuoteInIx || proxyBuyIx
                 ? null
                 : avePumpSwap.getBuyInstruction(txInstructions);
-              const quotePatchIx = buyExactQuoteInIx || aveBuyIx;
+              const quotePatchIx = buyExactQuoteInIx || proxyBuyIx || aveBuyIx;
 
               if (chainBaseAmountOut !== null && quotePatchIx) {
                 const { slippageBps, minBaseAmountOut } = getMinBaseAmountOut(
@@ -767,6 +774,8 @@ class PumpAMM extends Service {
                     buyExactQuoteInIx,
                     minBaseAmountOut,
                   );
+                } else if (proxyBuyIx) {
+                  setProxyBuyMinBaseAmountOut(proxyBuyIx, minBaseAmountOut);
                 } else {
                   avePumpSwap.setBuyMinBaseAmountOut(
                     aveBuyIx,
@@ -784,7 +793,7 @@ class PumpAMM extends Service {
                 assertTxSize(tx, "chain-quoted swap tx");
 
                 console.log("PUMP_AMM_CHAIN_QUOTE_V2", {
-                  route: buyExactQuoteInIx ? "pump_amm" : "ave",
+                  route: buyExactQuoteInIx ? "pump_amm" : proxyBuyIx ? "proxy" : "ave",
                   user: user.toBase58(),
                   quoteAmountIn: Math.trunc(
                     Number(buyAmount) * LAMPORTS_PER_SOL,
@@ -809,7 +818,7 @@ class PumpAMM extends Service {
                   JSON.stringify(simulationResult.value.logs || []),
               );
             }
-            if (wallet.isOkx) {
+            if (wallet.isOkx && !isProxy) {
               const amountOut = getOkxAmmAmountOut(simulationResult.value.logs);
               if (amountOut === null || amountOut <= 0n) {
                 throw new Error("OKX Pump AMM simulation did not return an output quote");
@@ -1317,7 +1326,28 @@ class PumpAMM extends Service {
     const keypair = wallet.keypair;
     const user = keypair.publicKey;
     const { buyAmount } = wallet;
-    if (isAxiom) {
+    if (wallet.isProxy === true) {
+      const proxyIxs = await this.getBuyAmmIxs({
+        tokenMint,
+        user,
+        buyAmount,
+        poolDetail,
+        slippage,
+        tokenProgramId,
+      });
+      const pumpBuyIx = pSwap.getBuyExactQuoteInInstruction(proxyIxs);
+      if (!pumpBuyIx) {
+        throw new Error("Pump AMM buy_exact_quote_in instruction missing");
+      }
+      const proxyBuyIx = await createProxyBuyInstruction({
+        user,
+        tokenMint,
+        buyAmount,
+        poolDetail,
+        tokenProgramId,
+      });
+      proxyBuyIxs = proxyIxs.map((ix) => ix === pumpBuyIx ? proxyBuyIx : ix);
+    } else if (isAxiom) {
       const axiomBuy = await createAxiomBuyInstructions({
         tokenMint,
         user,
