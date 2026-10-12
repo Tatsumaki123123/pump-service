@@ -4,7 +4,7 @@
 
 ## 导入钱包
 
-`POST /v1/fomo/importWallet`
+`POST /v1/execute/fomo/importWallet`
 
 ```json
 {
@@ -18,7 +18,7 @@
 
 ## 查询钱包信息
 
-`POST /v1/fomo/getWallets`
+`POST /v1/execute/fomo/getWallets`
 
 ```json
 {
@@ -31,7 +31,7 @@
 
 ## 修改钱包
 
-`POST /v1/fomo/updateWallet`
+`POST /v1/execute/fomo/updateWallet`
 
 ```json
 {
@@ -46,7 +46,7 @@
 
 ## 删除钱包
 
-`POST /v1/fomo/deleteWallet`
+`POST /v1/execute/fomo/deleteWallet`
 
 ```json
 {
@@ -60,7 +60,7 @@
 
 ## 卖出代币为 USDC
 
-`POST /v1/fomo/sellToken`
+`POST /v1/execute/fomo/sellToken`
 
 ```json
 {
