@@ -11,6 +11,7 @@ const {
 } = require("@solana/web3.js");
 const {
   getAssociatedTokenAddressSync,
+  NATIVE_MINT,
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
 } = require("@solana/spl-token");
@@ -184,12 +185,32 @@ class Fomo extends Service {
     return { total: list.length, list };
   }
 
-  async sellToken({ lineId: lineIdValue, address, token, sellRatio = 1 }) {
+  async sellToken({ lineId, address, token, sellRatio = 1 }) {
+    return this.swapToken({
+      lineId,
+      address,
+      token,
+      outputMint: new PublicKey(usdc),
+      sellRatio,
+    });
+  }
+
+  async swapUsdcToSol({ lineId, address, sellRatio = 1 }) {
+    return this.swapToken({
+      lineId,
+      address,
+      token: usdc,
+      outputMint: NATIVE_MINT,
+      sellRatio,
+    });
+  }
+
+  async swapToken({ lineId: lineIdValue, address, token, outputMint, sellRatio }) {
     const lineId = parseLineId(lineIdValue);
     await this.ensureLine(lineId);
     const owner = parseAddress(address, "address");
     const mint = parseAddress(token, "token");
-    if (mint.toBase58() === usdc) throw new Error("token must differ from USDC");
+    if (mint.equals(outputMint)) throw new Error("Input and output tokens must differ");
     const ratio = parseRatio(sellRatio);
     const wallet = await this.ctx.model.FomoWallet.findOne({
       lineId,
@@ -218,7 +239,7 @@ class Fomo extends Service {
       user: owner,
       tokenMint: mint,
       tokenAmount: amountRaw.toString(),
-      outputMint: new PublicKey(usdc),
+      outputMint,
       slippage: 0.01,
       connection,
     });
@@ -239,13 +260,13 @@ class Fomo extends Service {
       "confirmed",
     );
     if (confirmation.value.err) {
-      throw new Error(`Fomo sell transaction failed: ${signature} ${JSON.stringify(confirmation.value.err)}`);
+      throw new Error(`Fomo swap transaction failed: ${signature} ${JSON.stringify(confirmation.value.err)}`);
     }
     return {
       lineId,
       address: owner.toBase58(),
       token: mint.toBase58(),
-      outputMint: usdc,
+      outputMint: outputMint.toBase58(),
       sellRatio: Number(ratio) / Number(RATIO_SCALE),
       amountRaw: amountRaw.toString(),
       amount: decimalAmount(amountRaw, tokenBalance.value.decimals),

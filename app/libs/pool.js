@@ -24,6 +24,11 @@ const PUMP_PROGRAM_ID_PUBKEY = new PublicKey(PUMP_PROGRAM_ID);
 
 const program = new Program(IDL, { connection });
 
+function isWsolPool(poolData, mintAddress) {
+  return mintAddress.equals(poolData.baseMint) &&
+    NATIVE_MINT.equals(poolData.quoteMint);
+}
+
 function decodePoolAccount(data) {
   const accountData = Buffer.from(data);
   try {
@@ -58,19 +63,25 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
   if (dbData && dbData.poolObj) {
     const poolData = reverseBnLayoutFormatter(dbData.poolObj);
     const poolAddress = new PublicKey(dbData.pool);
+    let cachedPoolInvalid = false;
 
     try {
       const accountInfo = await connection.getAccountInfo(
         poolAddress,
         "confirmed",
       );
-      if (accountInfo && accountInfo.data.length > 8) {
+      if (accountInfo && accountInfo.data.length > 8 &&
+          accountInfo.owner.equals(PUMP_AMM_PROGRAM_ID)) {
         // Pool fields such as coinCreator are part of the on-chain account.
         // A cached poolObj can predate a pool layout/update, which produces a
         // wrong coin_creator_vault_authority PDA during a swap. Always decode
         // the current account when it is available and retain the cache only
         // as a fallback for transient RPC failures.
         const freshPoolData = decodePoolAccount(accountInfo.data);
+        if (!isWsolPool(freshPoolData, mintAddress)) {
+          cachedPoolInvalid = true;
+          throw new Error("Cached pool is not a WSOL quote pool for this token");
+        }
         if (accountInfo.data.length > 244) {
           freshPoolData.is_mayhem = accountInfo.data[243] === 1;
           freshPoolData.is_cashback = accountInfo.data[244] === 1;
@@ -105,62 +116,53 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
       );
     }
 
-    return {
-      address: poolAddress,
-      is_native_base: false,
-      poolData,
-    };
-  } else {
-    let response = null,
-      is_err = true,
-      cnt = 0;
-
-    response = await connection.getProgramAccounts(PUMP_AMM_PROGRAM_ID, {
-      filters: [
-        {
-          memcmp: {
-            offset: 43,
-            bytes: mintAddress.toBase58(),
-          },
-        },
-      ],
-    });
-    if (response.length > 0) {
-      is_err = false;
-    }
-
-    if (is_err) {
-      throw new Error(`Can not get Token ${mintAddress.toBase58()} pool data`);
-    }
-    const mappedPools = response.map((pool) => {
-      const data = Buffer.from(pool.account.data);
-      const poolData = decodePoolAccount(data);
-      // IDL 未包含 is_mayhem/is_cashback，从原始字节读取
-      // pool struct 字节布局: 8(discriminator)+1+2+32+32+32+32+32+32+8+32 = 243
-      poolData.is_mayhem = data[243] === 1;
-      poolData.is_cashback = data[244] === 1;
+    if (!cachedPoolInvalid && isWsolPool(poolData, mintAddress)) {
       return {
-        address: pool.pubkey,
+        address: poolAddress,
         is_native_base: false,
         poolData,
       };
-    });
-    const pool = mappedPools.find((item) =>
-      NATIVE_MINT.equals(item.poolData.quoteMint),
-    );
-
-    if (pool) {
-      const newPoolData = bnLayoutFormatter(pool.poolData);
-      await ctx.model.PoolStore.create({
-        token: mintAddress.toBase58(),
-        pool: pool.address.toBase58(),
-        poolObj: newPoolData,
-      });
-      return pool;
-    } else {
-      throw new Error("Cannot find pump pool");
     }
   }
+
+  const response = await connection.getProgramAccounts(PUMP_AMM_PROGRAM_ID, {
+    filters: [{ memcmp: { offset: 43, bytes: mintAddress.toBase58() } }],
+  });
+  if (response.length === 0) {
+    throw new Error(`Can not get Token ${mintAddress.toBase58()} pool data`);
+  }
+  const mappedPools = response.map((pool) => {
+    const data = Buffer.from(pool.account.data);
+    const poolData = decodePoolAccount(data);
+    // IDL 未包含 is_mayhem/is_cashback，从原始字节读取
+    // pool struct 字节布局: 8(discriminator)+1+2+32+32+32+32+32+32+8+32 = 243
+    poolData.is_mayhem = data[243] === 1;
+    poolData.is_cashback = data[244] === 1;
+    return {
+      address: pool.pubkey,
+      is_native_base: false,
+      poolData,
+    };
+  });
+  const pool = mappedPools.find((item) =>
+    isWsolPool(item.poolData, mintAddress),
+  );
+
+  if (pool) {
+    const newPoolData = bnLayoutFormatter(pool.poolData);
+    await ctx.model.PoolStore.updateOne(
+      { token: mintAddress.toBase58() },
+      { $set: { pool: pool.address.toBase58(), poolObj: newPoolData } },
+      { upsert: true },
+    );
+    return pool;
+  }
+  const quoteMints = [...new Set(mappedPools.map((item) =>
+    item.poolData.quoteMint.toBase58(),
+  ))];
+  throw new Error(
+    `No Pump AMM WSOL quote pool for ${mintAddress.toBase58()}; available quote mints: ${quoteMints.join(", ")}. Configure this wallet to use Jupiter routing (isJup) for SOL buys.`,
+  );
 };
 
 const getPoolsWithQuoteMint = async (mintAddress) => {

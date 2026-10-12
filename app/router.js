@@ -10,6 +10,7 @@ module.exports = (app) => {
   router.post("/v1/execute/fomo/updateWallet", controller.fomo.updateWallet);
   router.post("/v1/execute/fomo/deleteWallet", controller.fomo.deleteWallet);
   router.post("/v1/execute/fomo/sellToken", controller.fomo.sellToken);
+  router.post("/v1/execute/fomo/swapUsdcToSol", controller.fomo.swapUsdcToSol);
 
   router.post("/v1/execute/start", controller.executeSwap.start);
 

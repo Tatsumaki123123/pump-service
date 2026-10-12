@@ -1,6 +1,6 @@
 # Fomo 钱包与卖出接口
 
-服务地址默认 `http://localhost:8899`。接口均为 `POST`，请求头为 `Content-Type: application/json`，成功响应格式为 `{ "code": 0, "data": ... }`。所有接口都需要 `lineId`；导入、修改和删除接口还需要 `key`，查询钱包信息与卖出接口不需要。`lineId` 对应 `ExecuteLine.lineId`，必须是已存在的正整数线路编号；`key` 为 `AppData.key` 中的钱包访问密钥，与导出私钥接口使用同一密码。导入接口会将 Base58 私钥存入独立的 `FomoWallet` 集合，响应不会返回私钥。
+服务地址默认 `http://localhost:8899`。接口均为 `POST`，请求头为 `Content-Type: application/json`，成功响应格式为 `{ "code": 0, "data": ... }`。所有接口都需要 `lineId`；导入、修改和删除接口还需要 `key`，查询钱包信息与兑换接口不需要。`lineId` 对应 `ExecuteLine.lineId`，必须是已存在的正整数线路编号；`key` 为 `AppData.key` 中的钱包访问密钥，与导出私钥接口使用同一密码。导入接口会将 Base58 私钥存入独立的 `FomoWallet` 集合，响应不会返回私钥。
 
 ## 导入钱包
 
@@ -74,3 +74,17 @@
 卖出接口使用 `lineId` 和 `address` 定位钱包。`sellRatio` 可省略，默认 `1`，取值为 `0 < sellRatio <= 1`，最多 9 位小数。卖出数量按该钱包**关联代币账户**的原始整数余额向下取整。小于一个最小代币单位时报错。若代币仅存于其他非关联账户，需先归集到关联代币账户。
 
 接口使用 Jupiter V6 路由 `JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4`，输出 mint 固定为 USDC `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`，滑点设为 1%。钱包需要有 SOL 支付网络手续费及可能的账户创建费用。交易确认后返回 `lineId`、钱包地址、输入和输出 mint、比例、数量和 `signature`。接口会实际发起链上交易；请求超时后先按签名或链上余额检查状态，避免重复卖出。
+
+## 将 USDC 兑换为 SOL
+
+`POST /v1/execute/fomo/swapUsdcToSol`
+
+```json
+{
+  "lineId": 1,
+  "address": "已导入的 fomo 钱包地址",
+  "sellRatio": 1
+}
+```
+
+`sellRatio` 可省略，默认 `1`，按该钱包 USDC 关联代币账户余额的比例兑换；取值为 `0 < sellRatio <= 1`，最多 9 位小数。接口通过 Jupiter V6 将 USDC 兑换为原生 SOL，滑点为 1%，确认成功后返回 `lineId`、`address`、USDC 输入数量、`outputMint`（SOL 的原生 mint）及交易 `signature`。钱包仍需预留少量 SOL 支付交易手续费。此接口不需要 `key`。

@@ -43,6 +43,13 @@ class Fomo extends BaseController {
       }),
     );
   }
+
+  async swapUsdcToSol() {
+    const { lineId, address, sellRatio = 1 } = this.ctx.request.body;
+    this.success(
+      await this.ctx.service.fomo.swapUsdcToSol({ lineId, address, sellRatio }),
+    );
+  }
 }
 
 module.exports = Fomo;
