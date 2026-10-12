@@ -26,7 +26,12 @@ const {
   getTokenMeta,
 } = require("../utils/solana");
 
-const { getPoolsWithPrices, getPoolsWithBaseMint } = require("../libs/pool");
+const {
+  getPoolsWithPrices,
+  getPoolsWithBaseMint,
+  getPumpPoolsWithBaseMint,
+} = require("../libs/pool");
+const { NATIVE_MINT } = require("@solana/spl-token");
 const { sleep, retryAsync } = require("../utils/utils");
 const { getRaydiumCpmmPoolId } = require("../utils/raydium");
 
@@ -1238,15 +1243,6 @@ class ExecuteSwap extends Service {
     }).lean();
 
     if (!forceCheck) {
-      const otherData = await ctx.model.ExecuteToken.findOne({
-        eid: { $ne: eid },
-        line: { $ne: executeData.line },
-        token: token,
-        status: "buy",
-      });
-      if (otherData) {
-        throw new Error("Other buy this token");
-      }
       const lineBotAccounts = await this.getLineBotTokenBalance(
         executeData.line,
         token,
@@ -1302,22 +1298,81 @@ class ExecuteSwap extends Service {
         dev = poolDetail.poolData.coinCreator;
         pool = poolDetail.address;
       } else {
-        const poolId = await getRaydiumCpmmPoolId(new PublicKey(token));
-        if (poolId) {
-          pool = poolId.toBase58();
-          amm = RAYDIUM_CPMM_NAME;
+        const pumpPools = await getPumpPoolsWithBaseMint(new PublicKey(token));
+        const selectedPumpPool =
+          pumpPools.find(
+            (item) => item.address.toBase58() === aveTokenInfo?.pool,
+          ) || (pumpPools.length === 1 ? pumpPools[0] : null);
+        if (selectedPumpPool) {
+          amm = PUMP_AMM_NAME;
+          dev = selectedPumpPool.poolData.coinCreator;
+          pool = selectedPumpPool.address.toBase58();
         } else {
-          const pumpFunPoolDetail = await ctx.service.pumpfun.getPoolDetail(
-            token,
-          );
-          if (pumpFunPoolDetail) {
-            amm = PUMP_FUN_NAME;
-            dev = pumpFunPoolDetail.dev;
-            pool = "";
+          const poolId = await getRaydiumCpmmPoolId(new PublicKey(token));
+          if (poolId) {
+            pool = poolId.toBase58();
+            amm = RAYDIUM_CPMM_NAME;
           } else {
-            throw new Error("Cannot find pool data");
+            const pumpFunPoolDetail = await ctx.service.pumpfun.getPoolDetail(
+              token,
+            );
+            if (pumpFunPoolDetail) {
+              amm = PUMP_FUN_NAME;
+              dev = pumpFunPoolDetail.dev;
+              pool = "";
+            } else {
+              throw new Error("Cannot find pool data");
+            }
           }
         }
+      }
+    }
+
+    let routeInfo;
+    if (amm === PUMP_AMM_NAME && pool) {
+      const pumpPools = await getPumpPoolsWithBaseMint(new PublicKey(token));
+      const pumpPool =
+        pumpPools.find((item) => item.address.toBase58() === String(pool)) ||
+        pumpPools.find(
+          (item) => item.address.toBase58() === aveTokenInfo?.pool,
+        ) ||
+        (pumpPools.length === 1 ? pumpPools[0] : null);
+      if (!pumpPool) {
+        throw new Error(`Cannot identify Pump AMM pool for ${token}`);
+      }
+      pool = pumpPool.address.toBase58();
+      const quoteMint = pumpPool.poolData.quoteMint;
+      if (!quoteMint.equals(NATIVE_MINT)) {
+        if (!aveTokenInfo) {
+          aveTokenInfo = await ctx.service.ave.getTokenInfo(token);
+        }
+        const pumpPair = aveTokenInfo.pairs.find(
+          (item) => item.pair === pumpPool.address.toBase58(),
+        );
+        const quoteTokenInfo = await ctx.service.ave.getTokenInfo(
+          quoteMint.toBase58(),
+        );
+        const quotePair = quoteTokenInfo.pairs.find(
+          (item) => item.pair === quoteTokenInfo.tokenDetail.main_pair,
+        );
+        if (!quotePair) {
+          throw new Error(`AVE main pair missing for ${quoteMint.toBase58()}`);
+        }
+        routeInfo = {
+          pumpPool: pumpPool.address.toBase58(),
+          quoteMint: quoteMint.toBase58(),
+          quotePool: quotePair.pair,
+          quoteAmm: quotePair.amm,
+          token: aveTokenInfo.tokenDetail,
+          pumpPair: pumpPair || null,
+          quoteToken: quoteTokenInfo.tokenDetail,
+          quotePair,
+        };
+        await ctx.model.PoolStore.updateOne(
+          { token },
+          { $set: { routeInfo } },
+          { upsert: true },
+        );
       }
     }
 
@@ -1338,6 +1393,7 @@ class ExecuteSwap extends Service {
       dev,
       pool,
       amm,
+      routeInfo,
       createTime: new Date(),
       eid: executeData.eid,
       line: executeData.line,
@@ -1394,6 +1450,10 @@ class ExecuteSwap extends Service {
       await ctx.model.ExecuteToken.create(tokenInfo);
     } else {
       tid = tokenDb.tid;
+      await ctx.model.ExecuteToken.updateOne(
+        { tid },
+        { $set: { symbol, pool, amm, routeInfo } },
+      );
     }
     const buyTimes = await ctx.model.ExecuteToken.count({
       token: token,

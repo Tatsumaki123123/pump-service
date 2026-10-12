@@ -160,9 +160,7 @@ controller.executeSwap.start
 1. 校验 token 是否为合法 Solana 地址。
 2. 如果同一 `eid`、同一 token 已经是 `sell`，先把它改回 `buy`，允许重新执行。
 3. 通过 `eid` 找到 `ExecuteData`，再通过 `ExecuteData.line` 找到线路配置。
-4. 非 `forceCheck` 时执行保护检查：
-   - 其他线路的 `eid` 是否已经有该 token 处于 `buy`；同线路不拦截；
-   - 当前线路机器人钱包合计持仓是否超过 1000。
+4. 非 `forceCheck` 时检查当前线路机器人钱包合计持仓是否超过 1000。
 5. 补齐代币元数据，优先级为：
    - 调用方提供的 `symbol` / `pool` / `amm`；
    - Ave 的 `getTokenInfo`（detail 接口使用 `mint-solana`）；

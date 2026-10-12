@@ -293,6 +293,9 @@ class Ave extends Service {
       } catch (error) {}
 
       result.token = token.token;
+      result.tokenDetail = token;
+      result.pairs = pairs;
+      result.mainPair = pair;
       result.symbol = token.symbol;
       result.name = token.name;
       result.logo_url = token.logo_url;

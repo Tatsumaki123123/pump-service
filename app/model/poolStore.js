@@ -7,6 +7,7 @@ module.exports = (app) => {
     poolData: { type: Buffer },
     pool: { type: String },
     poolObj: { type: Object },
+    routeInfo: { type: Schema.Types.Mixed },
   });
 
   return mongoose.model("PoolStore", schema);

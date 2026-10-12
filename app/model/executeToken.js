@@ -9,6 +9,7 @@ module.exports = (app) => {
     dev: { type: String },
     pool: { type: String },
     amm: { type: String },
+    routeInfo: { type: Schema.Types.Mixed },
     createTime: { type: Date },
     income: { type: Number, default: 0 },
     eid: { type: Number },

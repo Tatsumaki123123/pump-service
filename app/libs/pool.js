@@ -56,6 +56,23 @@ function decodePoolAccount(data) {
   }
 }
 
+async function getPumpPoolsWithBaseMint(mintAddress) {
+  const response = await connection.getProgramAccounts(PUMP_AMM_PROGRAM_ID, {
+    filters: [{ memcmp: { offset: 43, bytes: mintAddress.toBase58() } }],
+  });
+  return response.map((pool) => {
+    const data = Buffer.from(pool.account.data);
+    const poolData = decodePoolAccount(data);
+    poolData.is_mayhem = data[243] === 1;
+    poolData.is_cashback = data[244] === 1;
+    return {
+      address: pool.pubkey,
+      is_native_base: false,
+      poolData,
+    };
+  });
+}
+
 const getPoolsWithBaseMint = async (mintAddress, ctx) => {
   const dbData = await ctx.model.PoolStore.findOne({
     token: mintAddress.toBase58(),
@@ -125,25 +142,10 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
     }
   }
 
-  const response = await connection.getProgramAccounts(PUMP_AMM_PROGRAM_ID, {
-    filters: [{ memcmp: { offset: 43, bytes: mintAddress.toBase58() } }],
-  });
-  if (response.length === 0) {
+  const mappedPools = await getPumpPoolsWithBaseMint(mintAddress);
+  if (mappedPools.length === 0) {
     throw new Error(`Can not get Token ${mintAddress.toBase58()} pool data`);
   }
-  const mappedPools = response.map((pool) => {
-    const data = Buffer.from(pool.account.data);
-    const poolData = decodePoolAccount(data);
-    // IDL 未包含 is_mayhem/is_cashback，从原始字节读取
-    // pool struct 字节布局: 8(discriminator)+1+2+32+32+32+32+32+32+8+32 = 243
-    poolData.is_mayhem = data[243] === 1;
-    poolData.is_cashback = data[244] === 1;
-    return {
-      address: pool.pubkey,
-      is_native_base: false,
-      poolData,
-    };
-  });
   const pool = mappedPools.find((item) =>
     isWsolPool(item.poolData, mintAddress),
   );
@@ -474,6 +476,7 @@ function getUserVolumeAccumulatorPda(user) {
 // main();
 
 module.exports = {
+  getPumpPoolsWithBaseMint,
   getPoolsWithPrices,
   getCoinCreatorVaultAuthorityPda,
   getCoinCreatorVaultAtaPda,
