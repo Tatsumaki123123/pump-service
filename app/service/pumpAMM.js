@@ -48,6 +48,7 @@ const AvePumpSwapSDK = require("../libs/aveProxy");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const { setLocalOkxAmmExpectedAmountOut } = require("../libs/okxLocalRouter");
 const JupSDK = require("../libs/jup");
+const { getJupiterSellInstructions } = require("../libs/jupiterSellFallback");
 const DFlowSDK = require("../libs/dflow");
 const { createAxiomBuyInstructions } = require("../libs/axiom");
 const {
@@ -1310,7 +1311,7 @@ class PumpAMM extends Service {
       for (const { wallet, amountRaw } of batch) {
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
-        const swapData = await jupSwap.getSellInstructions(ctx, {
+        const swapData = await getJupiterSellInstructions(ctx, {
           user,
           tokenMint,
           tokenAmount: amountRaw.toString(),

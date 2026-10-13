@@ -31,6 +31,13 @@ function toTransactionInstruction(instruction) {
 }
 
 class JupSDK {
+  httpError(operation, status, attempts, cause) {
+    const error = new Error(`Jupiter ${operation} failed with HTTP ${status} after ${attempts} attempt(s)`,
+      cause ? { cause } : undefined);
+    error.status = status;
+    return error;
+  }
+
   async requestJson(ctx, uri, options, operation) {
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       let response;
@@ -42,9 +49,7 @@ class JupSDK {
         const status = error.status || error.res?.status;
         if (!RETRYABLE_STATUS.has(status) || attempt === RETRY_DELAYS_MS.length) {
           if (status) {
-            throw new Error(`Jupiter ${operation} failed with HTTP ${status} after ${attempt + 1} attempt(s)`, {
-              cause: error,
-            });
+            throw this.httpError(operation, status, attempt + 1, error);
           }
           throw error;
         }
@@ -62,7 +67,7 @@ class JupSDK {
           }
         }
         if (!RETRYABLE_STATUS.has(status) || attempt === RETRY_DELAYS_MS.length) {
-          throw new Error(`Jupiter ${operation} failed with HTTP ${status} after ${attempt + 1} attempt(s)`);
+          throw this.httpError(operation, status, attempt + 1);
         }
       }
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));

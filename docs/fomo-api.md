@@ -1,6 +1,6 @@
 # Fomo 钱包与卖出接口
 
-服务地址默认 `http://localhost:8899`。接口均为 `POST`，请求头为 `Content-Type: application/json`，成功响应格式为 `{ "code": 0, "data": ... }`。所有接口都需要 `lineId`；导入、修改和删除接口还需要 `key`，查询钱包信息与兑换接口不需要。`lineId` 对应 `ExecuteLine.lineId`，必须是已存在的正整数线路编号；`key` 为 `AppData.key` 中的钱包访问密钥，与导出私钥接口使用同一密码。导入接口会将 Base58 私钥存入独立的 `FomoWallet` 集合，响应不会返回私钥。
+服务地址默认 `http://localhost:8899`。接口均为 `POST`，请求头为 `Content-Type: application/json`，成功响应格式为 `{ "code": 0, "data": ... }`。除获取代币余额外，接口都需要 `lineId`；导入、修改和删除接口还需要 `key`，查询钱包信息与兑换接口不需要。`lineId` 对应 `ExecuteLine.lineId`，必须是已存在的正整数线路编号；`key` 为 `AppData.key` 中的钱包访问密钥，与导出私钥接口使用同一密码。导入接口会将 Base58 私钥存入独立的 `FomoWallet` 集合，响应不会返回私钥。
 
 ## 导入钱包
 
@@ -27,7 +27,20 @@
 }
 ```
 
-不传 `address` 时查询指定 `lineId` 下的所有 fomo 钱包。返回 `total` 和 `list`；每项包含 `lineId`、`address`、`balanceLamports`、`balance`/`sol`、`usdc`，以及 `tokens` 数组。代币项包含 `mint`、`amountRaw`、`decimals`、`amount`，其中 `amount` 和 `usdc` 是避免精度损失的十进制字符串。余额来自当前 RPC 的 confirmed 状态。
+不传 `address` 时查询指定 `lineId` 下的所有 fomo 钱包。返回 `total` 和 `list`；每项只包含 `lineId`、`address`、`sol`、`usdc`。`usdc` 是避免精度损失的十进制字符串。余额来自当前 RPC 的 confirmed 状态。
+
+## 获取代币余额
+
+`POST /v1/execute/fomo/getTokenBalance`
+
+```json
+{
+  "address": "钱包地址",
+  "token": "代币 mint 地址"
+}
+```
+
+按 mint 汇总该地址持有的所有代币账户余额，支持 SPL Token 和 Token 2022。返回 `address`、`token`、`amountRaw`、`decimals`、`amount`；`amountRaw` 和 `amount` 均为字符串。没有该代币账户时返回零余额。此接口无需 `lineId`，查询的是链上地址余额，不要求钱包已导入 Fomo。卖出接口仍只读取关联代币账户，因此这里的总余额可能大于可直接卖出的余额。
 
 ## 修改钱包
 

@@ -15,6 +15,11 @@ class Fomo extends BaseController {
     this.success(await this.ctx.service.fomo.getWallets(lineId, address));
   }
 
+  async getTokenBalance() {
+    const { address, token } = this.ctx.request.body;
+    this.success(await this.ctx.service.fomo.getTokenBalance(address, token));
+  }
+
   async updateWallet() {
     const { lineId, address, newPrivateKey, key } = this.ctx.request.body;
     this.success(

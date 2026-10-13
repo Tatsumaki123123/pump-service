@@ -150,39 +150,53 @@ class Fomo extends Service {
 
     const list = await Promise.all(wallets.map(async (wallet) => {
       const owner = new PublicKey(wallet.address);
-      const [lamports, tokenAccounts, token2022Accounts] = await Promise.all([
+      const [lamports, usdcAccounts] = await Promise.all([
         connection.getBalance(owner, "confirmed"),
-        connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID }, "confirmed"),
-        connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_2022_PROGRAM_ID }, "confirmed"),
+        connection.getParsedTokenAccountsByOwner(owner, { mint: new PublicKey(usdc) }, "confirmed"),
       ]);
-      const balances = new Map();
-      for (const item of [...tokenAccounts.value, ...token2022Accounts.value]) {
-        const info = item.account.data.parsed.info;
-        const mint = info.mint;
-        const current = balances.get(mint) || {
-          raw: 0n,
-          decimals: info.tokenAmount.decimals,
-        };
-        current.raw += BigInt(info.tokenAmount.amount);
-        balances.set(mint, current);
-      }
-      const tokens = [...balances].map(([mint, { raw, decimals }]) => ({
-        mint,
-        amountRaw: raw.toString(),
-        decimals,
-        amount: decimalAmount(raw, decimals),
-      }));
+      const usdcRaw = usdcAccounts.value.reduce(
+        (total, item) => total + BigInt(item.account.data.parsed.info.tokenAmount.amount),
+        0n,
+      );
       return {
         lineId,
         address: wallet.address,
-        balanceLamports: lamports,
-        balance: lamports / LAMPORTS_PER_SOL,
         sol: lamports / LAMPORTS_PER_SOL,
-        usdc: tokens.find((item) => item.mint === usdc)?.amount || "0",
-        tokens,
+        usdc: decimalAmount(usdcRaw, 6),
       };
     }));
     return { total: list.length, list };
+  }
+
+  async getTokenBalance(addressValue, tokenValue) {
+    const owner = parseAddress(addressValue, "address");
+    const mint = parseAddress(tokenValue, "token");
+    const [mintInfo, tokenAccounts] = await Promise.all([
+      connection.getParsedAccountInfo(mint, "confirmed"),
+      connection.getParsedTokenAccountsByOwner(owner, { mint }, "confirmed"),
+    ]);
+    const mintAccount = mintInfo.value;
+    const decimals = mintAccount?.data?.parsed?.info?.decimals;
+    if (
+      !mintAccount ||
+      (!mintAccount.owner.equals(TOKEN_PROGRAM_ID) &&
+        !mintAccount.owner.equals(TOKEN_2022_PROGRAM_ID)) ||
+      mintAccount.data?.parsed?.type !== "mint" ||
+      !Number.isInteger(decimals)
+    ) {
+      throw new Error("token is not an SPL token mint");
+    }
+    const amountRaw = tokenAccounts.value.reduce(
+      (total, item) => total + BigInt(item.account.data.parsed.info.tokenAmount.amount),
+      0n,
+    );
+    return {
+      address: owner.toBase58(),
+      token: mint.toBase58(),
+      amountRaw: amountRaw.toString(),
+      decimals,
+      amount: decimalAmount(amountRaw, decimals),
+    };
   }
 
   async sellToken({ lineId, address, token, sellRatio = 1 }) {
