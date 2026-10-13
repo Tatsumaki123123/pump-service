@@ -1306,8 +1306,7 @@ class PumpAMM extends Service {
     if (sellWallets.length === 0) return true;
 
     for (const batch of splitIntoBundles(sellWallets.reverse())) {
-      const { blockhash } = await connection.getLatestBlockhash();
-      const transactions = [];
+      const prepared = [];
       for (const { wallet, amountRaw } of batch) {
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
@@ -1319,18 +1318,25 @@ class PumpAMM extends Service {
           connection,
         });
         const instructions = [...swapData.instructions];
-        if (batch.length > 1 && transactions.length === 0) {
+        if (batch.length > 1 && prepared.length === 0) {
           instructions.push(SystemProgram.transfer({
             fromPubkey: user,
             toPubkey: ctx.service.jito.getTipAcc(),
             lamports: ctx.service.jito.getTipAmount(),
           }));
         }
+        prepared.push({ keypair, user, instructions, lookupTableAccounts: swapData.lookupTableAccounts });
+      }
+
+      // Quotes and lookup tables can take time; sign with a fresh blockhash.
+      const { blockhash } = await connection.getLatestBlockhash();
+      const transactions = [];
+      for (const { keypair, user, instructions, lookupTableAccounts } of prepared) {
         const message = new TransactionMessage({
           payerKey: user,
           recentBlockhash: blockhash,
           instructions,
-        }).compileToV0Message(swapData.lookupTableAccounts);
+        }).compileToV0Message(lookupTableAccounts);
         const transaction = new VersionedTransaction(message);
         transaction.sign([keypair]);
         if (transaction.serialize().length > MAX_TRANSACTION_SIZE) {
@@ -1338,6 +1344,32 @@ class PumpAMM extends Service {
         }
         transactions.push(transaction);
       }
+      await Promise.all(transactions.map(async (transaction, i) => {
+        const signature = bs58.encode(Buffer.from(transaction.signatures[0]));
+        const user = prepared[i].user.toBase58();
+        let simulation;
+        try {
+          simulation = await connection.simulateTransaction(transaction, {
+            commitment: "confirmed",
+            replaceRecentBlockhash: true,
+          });
+        } catch (error) {
+          throw new Error(`Jupiter sell simulation RPC failed for ${user} (${signature}): ${error.message}`, {
+            cause: error,
+          });
+        }
+        console.log("Jupiter sell simulation", {
+          user,
+          signature,
+          slot: simulation.context?.slot,
+          unitsConsumed: simulation.value?.unitsConsumed,
+          err: simulation.value?.err,
+          logs: simulation.value?.logs,
+        });
+        if (!simulation.value || simulation.value.err) {
+          throw new Error(`Jupiter sell simulation failed for ${user} (${signature}): ${JSON.stringify(simulation.value?.err || "empty result")} ${JSON.stringify(simulation.value?.logs || [])}`);
+        }
+      }));
       if (transactions.length > 1) {
         await ctx.service.jito.sendBundle(transactions);
       } else {

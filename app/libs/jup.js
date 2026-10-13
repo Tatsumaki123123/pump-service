@@ -6,6 +6,8 @@ const {
 } = require("@solana/web3.js");
 
 const BASE_URL = "https://lite-api.jup.ag";
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const RETRY_DELAYS_MS = [250, 500, 1000];
 const JUP_PROGRAM_V6 = new PublicKey(
   "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
 );
@@ -29,6 +31,44 @@ function toTransactionInstruction(instruction) {
 }
 
 class JupSDK {
+  async requestJson(ctx, uri, options, operation) {
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      let response;
+      try {
+        // Jupiter can return an HTML error page. Read the body as text so the
+        // HTTP status is available before attempting to parse JSON.
+        response = await ctx.curl(uri, { ...options, dataType: "text" });
+      } catch (error) {
+        const status = error.status || error.res?.status;
+        if (!RETRYABLE_STATUS.has(status) || attempt === RETRY_DELAYS_MS.length) {
+          if (status) {
+            throw new Error(`Jupiter ${operation} failed with HTTP ${status} after ${attempt + 1} attempt(s)`, {
+              cause: error,
+            });
+          }
+          throw error;
+        }
+      }
+
+      if (response) {
+        const status = response.status || response.statusCode;
+        if (status >= 200 && status < 300) {
+          try {
+            return JSON.parse(response.data);
+          } catch (error) {
+            throw new Error(`Jupiter ${operation} returned invalid JSON (HTTP ${status})`, {
+              cause: error,
+            });
+          }
+        }
+        if (!RETRYABLE_STATUS.has(status) || attempt === RETRY_DELAYS_MS.length) {
+          throw new Error(`Jupiter ${operation} failed with HTTP ${status} after ${attempt + 1} attempt(s)`);
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+
   async getBuyInstructions(ctx, params) {
     const {
       user,
@@ -81,8 +121,7 @@ class JupSDK {
     { useSharedAccounts = false } = {},
   ) {
     const uri = `${BASE_URL}/swap/v1/swap-instructions`;
-    const res = await ctx.curl(uri, {
-      dataType: "json",
+    const swapData = await this.requestJson(ctx, uri, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -94,8 +133,7 @@ class JupSDK {
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
       },
-    });
-    const swapData = res.data;
+    }, "swap instructions");
     if (!swapData || swapData.error) {
       throw new Error(
         `Cannot get Jupiter instructions: ${swapData?.error || "empty response"}`,
@@ -182,19 +220,18 @@ class JupSDK {
       instructionVersion: "V2",
     });
     const uri = `${BASE_URL}/swap/v1/quote?${query.toString()}`;
-    const res = await ctx.curl(uri, {
-      dataType: "json",
+    const quote = await this.requestJson(ctx, uri, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
       },
-    });
-    if (!res.data || res.data.error) {
+    }, "quote");
+    if (!quote || quote.error) {
       throw new Error(
-        `Cannot get Jupiter V2 quote: ${res.data?.error || "empty response"}`,
+        `Cannot get Jupiter V2 quote: ${quote?.error || "empty response"}`,
       );
     }
-    return res.data;
+    return quote;
   }
 }
 

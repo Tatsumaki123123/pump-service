@@ -1079,9 +1079,23 @@ class Jito extends Service {
     }
     console.log(chalk.green(`QuickNode bundle accepted, id: ${bundleId}`));
     if (options.waitForLanding !== false) {
-      await this.waitForBundleTransactions(signatures, QUICKNODE_WAIT_MS, {
-        any: options.waitForAnyLanding === true,
-      });
+      try {
+        await this.waitForBundleTransactions(signatures, QUICKNODE_WAIT_MS, {
+          any: options.waitForAnyLanding === true,
+        });
+      } catch (error) {
+        if (this.isBundleNotLandedError(error)) {
+          const statusMethods = ["getInflightBundleStatuses", "getBundleStatuses"];
+          const statuses = await Promise.allSettled(statusMethods.map((method) =>
+            quickNodeConnection._rpcRequest(method, [[bundleId]]),
+          ));
+          statuses.forEach((status, index) => {
+            console.error(`QuickNode ${statusMethods[index]} for ${bundleId}:`,
+              status.status === "fulfilled" ? status.value : status.reason?.message);
+          });
+        }
+        throw error;
+      }
     }
     return bundleId;
   }
