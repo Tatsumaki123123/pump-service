@@ -655,12 +655,35 @@ class PumpAMM extends Service {
                 /(encoding overruns Uint8Array|exceeds maximum allowed size)/.test(
                   error.message,
                 );
-              if (canSplitTip && (isNozomi || isAxiom || (wallet.isPadre && !isProxy))) {
+              const compactAxiomTip =
+                canSplitTip && isAxiom && combineAxiomBuys;
+              if (compactAxiomTip) {
+                const compactIxs = volumeIxs.filter(
+                  (ix) => !ix.programId.equals(ComputeBudgetProgram.programId),
+                );
+                const compactMessageV0 = new TransactionMessage({
+                  payerKey: user,
+                  recentBlockhash: blockhash,
+                  instructions: compactIxs,
+                }).compileToV0Message(walletLookupTables);
+                tx = new VersionedTransaction(compactMessageV0);
+                tx.sign([keypair, ...(wallet.extraSigners || [])]);
+                assertTxSize(tx, "compact Axiom swap tx");
+                txInstructions = compactIxs;
+                console.log(
+                  chalk.yellow(
+                    "Removed compute budget instructions from the final Axiom bundle transaction because it was too large.",
+                  ),
+                );
+              } else if (
+                canSplitTip &&
+                (isNozomi || isAxiom || (wallet.isPadre && !isProxy))
+              ) {
                 throw new Error(
                   `${isNozomi ? "Nozomi" : isAxiom ? "Axiom" : "Padre"} transaction is too large after adding the required bundle tip; reduce the swap instruction size or use a more compact lookup table.`,
                 );
               }
-              if (!canSplitTip) {
+              if (!compactAxiomTip && !canSplitTip) {
                 if (
                   isAxiom &&
                   /encoding overruns Uint8Array/.test(error.message)
@@ -672,7 +695,8 @@ class PumpAMM extends Service {
                 throw error;
               }
 
-              let swapIxs = volumeIxs.filter((ix) => ix !== jitoTipIx);
+              if (!compactAxiomTip) {
+                let swapIxs = volumeIxs.filter((ix) => ix !== jitoTipIx);
               let swapMessageV0;
               try {
                 swapMessageV0 = new TransactionMessage({
@@ -769,6 +793,7 @@ class PumpAMM extends Service {
                   "Split Jito tip into a separate transaction because swap tx is too large.",
                 ),
               );
+                }
             }
 
             let simulationResult = await connection.simulateTransaction(tx, {
