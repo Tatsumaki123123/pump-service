@@ -655,9 +655,12 @@ class PumpAMM extends Service {
                 /(encoding overruns Uint8Array|exceeds maximum allowed size)/.test(
                   error.message,
                 );
-              const compactAxiomTip =
-                canSplitTip && isAxiom && combineAxiomBuys;
-              if (compactAxiomTip) {
+              const compactAxiom =
+                isAxiom &&
+                /(encoding overruns Uint8Array|exceeds maximum allowed size)/.test(
+                  error.message,
+                );
+              if (compactAxiom) {
                 const compactIxs = volumeIxs.filter(
                   (ix) => !ix.programId.equals(ComputeBudgetProgram.programId),
                 );
@@ -672,7 +675,7 @@ class PumpAMM extends Service {
                 txInstructions = compactIxs;
                 console.log(
                   chalk.yellow(
-                    "Removed compute budget instructions from the final Axiom bundle transaction because it was too large.",
+                    "Removed compute budget instructions from the Axiom transaction because it was too large.",
                   ),
                 );
               } else if (
@@ -683,7 +686,7 @@ class PumpAMM extends Service {
                   `${isNozomi ? "Nozomi" : isAxiom ? "Axiom" : "Padre"} transaction is too large after adding the required bundle tip; reduce the swap instruction size or use a more compact lookup table.`,
                 );
               }
-              if (!compactAxiomTip && !canSplitTip) {
+              if (!compactAxiom && !canSplitTip) {
                 if (
                   isAxiom &&
                   /encoding overruns Uint8Array/.test(error.message)
@@ -695,7 +698,7 @@ class PumpAMM extends Service {
                 throw error;
               }
 
-              if (!compactAxiomTip) {
+              if (!compactAxiom) {
                 let swapIxs = volumeIxs.filter((ix) => ix !== jitoTipIx);
               let swapMessageV0;
               try {
