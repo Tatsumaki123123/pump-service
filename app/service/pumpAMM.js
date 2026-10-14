@@ -320,14 +320,37 @@ class PumpAMM extends Service {
         );
       }
       const func = async (wallets) => {
+        const isNozomi =
+          String(sendOptions.batchPlatform || "").toLowerCase() === "nozomi";
+        const limitedBundleProvider =
+          !isNozomi &&
+          ["quicknode", "jito", "helius", "helius_jito"].includes(
+            BUNDLE_PROVIDER,
+          );
+        if (limitedBundleProvider && wallets.length > 5) {
+          await Promise.all(
+            splitIntoBundles(wallets, 5).map((group) => func(group)),
+          );
+          return;
+        }
         const buyTxns = [];
         const isPadreBundle = wallets.length > 1 &&
           wallets.every((wallet) => wallet.isPadre && !wallet.isProxy);
-        const isNozomi =
-          String(sendOptions.batchPlatform || "").toLowerCase() === "nozomi";
+        const isAxiomBuyWallet = (wallet) =>
+          !wallet.isProxy && !wallet.isPadre && wallet.isAxiom;
+        const firstOrdinaryWalletIndex = wallets.findIndex(
+          (wallet) => !isAxiomBuyWallet(wallet),
+        );
+        const combineAxiomBuys =
+          !isNozomi &&
+          wallets.length <= 5 &&
+          isAxiomBuyWallet(wallets[0]) &&
+          (firstOrdinaryWalletIndex === -1 ||
+            !wallets.slice(firstOrdinaryWalletIndex).some(isAxiomBuyWallet));
         let jipAcc = ctx.service.jito.getTipAcc(sendOptions);
         const tipAmount = ctx.service.jito.getTipAmount(sendOptions);
         let bundleHasTip = false;
+        let bundleHasAxiomDontFront = false;
         const dflowBuyData = await Promise.all(
           wallets.map((wallet, i) => {
             if (!wallet.isDflow || wallet.isPadre || wallet.isProxy ||
@@ -400,7 +423,7 @@ class PumpAMM extends Service {
             if (
               !isAxiom &&
               !isNozomi &&
-              (NEXTBLOCK_TIP_EVERY_TX || i === 0)
+              (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
             ) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -421,7 +444,7 @@ class PumpAMM extends Service {
             if (
               !isAxiom &&
               !isNozomi &&
-              (NEXTBLOCK_TIP_EVERY_TX || i === 0)
+              (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
             ) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -451,7 +474,7 @@ class PumpAMM extends Service {
             if (
               !isAxiom &&
               !isNozomi &&
-              (NEXTBLOCK_TIP_EVERY_TX || i === 0)
+              (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
             ) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -469,7 +492,12 @@ class PumpAMM extends Service {
                     ? AVE_COMPUTE_UNIT_LIMIT
                     : limit,
               });
-            const shouldAddAxiomDontFront = isAxiom;
+            // A bundle may contain only one jitodontfront protected prefix
+            // unless the protected transactions share a signer. Axiom buys
+            // normally use different wallets, so mark only the first Axiom
+            // transaction when Axiom and Pump AMM buys are sent together.
+            const shouldAddAxiomDontFront =
+              isAxiom && (!combineAxiomBuys || !bundleHasAxiomDontFront);
             const shouldAddPumpAmmDontFront =
               !isAxiom &&
               !isAve &&
@@ -493,6 +521,9 @@ class PumpAMM extends Service {
                 isSigner: false,
                 isWritable: false,
               });
+              if (shouldAddAxiomDontFront) {
+                bundleHasAxiomDontFront = true;
+              }
             }
 
             const setComputeUnitPriceIx =
@@ -546,7 +577,7 @@ class PumpAMM extends Service {
               !isNozomi &&
               (isPadreBundle
                 ? i === wallets.length - 1
-                : NEXTBLOCK_TIP_EVERY_TX || i === 0);
+                : NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip);
             if (shouldAddJitoTip) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -582,7 +613,7 @@ class PumpAMM extends Service {
               volumeIxs.push(jitoTipIx);
             }
           }
-          if (isAxiom && !isNozomi) {
+          if (isAxiom && !isNozomi && (!combineAxiomBuys || !bundleHasTip)) {
             jitoTipIx = SystemProgram.transfer({
               fromPubkey: user,
               toPubkey: jipAcc,
@@ -876,7 +907,7 @@ class PumpAMM extends Service {
               assertTxSize(tx, "quoted OKX swap tx");
             }
             buyTxns.push({ tx, isAxiom });
-            if (jitoTipIx) {
+            if (jitoTipIx && (!isAxiom || combineAxiomBuys)) {
               bundleHasTip = true;
             }
             if (splitTipTx) {
@@ -894,6 +925,17 @@ class PumpAMM extends Service {
 
         // for end
         console.log("buyTxns", buyTxns.length);
+        if (limitedBundleProvider && buyTxns.length > 5) {
+          if (wallets.length === 1) {
+            throw new Error("One buy requires more than 5 bundle transactions");
+          }
+          await Promise.all(
+            splitIntoBundles(wallets, wallets.length - 1).map((group) =>
+              func(group),
+            ),
+          );
+          return;
+        }
         if (SIMULATE_BEFORE_BUNDLE) {
           for (let i = 0; i < buyTxns.length; i++) {
             const simulationResult = await connection.simulateTransaction(
@@ -911,12 +953,6 @@ class PumpAMM extends Service {
         // return;
         if (buyTxns.length > 0) {
           const allTxns = buyTxns.map((item) => item.tx);
-          const axiomTxns = buyTxns
-            .filter((item) => item.isAxiom)
-            .map((item) => item.tx);
-          const bundleTxns = buyTxns
-            .filter((item) => !item.isAxiom)
-            .map((item) => item.tx);
           if (isNozomi) {
             const batchResult = await ctx.service.jito.sendBundle(
               allTxns,
@@ -926,21 +962,34 @@ class PumpAMM extends Service {
             console.log(chalk.green("Buy transactions completed."));
             return;
           }
-          if (axiomTxns.length > 0) {
+          if (!combineAxiomBuys && buyTxns.some((item) => item.isAxiom)) {
+            const axiomTxns = buyTxns
+              .filter((item) => item.isAxiom)
+              .map((item) => item.tx);
+            const bundleTxns = buyTxns
+              .filter((item) => !item.isAxiom)
+              .map((item) => item.tx);
             const axiomBundleResults = await Promise.all(
               axiomTxns.map((axiomTxn) =>
                 ctx.service.jito.sendBundle([axiomTxn], sendOptions),
               ),
             );
             console.log("Axiom bundle results", axiomBundleResults);
+            if (bundleTxns.length > 0) {
+              const bundleResult = await ctx.service.jito.sendBundle(
+                bundleTxns,
+                sendOptions,
+              );
+              console.log("Pump AMM bundle result", bundleResult);
+            }
+            console.log(chalk.green("Buy transactions completed."));
+            return;
           }
-          if (bundleTxns.length > 0) {
-            const bundleResult = await ctx.service.jito.sendBundle(
-              bundleTxns,
-              sendOptions,
-            );
-            console.log("Pump AMM bundle result", bundleResult);
-          }
+          const bundleResult = await ctx.service.jito.sendBundle(
+            allTxns,
+            sendOptions,
+          );
+          console.log("Pump AMM combined bundle result", bundleResult);
           console.log(chalk.green("Buy transactions completed."));
         }
       };
