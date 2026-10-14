@@ -120,14 +120,6 @@ const PADRE_DONT_FRONT_MARKER = new PublicKey(
 const AVE_COMPUTE_UNIT_LIMIT = Number(
   process.env.AVE_COMPUTE_UNIT_LIMIT || 500000,
 );
-const AXIOM_TIP_ACCOUNT = new PublicKey(
-  process.env.AXIOM_TIP_ACCOUNT ||
-    "7sMh3XCdHUGWQzjqDc91QoYsyb5eVozrXSyBskLPUXaG",
-);
-const AXIOM_TIP_LAMPORTS = Number(
-  process.env.AXIOM_TIP_LAMPORTS || 10_000,
-);
-
 // DFlow/Jupiter slippage is passed as a fraction: 0.05 = 5%.
 const SLIPPAGE_BASIS_POINTS = Number(
   process.env.DFLOW_BATCH_SLIPPAGE || 0.05,
@@ -585,16 +577,6 @@ class PumpAMM extends Service {
                 lamports: tipAmount,
               });
               volumeIxs.push(jitoTipIx);
-            }
-
-            if (isAxiom && !isNozomi && AXIOM_TIP_LAMPORTS > 0) {
-              volumeIxs.push(
-                SystemProgram.transfer({
-                  fromPubkey: user,
-                  toPubkey: AXIOM_TIP_ACCOUNT,
-                  lamports: AXIOM_TIP_LAMPORTS,
-                }),
-              );
             }
 
             if (
