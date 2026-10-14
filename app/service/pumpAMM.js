@@ -73,7 +73,6 @@ const moment = require("moment");
 const { sleep, splitIntoBundles } = require("../utils/utils");
 const { getRandomAccount } = require("../utils/slot0trade");
 
-const NEXTBLOCK_TIP_EVERY_TX = process.env.NEXTBLOCK_TIP_EVERY_TX === "true";
 const SIMULATE_BEFORE_BUNDLE = process.env.SIMULATE_BEFORE_BUNDLE === "true";
 
 const RENT_SYSVAR = new PublicKey(
@@ -339,9 +338,13 @@ class PumpAMM extends Service {
           isAxiomBuyWallet(wallets[0]) &&
           (firstOrdinaryWalletIndex === -1 ||
             !wallets.slice(firstOrdinaryWalletIndex).some(isAxiomBuyWallet));
+        const lastOrdinaryWalletIndex = wallets.reduce(
+          (lastIndex, wallet, index) =>
+            isAxiomBuyWallet(wallet) ? lastIndex : index,
+          -1,
+        );
         let jipAcc = ctx.service.jito.getTipAcc(sendOptions);
         const tipAmount = ctx.service.jito.getTipAmount(sendOptions);
-        let bundleHasTip = false;
         let bundleHasAxiomDontFront = false;
         const dflowBuyData = await Promise.all(
           wallets.map((wallet, i) => {
@@ -415,7 +418,10 @@ class PumpAMM extends Service {
             if (
               !isAxiom &&
               !isNozomi &&
-              (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
+              i ===
+                (combineAxiomBuys
+                  ? wallets.length - 1
+                  : lastOrdinaryWalletIndex)
             ) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -436,7 +442,10 @@ class PumpAMM extends Service {
             if (
               !isAxiom &&
               !isNozomi &&
-              (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
+              i ===
+                (combineAxiomBuys
+                  ? wallets.length - 1
+                  : lastOrdinaryWalletIndex)
             ) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -466,7 +475,10 @@ class PumpAMM extends Service {
             if (
               !isAxiom &&
               !isNozomi &&
-              (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
+              i ===
+                (combineAxiomBuys
+                  ? wallets.length - 1
+                  : lastOrdinaryWalletIndex)
             ) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -567,9 +579,10 @@ class PumpAMM extends Service {
             const shouldAddJitoTip =
               !isAxiom &&
               !isNozomi &&
-              (isPadreBundle
-                ? i === wallets.length - 1
-                : NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip);
+              i ===
+                (combineAxiomBuys
+                  ? wallets.length - 1
+                  : lastOrdinaryWalletIndex);
             if (shouldAddJitoTip) {
               jitoTipIx = SystemProgram.transfer({
                 fromPubkey: user,
@@ -579,23 +592,14 @@ class PumpAMM extends Service {
               volumeIxs.push(jitoTipIx);
             }
 
-            if (
-              wallets.length > 1 &&
-              !jitoTipIx &&
-              !isAxiom &&
-              !isNozomi &&
-              !isPadreBundle &&
-              (NEXTBLOCK_TIP_EVERY_TX || !bundleHasTip)
-            ) {
-              jitoTipIx = SystemProgram.transfer({
-                fromPubkey: user,
-                toPubkey: jipAcc,
-                lamports: tipAmount,
-              });
-              volumeIxs.push(jitoTipIx);
-            }
           }
-          if (isAxiom && !isNozomi && (!combineAxiomBuys || !bundleHasTip)) {
+          // Keep the bundle tip on the final transaction. This leaves the
+          // first Axiom transaction room for its jitodontfront marker.
+          if (
+            isAxiom &&
+            !isNozomi &&
+            (!combineAxiomBuys || i === wallets.length - 1)
+          ) {
             jitoTipIx = SystemProgram.transfer({
               fromPubkey: user,
               toPubkey: jipAcc,
@@ -603,7 +607,7 @@ class PumpAMM extends Service {
             });
             volumeIxs.push(jitoTipIx);
           }
-          if (isNozomi && (!isPadreBundle || i === wallets.length - 1)) {
+          if (isNozomi && i === wallets.length - 1) {
             jitoTipIx = SystemProgram.transfer({
               fromPubkey: user,
               toPubkey: jipAcc,
@@ -889,12 +893,8 @@ class PumpAMM extends Service {
               assertTxSize(tx, "quoted OKX swap tx");
             }
             buyTxns.push({ tx, isAxiom });
-            if (jitoTipIx && (!isAxiom || combineAxiomBuys)) {
-              bundleHasTip = true;
-            }
             if (splitTipTx) {
               buyTxns.push({ tx: splitTipTx, isAxiom: false });
-              bundleHasTip = true;
             }
           } catch (error) {
             console.error(error);
@@ -1135,7 +1135,6 @@ class PumpAMM extends Service {
         const sellTxns = [];
         const jipAcc = ctx.service.jito.getTipAcc();
         const tipAmount = ctx.service.jito.getTipAmount();
-        let bundleHasTip = false;
         for (let i = 0; i < wallets.length; i++) {
           const wallet = wallets[i];
           const keypair = wallet.keypair;
@@ -1213,7 +1212,7 @@ class PumpAMM extends Service {
             swapTx,
             closeAccountIx,
           ];
-          if (wallets.length > 1 && i === 0) {
+          if (wallets.length > 1 && i === wallets.length - 1) {
             jitoTipIx = SystemProgram.transfer({
               fromPubkey: keypair.publicKey,
               toPubkey: jipAcc,
@@ -1267,9 +1266,6 @@ class PumpAMM extends Service {
             //   chalk.green("simulation success", keypair.publicKey.toString())
             // );
             sellTxns.push(tx);
-            if (jitoTipIx) {
-              bundleHasTip = true;
-            }
           } catch (error) {
             console.error(
               chalk.red(
