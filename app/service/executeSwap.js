@@ -14,7 +14,7 @@ const {
   Connection,
 } = require("@solana/web3.js");
 
-const { connection } = require("../constants");
+const { connection, usdc } = require("../constants");
 const { initSdk } = require("../constants/raydium");
 
 const {
@@ -1352,21 +1352,24 @@ class ExecuteSwap extends Service {
         const quoteTokenInfo = await ctx.service.ave.getTokenInfo(
           quoteMint.toBase58(),
         );
-        const quotePair = quoteTokenInfo.pairs.find(
-          (item) => item.pair === quoteTokenInfo.tokenDetail.main_pair,
-        );
-        if (!quotePair) {
+        const isUsdcQuote = quoteMint.toBase58() === usdc;
+        const quotePair = isUsdcQuote
+          ? null
+          : quoteTokenInfo.pairs.find(
+              (item) => item.pair === quoteTokenInfo.tokenDetail.main_pair,
+            );
+        if (!isUsdcQuote && !quotePair) {
           throw new Error(`AVE main pair missing for ${quoteMint.toBase58()}`);
         }
         routeInfo = {
           pumpPool: pumpPool.address.toBase58(),
           quoteMint: quoteMint.toBase58(),
-          quotePool: quotePair.pair,
-          quoteAmm: quotePair.amm,
+          quotePool: quotePair?.pair || null,
+          quoteAmm: quotePair?.amm || null,
           token: aveTokenInfo.tokenDetail,
           pumpPair: pumpPair || null,
           quoteToken: quoteTokenInfo.tokenDetail,
-          quotePair,
+          quotePair: quotePair || null,
         };
         await ctx.model.PoolStore.updateOne(
           { token },
