@@ -48,6 +48,7 @@ const AvePumpSwapSDK = require("../libs/aveProxy");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const { setLocalOkxAmmExpectedAmountOut } = require("../libs/okxLocalRouter");
 const JupSDK = require("../libs/jup");
+const { getJupiterSellInstructions } = require("../libs/jupiterSellFallback");
 const DFlowSDK = require("../libs/dflow");
 const { createAxiomBuyInstructions } = require("../libs/axiom");
 const {
@@ -1101,10 +1102,10 @@ class PumpAMM extends Service {
         if (error.code !== "NO_WSOL_PUMP_POOL") throw error;
         console.log(
           chalk.yellow(
-            `No WSOL Pump AMM pool for ${tokenMint.toBase58()}; routing sell through OKX.`,
+            `No WSOL Pump AMM pool for ${tokenMint.toBase58()}; routing sell through Jupiter.`,
           ),
         );
-        return this.batchSellTokenByOkx(
+        return this.batchSellTokenByJupiter(
           tokenMint,
           wallets,
           tokenProgramId,
@@ -1327,7 +1328,7 @@ class PumpAMM extends Service {
     }
   }
 
-  async batchSellTokenByOkx(tokenMint, wallets, tokenProgramId, getWalletSellPercent) {
+  async batchSellTokenByJupiter(tokenMint, wallets, tokenProgramId, getWalletSellPercent) {
     const { ctx } = this;
     const seen = new Set();
     const uniqueWallets = wallets.filter((wallet) => {
@@ -1365,13 +1366,14 @@ class PumpAMM extends Service {
       for (const { wallet, amountRaw } of batch) {
         const keypair = wallet.keypair;
         const user = keypair.publicKey;
-        const okxIxs = await okxSwap.getSellInstructions(ctx, {
+        const swapData = await getJupiterSellInstructions(ctx, {
           user,
           tokenMint,
           tokenAmount: amountRaw.toString(),
           slippage: wallet.slippage ?? 0.01,
+          connection,
         });
-        const instructions = [...okxIxs];
+        const instructions = [...swapData.instructions];
         if (batch.length > 1 && prepared.length === 0) {
           instructions.push(SystemProgram.transfer({
             fromPubkey: user,
@@ -1379,22 +1381,22 @@ class PumpAMM extends Service {
             lamports: ctx.service.jito.getTipAmount(),
           }));
         }
-        prepared.push({ keypair, user, instructions });
+        prepared.push({ keypair, user, instructions, lookupTableAccounts: swapData.lookupTableAccounts });
       }
 
-      // Route requests can take time; sign with a fresh blockhash.
+      // Quotes and lookup tables can take time; sign with a fresh blockhash.
       const { blockhash } = await connection.getLatestBlockhash();
       const transactions = [];
-      for (const { keypair, user, instructions } of prepared) {
+      for (const { keypair, user, instructions, lookupTableAccounts } of prepared) {
         const message = new TransactionMessage({
           payerKey: user,
           recentBlockhash: blockhash,
           instructions,
-        }).compileToV0Message();
+        }).compileToV0Message(lookupTableAccounts);
         const transaction = new VersionedTransaction(message);
         transaction.sign([keypair]);
         if (transaction.serialize().length > MAX_TRANSACTION_SIZE) {
-          throw new Error(`OKX sell transaction is too large for ${user.toBase58()}`);
+          throw new Error(`Jupiter sell transaction is too large for ${user.toBase58()}`);
         }
         transactions.push(transaction);
       }
@@ -1408,11 +1410,11 @@ class PumpAMM extends Service {
             replaceRecentBlockhash: true,
           });
         } catch (error) {
-          throw new Error(`OKX sell simulation RPC failed for ${user} (${signature}): ${error.message}`, {
+          throw new Error(`Jupiter sell simulation RPC failed for ${user} (${signature}): ${error.message}`, {
             cause: error,
           });
         }
-        console.log("OKX sell simulation", {
+        console.log("Jupiter sell simulation", {
           user,
           signature,
           slot: simulation.context?.slot,
@@ -1421,7 +1423,7 @@ class PumpAMM extends Service {
           logs: simulation.value?.logs,
         });
         if (!simulation.value || simulation.value.err) {
-          throw new Error(`OKX sell simulation failed for ${user} (${signature}): ${JSON.stringify(simulation.value?.err || "empty result")} ${JSON.stringify(simulation.value?.logs || [])}`);
+          throw new Error(`Jupiter sell simulation failed for ${user} (${signature}): ${JSON.stringify(simulation.value?.err || "empty result")} ${JSON.stringify(simulation.value?.logs || [])}`);
         }
       }));
       if (transactions.length > 1) {
