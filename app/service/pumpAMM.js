@@ -1370,7 +1370,7 @@ class PumpAMM extends Service {
           user,
           tokenMint,
           tokenAmount: amountRaw.toString(),
-          slippage: wallet.slippage ?? 0.01,
+          slippage: wallet.slippage ?? 0.30,
           connection,
         });
         const instructions = [...swapData.instructions];
