@@ -426,7 +426,13 @@ async function createAxiomPumpfunBuyInstructions({
     [Buffer.from("global")],
     PUMPFUN_PROGRAM_ID,
   )[0];
-  const userVolumeAccumulator = getUserVolumeAccumulatorPda(user);
+  // Pump.fun and Pump AMM use the same seed label for this account, but the
+  // PDA is derived with different program IDs. The shared pool helper is for
+  // Pump AMM, so derive the Pump.fun account with the Pump.fun program ID.
+  const userVolumeAccumulator = PublicKey.findProgramAddressSync(
+    [Buffer.from("user_volume_accumulator"), user.toBuffer()],
+    PUMPFUN_PROGRAM_ID,
+  )[0];
   const expectedBaseAmount = curveAccount.getBuyPrice(quoteAmountIn);
   const minTokensOut = 1n;
 
