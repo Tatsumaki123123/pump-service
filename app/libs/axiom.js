@@ -7,6 +7,7 @@ const {
 const BN = require("bn.js");
 const {
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   NATIVE_MINT,
   getAssociatedTokenAddressSync,
@@ -47,6 +48,28 @@ const AXIOM_ACCOUNT_41 = new PublicKey(
   process.env.AXIOM_ACCOUNT_41 ||
     "9krj8YnMCgeEDdx4eiuxciiXsfcfJf8C28aUKWjgmm2u",
 );
+const AXIOM_PUMPFUN_ACCOUNT_2 = new PublicKey(
+  process.env.AXIOM_PUMPFUN_ACCOUNT_2 ||
+    "8vFGAKdwpn4hk7kc1cBgfWZzpyW3MEMDATDzVZhddeQb",
+);
+const AXIOM_PUMPFUN_FEE_DESTINATION = new PublicKey(
+  process.env.AXIOM_PUMPFUN_FEE_DESTINATION ||
+    "ECDrSz47nXihe5kyK4oWEePPsPi9qz6u5d6Fa2sDj3uM",
+);
+const AXIOM_PUMPFUN_BUYBACK_RECIPIENT = new PublicKey(
+  process.env.AXIOM_PUMPFUN_BUYBACK_RECIPIENT ||
+    "5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6",
+);
+const PUMPFUN_PROGRAM_ID = new PublicKey(
+  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+);
+const PUMPFUN_EVENT_AUTHORITY = new PublicKey(
+  "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1",
+);
+const PUMPFUN_FEE_CONFIG = new PublicKey(
+  "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt",
+);
+const AXIOM_PUMPFUN_BUY_DATA_SUFFIX = Buffer.from("000134323c", "hex");
 const GLOBAL_CONFIG = new PublicKey(
   "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
 );
@@ -346,6 +369,154 @@ async function createAxiomBuyInstructions({
   };
 }
 
+async function createAxiomPumpfunBuyInstructions({
+  tokenMint,
+  user,
+  buyAmount,
+  curveAccount,
+  feeLamports,
+}) {
+  const totalQuoteLamports = BigInt(
+    Math.trunc(Number(buyAmount) * LAMPORTS_PER_SOL),
+  );
+  const platformFeeLamports = BigInt(
+    Math.trunc(
+      feeLamports == null ? AXIOM_DEFAULT_FEE_LAMPORTS : Number(feeLamports),
+    ),
+  );
+  const quoteAmountIn = totalQuoteLamports - platformFeeLamports;
+  if (quoteAmountIn <= 0n) {
+    throw new Error(
+      `Axiom Pump.fun buy amount ${totalQuoteLamports} is not enough for platform fee ${platformFeeLamports}`,
+    );
+  }
+  if (!curveAccount) {
+    throw new Error("Axiom Pump.fun buy requires the bonding curve account");
+  }
+
+  const bondingCurve = PublicKey.findProgramAddressSync(
+    [Buffer.from("bonding-curve"), tokenMint.toBuffer()],
+    PUMPFUN_PROGRAM_ID,
+  )[0];
+  const associatedBaseBondingCurve = getAssociatedTokenAddressSync(
+    tokenMint,
+    bondingCurve,
+    true,
+    TOKEN_2022_PROGRAM_ID,
+  );
+  const associatedQuoteBondingCurve = getAssociatedTokenAddressSync(
+    NATIVE_MINT,
+    bondingCurve,
+    true,
+    TOKEN_PROGRAM_ID,
+  );
+  const associatedBaseUser = getAssociatedTokenAddressSync(
+    tokenMint,
+    user,
+    false,
+    TOKEN_2022_PROGRAM_ID,
+  );
+  const associatedQuoteUser = getAssociatedTokenAddressSync(
+    NATIVE_MINT,
+    user,
+    false,
+    TOKEN_PROGRAM_ID,
+  );
+  const global = PublicKey.findProgramAddressSync(
+    [Buffer.from("global")],
+    PUMPFUN_PROGRAM_ID,
+  )[0];
+  const userVolumeAccumulator = getUserVolumeAccumulatorPda(user);
+  const expectedBaseAmount = curveAccount.getBuyPrice(quoteAmountIn);
+  const minTokensOut = 1n;
+
+  const axiomData = Buffer.alloc(22);
+  axiomData.writeUInt8(0, 0);
+  axiomData.writeBigUInt64LE(quoteAmountIn, 1);
+  axiomData.writeBigUInt64LE(expectedBaseAmount, 9);
+  AXIOM_PUMPFUN_BUY_DATA_SUFFIX.copy(axiomData, 17);
+
+  const key = (pubkey, isWritable = false, isSigner = false) => ({
+    pubkey,
+    isWritable,
+    isSigner,
+  });
+  const buyInstruction = new TransactionInstruction({
+    programId: AXIOM_PROGRAM_ID,
+    data: axiomData,
+    keys: [
+      key(user, true, true),
+      key(user, true, true),
+      key(AXIOM_PUMPFUN_ACCOUNT_2, true),
+      key(SystemProgram.programId),
+      key(AXIOM_PROGRAM_ID),
+      key(PUMPFUN_PROGRAM_ID),
+      key(global),
+      key(tokenMint),
+      key(NATIVE_MINT),
+      key(TOKEN_2022_PROGRAM_ID),
+      key(TOKEN_PROGRAM_ID),
+      key(bondingCurve, true),
+      key(associatedBaseBondingCurve, true),
+      key(associatedQuoteBondingCurve, true),
+      key(user, true, true),
+      key(associatedBaseUser, true),
+      key(associatedQuoteUser, true),
+      key(userVolumeAccumulator, true),
+      key(PUMPFUN_FEE_CONFIG),
+      key(AXIOM_PUMPFUN_BUYBACK_RECIPIENT, true),
+      key(SystemProgram.programId),
+      key(PUMPFUN_EVENT_AUTHORITY),
+      key(PUMPFUN_PROGRAM_ID),
+      key(AXIOM_PROGRAM_ID),
+      key(AXIOM_PUMPFUN_FEE_DESTINATION, true),
+      key(AXIOM_ACCOUNT_41, true),
+      key(AXIOM_PROGRAM_ID),
+      key(AXIOM_PROGRAM_ID),
+      key(AXIOM_PROGRAM_ID),
+    ],
+  });
+
+  const baseUserInfo = await connection.getAccountInfo(associatedBaseUser);
+  const quoteUserInfo = await connection.getAccountInfo(associatedQuoteUser);
+  const instructions = [];
+  if (!baseUserInfo) {
+    instructions.push(
+      createAssociatedTokenAccountIdempotentInstruction(
+        user,
+        associatedBaseUser,
+        user,
+        tokenMint,
+        TOKEN_2022_PROGRAM_ID,
+      ),
+    );
+  }
+  if (!quoteUserInfo) {
+    instructions.push(
+      createAssociatedTokenAccountIdempotentInstruction(
+        user,
+        associatedQuoteUser,
+        user,
+        NATIVE_MINT,
+        TOKEN_PROGRAM_ID,
+      ),
+    );
+  }
+  instructions.push(buyInstruction);
+  return {
+    instructions,
+    feeInstruction: SystemProgram.transfer({
+      fromPubkey: user,
+      toPubkey: AXIOM_PUMPFUN_FEE_DESTINATION,
+      lamports: Number(platformFeeLamports),
+    }),
+    feeLamports: platformFeeLamports,
+    expectedBaseAmount,
+    minTokensOut,
+  };
+}
+
 module.exports = {
   createAxiomBuyInstructions,
+  createAxiomPumpfunBuyInstructions,
 };

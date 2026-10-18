@@ -21,6 +21,7 @@ const {
 } = require("../constants");
 
 const { PumpFunSDK, GlobalAccount } = require("../libs/pumpfun");
+const { createAxiomPumpfunBuyInstructions } = require("../libs/axiom");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const { createTroProxyInstruction } = require("../libs/trogan");
 
@@ -240,6 +241,19 @@ class PumpFun extends Service {
               : []),
             ...okxIxs,
           ];
+        } else if (wallet.isAxiom) {
+          const curveAccount = await pfSwap.getBondingCurveAccount(
+            tokenMint,
+            "processed",
+          );
+          const axiomBuy = await createAxiomPumpfunBuyInstructions({
+            tokenMint,
+            user,
+            buyAmount,
+            curveAccount,
+            feeLamports: wallet.axiomFeeLamports,
+          });
+          volumeIxs = [...axiomBuy.instructions, axiomBuy.feeInstruction];
         } else {
           const buyTx = await pfSwap.buy(
             user,
@@ -257,7 +271,7 @@ class PumpFun extends Service {
 
         const jipAcc = ctx.service.jito.getTipAcc(sendOptions);
         const tipAmount = ctx.service.jito.getTipAmount(sendOptions);
-        if (wallet.isGmgn) {
+        if (!wallet.isAxiom && wallet.isGmgn) {
           const gmgnTipTx = SystemProgram.transfer({
             fromPubkey: user,
             toPubkey: GMGN_FEES_VAULT,
@@ -265,7 +279,7 @@ class PumpFun extends Service {
           });
           volumeIxs.push(gmgnTipTx);
         }
-        if (wallet.isFomo) {
+        if (!wallet.isAxiom && wallet.isFomo) {
           volumeIxs.push(
             SystemProgram.transfer({
               fromPubkey: user,
@@ -274,7 +288,7 @@ class PumpFun extends Service {
             }),
           );
         }
-        if (wallet.isTrogan || wallet.isTragon) {
+        if (!wallet.isAxiom && (wallet.isTrogan || wallet.isTragon)) {
           const troganTipIx = createTroProxyInstruction(
             user,
             jipAcc,
@@ -284,7 +298,7 @@ class PumpFun extends Service {
           if (troganTipIx) {
             volumeIxs.push(troganTipIx);
           }
-        } else {
+        } else if (!wallet.isAxiom) {
           const jitoTipIx = SystemProgram.transfer({
             fromPubkey: user,
             toPubkey: jipAcc,
@@ -295,6 +309,7 @@ class PumpFun extends Service {
         }
 
         if (
+          !wallet.isAxiom &&
           !isNozomi &&
           existJitoIx === false &&
           i !== 0 &&
