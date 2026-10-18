@@ -43,6 +43,9 @@ const PUMPFUN_BUYBACK_ACCOUNT = new web3_js_1.PublicKey(
 const PUMPFUN_BUY_DISCRIMINATOR = Buffer.from([
   102, 6, 61, 18, 1, 218, 235, 234,
 ]);
+const PUMPFUN_SELL_DISCRIMINATOR = Buffer.from([
+  51, 230, 133, 164, 1, 127, 131, 173,
+]);
 const MPL_TOKEN_METADATA_PROGRAM_ID =
   "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 exports.GLOBAL_ACCOUNT_SEED = "global";
@@ -376,31 +379,74 @@ class PumpFunSDK {
     );
   }
   async getSellInstructions(seller, mint, feeRecipient, amount, minSolOutput) {
-    const associatedBondingCurve = await (0,
-    spl_token_1.getAssociatedTokenAddress)(
+    const mintInfo = await this.connection.getAccountInfo(mint, "confirmed");
+    if (!mintInfo) {
+      throw new Error(`Mint account not found: ${mint.toBase58()}`);
+    }
+    const tokenProgram = mintInfo.owner.equals(
+      spl_token_1.TOKEN_2022_PROGRAM_ID
+    )
+      ? spl_token_1.TOKEN_2022_PROGRAM_ID
+      : spl_token_1.TOKEN_PROGRAM_ID;
+    const bondingCurve = this.getBondingCurvePDA(mint);
+    const associatedBondingCurve = (0,
+    spl_token_1.getAssociatedTokenAddressSync)(
       mint,
-      this.getBondingCurvePDA(mint),
-      true
+      bondingCurve,
+      true,
+      tokenProgram
     );
     const associatedUser = await (0, spl_token_1.getAssociatedTokenAddress)(
       mint,
       seller,
-      false
+      false,
+      tokenProgram
     );
-    let transaction = new web3_js_1.Transaction();
+    const [global] = web3_js_1.PublicKey.findProgramAddressSync(
+      [Buffer.from(exports.GLOBAL_ACCOUNT_SEED)],
+      PUMP_PROGRAM_ID
+    );
+    const bondingCurveAccount = await this.getBondingCurveAccount(
+      mint,
+      "confirmed"
+    );
+    if (!bondingCurveAccount) {
+      throw new Error(`Bonding curve account not found: ${mint.toBase58()}`);
+    }
+    const creatorVault = this.getCreatorVaultPDA(bondingCurveAccount.creator);
+    const key = (pubkey, isWritable = false, isSigner = false) => ({
+      pubkey,
+      isWritable,
+      isSigner,
+    });
+    const data = Buffer.alloc(24);
+    PUMPFUN_SELL_DISCRIMINATOR.copy(data, 0);
+    data.writeBigUInt64LE(BigInt(amount.toString()), 8);
+    data.writeBigUInt64LE(BigInt(minSolOutput.toString()), 16);
+    const transaction = new web3_js_1.Transaction();
     transaction.add(
-      await this.program.methods
-        .sell(
-          new bn_js_1.BN(amount.toString()),
-          new bn_js_1.BN(minSolOutput.toString())
-        )
-        .accountsPartial({
-          feeRecipient: feeRecipient,
-          mint: mint,
-          associatedUser: associatedUser,
-          user: seller,
-        })
-        .transaction()
+      new web3_js_1.TransactionInstruction({
+        programId: PUMP_PROGRAM_ID,
+        data,
+        keys: [
+          key(global),
+          key(feeRecipient, true),
+          key(mint),
+          key(bondingCurve, true),
+          key(associatedBondingCurve, true),
+          key(associatedUser, true),
+          key(seller, true, true),
+          key(web3_js_1.SystemProgram.programId),
+          key(creatorVault, true),
+          key(tokenProgram),
+          key(PUMPFUN_EVENT_AUTHORITY),
+          key(PUMP_PROGRAM_ID),
+          key(PUMPFUN_FEE_CONFIG, true),
+          key(PUMPFUN_FEE_PROGRAM, true),
+          key(PUMPFUN_EXTRA_ACCOUNT),
+          key(PUMPFUN_BUYBACK_ACCOUNT, true),
+        ],
+      })
     );
     return transaction;
   }
