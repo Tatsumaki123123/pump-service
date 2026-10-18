@@ -18,6 +18,31 @@ const bn_js_1 = require("bn.js");
 const util_1 = require("./util");
 const IDL_1 = require("./IDL");
 const PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+const PUMP_PROGRAM_ID = new web3_js_1.PublicKey(PROGRAM_ID);
+const PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR_SEED = "global_volume_accumulator";
+const PUMPFUN_USER_VOLUME_ACCUMULATOR_SEED = "user_volume_accumulator";
+const PUMPFUN_EVENT_AUTHORITY = new web3_js_1.PublicKey(
+  "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
+);
+const PUMPFUN_FEE_CONFIG = new web3_js_1.PublicKey(
+  process.env.PUMPFUN_FEE_CONFIG ||
+    "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt"
+);
+const PUMPFUN_FEE_PROGRAM = new web3_js_1.PublicKey(
+  process.env.PUMPFUN_FEE_PROGRAM ||
+    "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+);
+const PUMPFUN_EXTRA_ACCOUNT = new web3_js_1.PublicKey(
+  process.env.PUMPFUN_EXTRA_ACCOUNT ||
+    "Aybh3ZbgfBR8SDiGjFtr2tXofM6a2H7pWZ6VSaqg7Rwk"
+);
+const PUMPFUN_BUYBACK_ACCOUNT = new web3_js_1.PublicKey(
+  process.env.PUMPFUN_BUYBACK_ACCOUNT ||
+    "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"
+);
+const PUMPFUN_BUY_DISCRIMINATOR = Buffer.from([
+  102, 6, 61, 18, 1, 218, 235, 234,
+]);
 const MPL_TOKEN_METADATA_PROGRAM_ID =
   "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 exports.GLOBAL_ACCOUNT_SEED = "global";
@@ -182,43 +207,96 @@ class PumpFunSDK {
     bondingCurveCreator,
     commitment = util_1.DEFAULT_COMMITMENT
   ) {
-    // const associatedBondingCurve = await getAssociatedTokenAddress(mint, this.getBondingCurvePDA(mint), true);
+    const mintInfo = await this.connection.getAccountInfo(mint, commitment);
+    if (!mintInfo) {
+      throw new Error(`Mint account not found: ${mint.toBase58()}`);
+    }
+    const tokenProgram = mintInfo.owner.equals(
+      spl_token_1.TOKEN_2022_PROGRAM_ID
+    )
+      ? spl_token_1.TOKEN_2022_PROGRAM_ID
+      : spl_token_1.TOKEN_PROGRAM_ID;
+    const bondingCurve = this.getBondingCurvePDA(mint);
+    const associatedBondingCurve = (0,
+    spl_token_1.getAssociatedTokenAddressSync)(
+      mint,
+      bondingCurve,
+      true,
+      tokenProgram
+    );
     const associatedUser = await (0, spl_token_1.getAssociatedTokenAddress)(
       mint,
       buyer,
-      false
+      false,
+      tokenProgram
     );
     let transaction = new web3_js_1.Transaction();
     try {
       await (0, spl_token_1.getAccount)(
         this.connection,
         associatedUser,
-        commitment
+        commitment,
+        tokenProgram
       );
     } catch (e) {
       transaction.add(
-        (0, spl_token_1.createAssociatedTokenAccountInstruction)(
+        (0, spl_token_1.createAssociatedTokenAccountIdempotentInstruction)(
           buyer,
           associatedUser,
           buyer,
-          mint
+          mint,
+          tokenProgram
         )
       );
     }
+
+    const [globalVolumeAccumulator] = web3_js_1.PublicKey.findProgramAddressSync(
+      [Buffer.from(PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR_SEED)],
+      PUMP_PROGRAM_ID
+    );
+    const [userVolumeAccumulator] = web3_js_1.PublicKey.findProgramAddressSync(
+      [Buffer.from(PUMPFUN_USER_VOLUME_ACCUMULATOR_SEED), buyer.toBuffer()],
+      PUMP_PROGRAM_ID
+    );
+    const key = (pubkey, isWritable = false, isSigner = false) => ({
+      pubkey,
+      isWritable,
+      isSigner,
+    });
+    const data = Buffer.alloc(24);
+    PUMPFUN_BUY_DISCRIMINATOR.copy(data, 0);
+    data.writeBigUInt64LE(BigInt(amount.toString()), 8);
+    data.writeBigUInt64LE(BigInt(solAmount.toString()), 16);
     transaction.add(
-      await this.program.methods
-        .buy(
-          new bn_js_1.BN(amount.toString()),
-          new bn_js_1.BN(solAmount.toString())
-        )
-        .accountsPartial({
-          feeRecipient: feeRecipient,
-          mint: mint,
-          associatedUser: associatedUser,
-          user: buyer,
-          creatorVault: this.getCreatorVaultPDA(bondingCurveCreator),
-        })
-        .transaction()
+      new web3_js_1.TransactionInstruction({
+        programId: PUMP_PROGRAM_ID,
+        data,
+        keys: [
+          key(
+            web3_js_1.PublicKey.findProgramAddressSync(
+              [Buffer.from(exports.GLOBAL_ACCOUNT_SEED)],
+              PUMP_PROGRAM_ID
+            )[0]
+          ),
+          key(feeRecipient, true),
+          key(mint),
+          key(bondingCurve, true),
+          key(associatedBondingCurve, true),
+          key(associatedUser, true),
+          key(buyer, true, true),
+          key(web3_js_1.SystemProgram.programId),
+          key(tokenProgram),
+          key(this.getCreatorVaultPDA(bondingCurveCreator), true),
+          key(PUMPFUN_EVENT_AUTHORITY),
+          key(PUMP_PROGRAM_ID),
+          key(globalVolumeAccumulator, true),
+          key(userVolumeAccumulator, true),
+          key(PUMPFUN_FEE_CONFIG, true),
+          key(PUMPFUN_FEE_PROGRAM, true),
+          key(PUMPFUN_EXTRA_ACCOUNT),
+          key(PUMPFUN_BUYBACK_ACCOUNT, true),
+        ],
+      })
     );
     return transaction;
   }
@@ -230,51 +308,22 @@ class PumpFunSDK {
     solAmount,
     commitment = util_1.DEFAULT_COMMITMENT
   ) {
-    const associatedBondingCurve = (0,
-    spl_token_1.getAssociatedTokenAddressSync)(
+    const bondingCurveAccount = await this.getBondingCurveAccount(
       mint,
-      this.getBondingCurvePDA(mint),
-      true
+      commitment,
     );
-    const associatedUser = (0, spl_token_1.getAssociatedTokenAddressSync)(
-      mint,
-      buyer,
-      false
-    );
-    let transaction = new web3_js_1.Transaction();
-    try {
-      await (0, spl_token_1.getAccount)(
-        this.connection,
-        associatedUser,
-        commitment
-      );
-    } catch (e) {
-      transaction.add(
-        (0, spl_token_1.createAssociatedTokenAccountInstruction)(
-          buyer,
-          associatedUser,
-          buyer,
-          mint
-        )
-      );
+    if (!bondingCurveAccount) {
+      throw new Error(`Bonding curve account not found: ${mint.toBase58()}`);
     }
-    transaction.add(
-      await this.program.methods
-        .buy(
-          new bn_js_1.BN(amount.toString()),
-          new bn_js_1.BN(solAmount.toString())
-        )
-        .accounts({
-          feeRecipient: feeRecipient,
-          mint: mint,
-          // @ts-ignore
-          associatedBondingCurve: associatedBondingCurve,
-          associatedUser: associatedUser,
-          user: buyer,
-        })
-        .transaction()
+    return await this.getBuyInstructions(
+      buyer,
+      mint,
+      feeRecipient,
+      amount,
+      solAmount,
+      bondingCurveAccount.creator,
+      commitment,
     );
-    return transaction;
   }
   async getQuickBuyInstructions(
     buyer,
@@ -285,53 +334,14 @@ class PumpFunSDK {
     priorityFees,
     commitment = util_1.DEFAULT_COMMITMENT
   ) {
-    const feeRecipient = new web3_js_1.PublicKey(
-      "AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY"
-    );
-    const amount = solAmount * 35000n;
-    const associatedUser = await (0, spl_token_1.getAssociatedTokenAddress)(
-      mint,
+    const transaction = await this.getBuyInstructionsBySolAmount(
       buyer,
-      false
-    );
-    let buyAmountWithSlippage = (0, util_1.calculateWithSlippageBuy)(
+      mint,
       solAmount,
-      slippageBasisPoints
+      slippageBasisPoints,
+      commitment,
     );
-    let transaction = new web3_js_1.Transaction();
-    try {
-      await (0, spl_token_1.getAccount)(
-        this.connection,
-        associatedUser,
-        commitment
-      );
-    } catch (e) {
-      transaction.add(
-        (0, spl_token_1.createAssociatedTokenAccountInstruction)(
-          buyer,
-          associatedUser,
-          buyer,
-          mint
-        )
-      );
-    }
-    transaction.add(
-      await this.program.methods
-        .buy(
-          new bn_js_1.BN(amount.toString()),
-          new bn_js_1.BN(buyAmountWithSlippage.toString())
-        )
-        .accountsPartial({
-          feeRecipient: feeRecipient,
-          mint: mint,
-          associatedUser: associatedUser,
-          user: buyer,
-          creatorVault: this.getCreatorVaultPDA(bondingCurveCreator),
-        })
-        .transaction()
-    );
-    let buyResults = await (0, util_1.returnTx)(transaction, priorityFees);
-    return buyResults;
+    return await (0, util_1.returnTx)(transaction, priorityFees);
   }
   //sell
   async getSellInstructionsByTokenAmount(

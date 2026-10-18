@@ -52,6 +52,24 @@ function getWalletSlippageBasisPoints(wallet) {
   return BigInt(Math.floor(slippage * 10000));
 }
 
+async function simulatePumpFunTransaction(transaction, user) {
+  const simulationResult = await connection.simulateTransaction(transaction, {
+    commitment: "confirmed",
+    sigVerify: true,
+    replaceRecentBlockhash: false,
+  });
+  if (simulationResult.value.err) {
+    const logs = simulationResult.value.logs?.join("\n") || "no program logs";
+    throw new Error(
+      `Pump.fun simulation failed for ${user.toBase58()}: ${JSON.stringify(
+        simulationResult.value.err,
+      )}\n${logs}`,
+    );
+  }
+  console.log(chalk.green("Pump.fun simulation success", user.toBase58()));
+  return simulationResult.value;
+}
+
 class PumpFun extends Service {
   constructor(ctx) {
     super(ctx);
@@ -59,7 +77,6 @@ class PumpFun extends Service {
     this.canBuy = true;
   }
   async buyToken(token, amount = 0.01) {
-    const { ctx } = this;
     try {
       // if (!this.canBuy) return false;
       // this.canBuy = false;
@@ -77,21 +94,25 @@ class PumpFun extends Service {
         },
         "processed"
       );
-      return;
-      const tipIx = SystemProgram.transfer({
-        fromPubkey: testWallet.publicKey,
-        toPubkey: new PublicKey("ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49"),
-        lamports: 0.0001 * LAMPORTS_PER_SOL,
+      const { blockhash, lastValidBlockHeight } =
+        await connection.getLatestBlockhash("confirmed");
+      const messageV0 = new TransactionMessage({
+        payerKey: testWallet.publicKey,
+        recentBlockhash: blockhash,
+        instructions: buyTx.instructions,
+      }).compileToV0Message();
+      const transaction = new VersionedTransaction(messageV0);
+      transaction.sign([testWallet]);
+      await simulatePumpFunTransaction(transaction, testWallet.publicKey);
+      const signature = await connection.sendTransaction(transaction, {
+        skipPreflight: false,
+        maxRetries: 2,
       });
-      const volumeIxs = [tipIx, ...buyTx.instructions];
-      // const volumeIxs = [...buyTx.instructions];
-      const bundleResult = await ctx.service.jito.sendBundle([volumeIxs]);
-      console.log(bundleResult);
-
-      // const res = await sendV0Transaction(connection, testWallet, volumeIxs);
-      // setTimeout(() => {
-      //   this.canBuy = true;
-      // }, 10 * 1000);
+      await connection.confirmTransaction(
+        { signature, blockhash, lastValidBlockHeight },
+        "processed",
+      );
+      console.log(`https://solscan.io/tx/${signature}`);
       return true;
     } catch (error) {
       console.error(error);
@@ -137,6 +158,7 @@ class PumpFun extends Service {
 
     const tx = new VersionedTransaction(messageV0);
     tx.sign([testWallet]);
+    await simulatePumpFunTransaction(tx, testWallet.publicKey);
     // const volumeIxs = [...buyTx.instructions];
     const bundleResult = await ctx.service.jito.sendBundle([tx]);
     console.log(bundleResult);
@@ -168,7 +190,6 @@ class PumpFun extends Service {
           "processed"
         );
         const res = await sendV0Transaction(
-          connection,
           testWallet,
           sellTx.instructions
         );
@@ -306,19 +327,7 @@ class PumpFun extends Service {
 
           const tx = new VersionedTransaction(messageV0);
           tx.sign([keypair]);
-
-          // 模拟交易
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.error("simulation", simulationResult.value);
-          //   throw new Error(simulationResult.value);
-          // }
-
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
+          await simulatePumpFunTransaction(tx, user);
           buyTxns.push(tx);
         } catch (error) {
           console.error(error.message);
@@ -446,19 +455,7 @@ class PumpFun extends Service {
 
             const tx = new VersionedTransaction(messageV0);
             tx.sign([keypair]);
-
-          // 模拟交易
-          // const simulationResult = await connection.simulateTransaction(tx, {
-          //   commitment: "confirmed",
-          // });
-          // if (simulationResult.value.err) {
-          //   console.log("simulation", simulationResult.value);
-          //   throw new Error(simulationResult.value);
-          // }
-
-          // console.log(
-          //   chalk.green("simulation success", keypair.publicKey.toString())
-          // );
+            await simulatePumpFunTransaction(tx, user);
             sellTxns.push(tx);
           } catch (error) {
             console.error(
