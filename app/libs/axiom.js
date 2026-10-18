@@ -70,6 +70,11 @@ const PUMPFUN_FEE_CONFIG = new PublicKey(
   "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt",
 );
 const AXIOM_PUMPFUN_BUY_DATA_SUFFIX = Buffer.from("000134323c", "hex");
+// The Pump.fun Axiom wrapper expects a conservative token amount in its
+// outer instruction. The inner Pump.fun instruction still uses min_tokens_out
+// = 1; this value is the wrapper's anti-sandwich quote check.
+const AXIOM_PUMPFUN_EXPECTED_BASE_NUMERATOR = 835n;
+const AXIOM_PUMPFUN_EXPECTED_BASE_DENOMINATOR = 1000n;
 const GLOBAL_CONFIG = new PublicKey(
   "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
 );
@@ -433,7 +438,10 @@ async function createAxiomPumpfunBuyInstructions({
     [Buffer.from("user_volume_accumulator"), user.toBuffer()],
     PUMPFUN_PROGRAM_ID,
   )[0];
-  const expectedBaseAmount = curveAccount.getBuyPrice(quoteAmountIn);
+  const expectedBaseAmount =
+    (curveAccount.getBuyPrice(quoteAmountIn) *
+      AXIOM_PUMPFUN_EXPECTED_BASE_NUMERATOR) /
+    AXIOM_PUMPFUN_EXPECTED_BASE_DENOMINATOR;
   const minTokensOut = 1n;
 
   const axiomData = Buffer.alloc(22);
