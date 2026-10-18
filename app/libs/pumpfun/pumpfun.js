@@ -414,6 +414,14 @@ class PumpFunSDK {
       throw new Error(`Bonding curve account not found: ${mint.toBase58()}`);
     }
     const creatorVault = this.getCreatorVaultPDA(bondingCurveAccount.creator);
+    // The deployed Pump.fun sell instruction treats the accounts after
+    // `fee_program` as remaining accounts. The first remaining account must
+    // be the V2 bonding-curve PDA; the legacy extra account is rejected with
+    // InvalidBondingCurveV2 (6074).
+    const bondingCurveV2 = web3_js_1.PublicKey.findProgramAddressSync(
+      [Buffer.from("bonding-curve-v2"), mint.toBuffer()],
+      PUMP_PROGRAM_ID,
+    )[0];
     const key = (pubkey, isWritable = false, isSigner = false) => ({
       pubkey,
       isWritable,
@@ -443,7 +451,7 @@ class PumpFunSDK {
           key(PUMP_PROGRAM_ID),
           key(PUMPFUN_FEE_CONFIG, true),
           key(PUMPFUN_FEE_PROGRAM, true),
-          key(PUMPFUN_EXTRA_ACCOUNT),
+          key(bondingCurveV2),
           key(PUMPFUN_BUYBACK_ACCOUNT, true),
         ],
       })
