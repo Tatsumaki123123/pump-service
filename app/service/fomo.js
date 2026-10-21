@@ -220,6 +220,15 @@ class Fomo extends Service {
   }
 
   async swapToken({ lineId: lineIdValue, address, token, outputMint, sellRatio }) {
+    const startedAt = Date.now();
+    let stageStartedAt = startedAt;
+    const logDuration = (stage) => {
+      const now = Date.now();
+      this.ctx.logger.info(
+        `[Fomo sell] ${stage} took ${now - stageStartedAt}ms (total ${now - startedAt}ms)`,
+      );
+      stageStartedAt = now;
+    };
     const lineId = parseLineId(lineIdValue);
     await this.ensureLine(lineId);
     const owner = parseAddress(address, "address");
@@ -248,16 +257,25 @@ class Fomo extends Service {
     const balanceRaw = BigInt(tokenBalance.value.amount);
     const amountRaw = balanceRaw * ratio / RATIO_SCALE;
     if (amountRaw === 0n) throw new Error("Sell amount is zero");
+    logDuration("wallet and token balance lookup");
 
     const { instructions, lookupTableAccounts } = await jup.getSellInstructions(this.ctx, {
       user: owner,
       tokenMint: mint,
       tokenAmount: amountRaw.toString(),
       outputMint,
-      slippage: 0.01,
+      slippage: 0.05,
       connection,
+      prioritizationFeeLamports: {
+        priorityLevelWithMaxLamports: {
+          priorityLevel: "veryHigh",
+          maxLamports: 100_000,
+        },
+      },
     });
+    logDuration("Jupiter quote, swap instructions, and lookup tables");
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+    logDuration("blockhash");
     const message = new TransactionMessage({
       payerKey: owner,
       recentBlockhash: blockhash,
@@ -266,9 +284,10 @@ class Fomo extends Service {
     const transaction = new VersionedTransaction(message);
     transaction.sign([keypair]);
     const signature = await connection.sendTransaction(transaction, {
-      skipPreflight: false,
-      maxRetries: 2,
+      skipPreflight: true,
+      maxRetries: 3,
     });
+    logDuration(`broadcast (${signature})`);
     const confirmation = await connection.confirmTransaction(
       { signature, blockhash, lastValidBlockHeight },
       "confirmed",
@@ -276,6 +295,7 @@ class Fomo extends Service {
     if (confirmation.value.err) {
       throw new Error(`Fomo swap transaction failed: ${signature} ${JSON.stringify(confirmation.value.err)}`);
     }
+    logDuration(`confirmed (${signature})`);
     return {
       lineId,
       address: owner.toBase58(),

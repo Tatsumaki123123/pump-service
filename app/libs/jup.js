@@ -105,6 +105,7 @@ class JupSDK {
       connection,
       useSharedAccounts = false,
       outputMint = NATIVE_MINT,
+      prioritizationFeeLamports,
     } = params;
     const quoteResponse = await this.getQuote(
       ctx,
@@ -115,6 +116,7 @@ class JupSDK {
     );
     return this.getSwapInstructions(ctx, user, quoteResponse, connection, {
       useSharedAccounts,
+      prioritizationFeeLamports,
     });
   }
 
@@ -123,7 +125,7 @@ class JupSDK {
     user,
     quoteResponse,
     connection,
-    { useSharedAccounts = false } = {},
+    { useSharedAccounts = false, prioritizationFeeLamports } = {},
   ) {
     const uri = `${BASE_URL}/swap/v1/swap-instructions`;
     const swapData = await this.requestJson(ctx, uri, {
@@ -137,6 +139,9 @@ class JupSDK {
         useSharedAccounts,
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
+        ...(prioritizationFeeLamports === undefined
+          ? {}
+          : { prioritizationFeeLamports }),
       },
     }, "swap instructions");
     if (!swapData || swapData.error) {
