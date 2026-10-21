@@ -254,6 +254,15 @@ class PumpFun extends Service {
             feeLamports: wallet.axiomFeeLamports,
           });
           volumeIxs = [...axiomBuy.instructions, axiomBuy.feeInstruction];
+          if (i === 0 && !isNozomi) {
+            volumeIxs.push(
+              SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: ctx.service.jito.getTipAcc(sendOptions),
+                lamports: ctx.service.jito.getTipAmount(sendOptions),
+              }),
+            );
+          }
         } else {
           const buyTx = await pfSwap.buy(
             user,
@@ -351,29 +360,6 @@ class PumpFun extends Service {
       }
       console.log("buyTxns", buyTxns.length);
       if (buyTxns.length > 0) {
-        // Axiom's Pump.fun wrapper deliberately does not add a Jito tip to
-        // each swap transaction. QuickNode still rejects a multi-transaction
-        // bundle unless one transaction writes to a Jito tip account. Add one
-        // small standalone tip transaction so the Axiom swap instructions stay
-        // identical to the official route.
-        const allAxiomBuys = wallets.every((wallet) => wallet.isAxiom);
-        if (allAxiomBuys && buyTxns.length > 1 && !isNozomi) {
-          const tipWallet = wallets[0];
-          const tipUser = tipWallet.keypair.publicKey;
-          const tipInstruction = SystemProgram.transfer({
-            fromPubkey: tipUser,
-            toPubkey: ctx.service.jito.getTipAcc(sendOptions),
-            lamports: ctx.service.jito.getTipAmount(sendOptions),
-          });
-          const tipMessage = new TransactionMessage({
-            payerKey: tipUser,
-            recentBlockhash: blockhash,
-            instructions: [tipInstruction],
-          }).compileToV0Message();
-          const tipTx = new VersionedTransaction(tipMessage);
-          tipTx.sign([tipWallet.keypair]);
-          buyTxns.push(tipTx);
-        }
         // for (let i = 0; i < buyTxns.length; i++) {
         //   console.log("buy txn -", i);
         //   const transferTx = buyTxns[i];
