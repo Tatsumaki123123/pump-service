@@ -17,7 +17,7 @@ const {
   TOKEN_2022_PROGRAM_ID,
 } = require("@solana/spl-token");
 const { connection, RPC_URL, usdc } = require("../constants");
-const { getJupiterSellInstructions } = require("../libs/jupiterSellFallback");
+const { getJupiterSellTransaction } = require("../libs/jupiterSellFallback");
 
 const RATIO_SCALE = 1000000000n;
 const SELL_ATTEMPTS = 3;
@@ -456,7 +456,7 @@ class Fomo extends Service {
         FOMO_BASE_SLIPPAGE_BPS + attempt * 500,
       );
       try {
-        const swapData = await getJupiterSellInstructions(this.ctx, {
+        const swapData = await getJupiterSellTransaction(this.ctx, {
           user: owner,
           tokenMint: mint,
           tokenAmount: amountRaw.toString(),
@@ -477,13 +477,25 @@ class Fomo extends Service {
         });
         logDuration(`sell route (${swapData.routeProvider}, attempt ${attempt + 1}, ${slippageBps} bps)`);
 
-        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-        const message = new TransactionMessage({
-          payerKey: owner,
-          recentBlockhash: blockhash,
-          instructions: swapData.instructions,
-        }).compileToV0Message(swapData.lookupTableAccounts);
-        const transaction = new VersionedTransaction(message);
+        let transaction;
+        let lastValidBlockHeight = swapData.lastValidBlockHeight;
+        if (swapData.swapTransaction) {
+          transaction = VersionedTransaction.deserialize(
+            Buffer.from(swapData.swapTransaction, "base64"),
+          );
+          if (!transaction.message.staticAccountKeys[0].equals(owner)) {
+            throw new Error("Jupiter swap transaction payer does not match Fomo wallet");
+          }
+        } else {
+          const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+          lastValidBlockHeight = latestBlockhash.lastValidBlockHeight;
+          const message = new TransactionMessage({
+            payerKey: owner,
+            recentBlockhash: latestBlockhash.blockhash,
+            instructions: swapData.instructions,
+          }).compileToV0Message(swapData.lookupTableAccounts);
+          transaction = new VersionedTransaction(message);
+        }
         transaction.sign([keypair]);
         const rawTransaction = transaction.serialize();
         const signature = bs58.encode(Buffer.from(transaction.signatures[0]));

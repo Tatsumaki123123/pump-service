@@ -120,6 +120,48 @@ class JupSDK {
     });
   }
 
+  async getSellTransaction(ctx, params) {
+    const {
+      user,
+      tokenMint,
+      tokenAmount,
+      slippage,
+      outputMint = NATIVE_MINT,
+      prioritizationFeeLamports,
+      useSharedAccounts = false,
+    } = params;
+    const quoteResponse = await this.getQuote(
+      ctx,
+      tokenMint.toBase58(),
+      outputMint.toBase58 ? outputMint.toBase58() : String(outputMint),
+      tokenAmount,
+      slippage,
+    );
+    const swapData = await this.requestJson(ctx, `${BASE_URL}/swap/v1/swap`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      data: {
+        quoteResponse,
+        userPublicKey: user.toBase58 ? user.toBase58() : String(user),
+        useSharedAccounts,
+        wrapAndUnwrapSol: true,
+        dynamicComputeUnitLimit: true,
+        ...(prioritizationFeeLamports === undefined
+          ? {}
+          : { prioritizationFeeLamports }),
+      },
+    }, "swap transaction");
+    if (!swapData?.swapTransaction || !Number.isSafeInteger(swapData.lastValidBlockHeight)) {
+      throw new Error("Jupiter swap response is missing transaction or last valid block height");
+    }
+    return {
+      swapTransaction: swapData.swapTransaction,
+      lastValidBlockHeight: swapData.lastValidBlockHeight,
+    };
+  }
+
   async getSwapInstructions(
     ctx,
     user,
