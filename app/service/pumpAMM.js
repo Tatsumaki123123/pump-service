@@ -73,6 +73,9 @@ const moment = require("moment");
 const { sleep, splitIntoBundles } = require("../utils/utils");
 const { getRandomAccount } = require("../utils/slot0trade");
 
+// Avoid submitting dust balances that Pump AMM cannot sell successfully.
+const MIN_SELL_TOKEN_AMOUNT_RAW = 100n;
+
 const SIMULATE_BEFORE_BUNDLE = process.env.SIMULATE_BEFORE_BUNDLE === "true";
 
 const RENT_SYSVAR = new PublicKey(
@@ -1145,10 +1148,7 @@ class PumpAMM extends Service {
             console.log(
               `${user.toBase58()} sell ${tokenAmount} (${sellPercent}%) ${token}`,
             );
-            if (
-              (sellAll ? balance > 0 : balance >= 100) &&
-              tokenAmountRaw > 0n
-            ) {
+            if (tokenAmountRaw >= MIN_SELL_TOKEN_AMOUNT_RAW) {
               return { ...wallet, tokenAmount };
             }
             return null;
@@ -1157,6 +1157,10 @@ class PumpAMM extends Service {
       ).filter(Boolean);
 
       newWallets.reverse();
+      if (newWallets.length === 0) {
+        console.log(chalk.yellow("No sellable token balance found; skipping sell."));
+        return true;
+      }
 
       const func = async (wallets) => {
         const { blockhash } = await connection.getLatestBlockhash();
@@ -1357,7 +1361,9 @@ class PumpAMM extends Service {
         : 0n;
       const percentBasisPoints = BigInt(Math.round(getWalletSellPercent(wallet) * 100));
       const amountRaw = balanceRaw * percentBasisPoints / 10000n;
-      if (amountRaw > 0n) sellWallets.push({ wallet, amountRaw });
+      if (amountRaw >= MIN_SELL_TOKEN_AMOUNT_RAW) {
+        sellWallets.push({ wallet, amountRaw });
+      }
     }
     if (sellWallets.length === 0) return true;
 

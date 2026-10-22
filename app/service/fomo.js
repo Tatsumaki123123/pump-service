@@ -3,6 +3,7 @@
 const { Service } = require("egg");
 const bs58 = require("bs58");
 const {
+  Connection,
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
@@ -15,11 +16,186 @@ const {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
 } = require("@solana/spl-token");
-const { connection, usdc } = require("../constants");
-const JupSDK = require("../libs/jup");
+const { connection, RPC_URL, usdc } = require("../constants");
+const { getJupiterSellInstructions } = require("../libs/jupiterSellFallback");
 
-const jup = new JupSDK();
 const RATIO_SCALE = 1000000000n;
+const SELL_ATTEMPTS = 3;
+const FOMO_SEND_INTERVAL_MS = 1500;
+const FOMO_CONFIRMATION_TIMEOUT_MS = 90_000;
+const FOMO_RPC_REQUEST_TIMEOUT_MS = 2000;
+
+function readPositiveIntegerEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function createFomoSendConnections() {
+  const seen = new Set([RPC_URL]);
+  const connections = [connection];
+  for (const value of (process.env.FOMO_SEND_RPC_URLS || "").split(",")) {
+    const url = value.trim();
+    if (!url || seen.has(url)) continue;
+    try {
+      if (!["http:", "https:"].includes(new URL(url).protocol)) continue;
+      connections.push(new Connection(url, "confirmed"));
+      seen.add(url);
+    } catch (error) {
+      // Ignore malformed optional endpoints and keep the configured primary RPC.
+    }
+  }
+  return connections;
+}
+
+const FOMO_SEND_CONNECTIONS = createFomoSendConnections();
+const FOMO_MAX_PRIORITY_FEE_LAMPORTS = readPositiveIntegerEnv(
+  "FOMO_MAX_PRIORITY_FEE_LAMPORTS",
+  500_000,
+);
+const FOMO_COMPUTE_UNIT_PRICE_MICROLAMPORTS = readPositiveIntegerEnv(
+  "FOMO_COMPUTE_UNIT_PRICE_MICROLAMPORTS",
+  50_000,
+);
+const FOMO_BASE_SLIPPAGE_BPS = readPositiveIntegerEnv(
+  "FOMO_BASE_SLIPPAGE_BPS",
+  500,
+);
+const FOMO_MAX_SLIPPAGE_BPS = Math.max(
+  FOMO_BASE_SLIPPAGE_BPS,
+  readPositiveIntegerEnv("FOMO_MAX_SLIPPAGE_BPS", 1500),
+);
+
+function retryableSellError(message, cause) {
+  const error = new Error(message, cause ? { cause } : undefined);
+  error.retryable = true;
+  return error;
+}
+
+function pause(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function broadcastRawTransaction(rawTransaction, signature) {
+  return Promise.any(
+    FOMO_SEND_CONNECTIONS.map(async (rpc) => {
+      const sentSignature = await withTimeout(
+        rpc.sendRawTransaction(rawTransaction, {
+          skipPreflight: true,
+          maxRetries: 10,
+        }),
+        FOMO_RPC_REQUEST_TIMEOUT_MS,
+        "Transaction broadcast",
+      );
+      if (sentSignature !== signature) {
+        throw new Error(`RPC returned unexpected transaction signature ${sentSignature}`);
+      }
+      return sentSignature;
+    }),
+  );
+}
+
+async function getKnownSignatureStatus(signature) {
+  const results = await Promise.allSettled(
+    FOMO_SEND_CONNECTIONS.map(async (rpc) => {
+      const result = await withTimeout(
+        rpc.getSignatureStatuses([signature], {
+          searchTransactionHistory: true,
+        }),
+        FOMO_RPC_REQUEST_TIMEOUT_MS,
+        "Signature status lookup",
+      );
+      return result.value[0] || null;
+    }),
+  );
+  const statuses = results
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value)
+    .filter(Boolean);
+  return statuses.find((status) =>
+    status.confirmationStatus === "confirmed" ||
+    status.confirmationStatus === "finalized" ||
+    status.confirmations === null,
+  ) || statuses[0] || null;
+}
+
+async function getLatestKnownBlockHeight() {
+  const results = await Promise.allSettled(
+    FOMO_SEND_CONNECTIONS.map((rpc) =>
+      withTimeout(
+        rpc.getBlockHeight("confirmed"),
+        FOMO_RPC_REQUEST_TIMEOUT_MS,
+        "Block height lookup",
+      ),
+    ),
+  );
+  const heights = results
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value);
+  return heights.length ? Math.max(...heights) : null;
+}
+
+async function confirmAndRebroadcast(ctx, rawTransaction, signature, lastValidBlockHeight) {
+  let rebroadcasting = false;
+  let blockhashExpired = false;
+  const rebroadcastTimer = setInterval(async () => {
+    if (blockhashExpired || rebroadcasting) return;
+    rebroadcasting = true;
+    try {
+      await broadcastRawTransaction(rawTransaction, signature);
+    } catch (error) {
+      ctx.logger.debug(`[Fomo sell] rebroadcast pending (${signature}): ${error.message}`);
+    } finally {
+      rebroadcasting = false;
+    }
+  }, FOMO_SEND_INTERVAL_MS);
+  rebroadcastTimer.unref?.();
+
+  try {
+    const deadline = Date.now() + FOMO_CONFIRMATION_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const status = await getKnownSignatureStatus(signature).catch(() => null);
+      if (status) {
+        const isConfirmed = status.confirmationStatus === "confirmed" ||
+          status.confirmationStatus === "finalized" ||
+          status.confirmations === null;
+        if (isConfirmed && status.err) {
+          throw retryableSellError(
+            `Fomo sell transaction failed on chain: ${signature} ${JSON.stringify(status.err)}`,
+          );
+        }
+        if (isConfirmed) return { signature };
+      }
+
+      const blockHeight = await getLatestKnownBlockHeight().catch(() => null);
+      if (blockHeight !== null && blockHeight > lastValidBlockHeight) {
+        blockhashExpired = true;
+        if (!status) {
+          throw retryableSellError(
+            `Fomo sell transaction expired without a recorded status: ${signature}`,
+          );
+        }
+      }
+
+      await pause(1000);
+    }
+
+    throw new Error(
+      `Fomo sell transaction outcome is still unknown: ${signature}; refusing to submit another transaction`,
+    );
+  } finally {
+    clearInterval(rebroadcastTimer);
+  }
+}
 
 function parseAddress(value, name) {
   if (typeof value !== "string" || !value.trim()) {
@@ -245,67 +421,111 @@ class Fomo extends Service {
     const keypair = parseKeypair(wallet.privateKey);
     if (!keypair.publicKey.equals(owner)) throw new Error("Fomo wallet privateKey does not match address");
 
-    const mintAccount = await connection.getAccountInfo(mint, "confirmed");
+    const [mintAccount, tokenAccounts] = await Promise.all([
+      connection.getAccountInfo(mint, "confirmed"),
+      connection.getParsedTokenAccountsByOwner(owner, { mint }, "confirmed"),
+    ]);
     const programId = mintAccount?.owner;
     if (!programId || (!programId.equals(TOKEN_PROGRAM_ID) && !programId.equals(TOKEN_2022_PROGRAM_ID))) {
       throw new Error("token is not an SPL token mint");
     }
     const tokenAccount = getAssociatedTokenAddressSync(mint, owner, false, programId);
-    const accountInfo = await connection.getAccountInfo(tokenAccount, "confirmed");
-    if (!accountInfo) throw new Error("Fomo wallet token account not found");
-    const tokenBalance = await connection.getTokenAccountBalance(tokenAccount, "confirmed");
-    const balanceRaw = BigInt(tokenBalance.value.amount);
-    const amountRaw = balanceRaw * ratio / RATIO_SCALE;
-    if (amountRaw === 0n) throw new Error("Sell amount is zero");
+    const tokenAccountInfo = tokenAccounts.value.find(({ pubkey }) => pubkey.equals(tokenAccount));
+    if (!tokenAccountInfo) throw new Error("Fomo wallet token account not found");
+    const initialTokenAmount = tokenAccountInfo.account.data.parsed.info.tokenAmount;
+    const decimals = initialTokenAmount.decimals;
+    if (!Number.isInteger(decimals)) throw new Error("Fomo wallet token account has invalid decimals");
+    if (BigInt(initialTokenAmount.amount) === 0n) throw new Error("Sell amount is zero");
     logDuration("wallet and token balance lookup");
 
-    const { instructions, lookupTableAccounts } = await jup.getSellInstructions(this.ctx, {
-      user: owner,
-      tokenMint: mint,
-      tokenAmount: amountRaw.toString(),
-      outputMint,
-      slippage: 0.05,
-      connection,
-      prioritizationFeeLamports: {
-        priorityLevelWithMaxLamports: {
-          priorityLevel: "veryHigh",
-          maxLamports: 100_000,
-        },
-      },
-    });
-    logDuration("Jupiter quote, swap instructions, and lookup tables");
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-    logDuration("blockhash");
-    const message = new TransactionMessage({
-      payerKey: owner,
-      recentBlockhash: blockhash,
-      instructions,
-    }).compileToV0Message(lookupTableAccounts);
-    const transaction = new VersionedTransaction(message);
-    transaction.sign([keypair]);
-    const signature = await connection.sendTransaction(transaction, {
-      skipPreflight: true,
-      maxRetries: 3,
-    });
-    logDuration(`broadcast (${signature})`);
-    const confirmation = await connection.confirmTransaction(
-      { signature, blockhash, lastValidBlockHeight },
-      "confirmed",
-    );
-    if (confirmation.value.err) {
-      throw new Error(`Fomo swap transaction failed: ${signature} ${JSON.stringify(confirmation.value.err)}`);
+    let lastError;
+    for (let attempt = 0; attempt < SELL_ATTEMPTS; attempt++) {
+      const currentTokenAmount = attempt === 0
+        ? initialTokenAmount
+        : (await connection.getTokenAccountBalance(tokenAccount, "confirmed")).value;
+      const balanceRaw = BigInt(currentTokenAmount.amount);
+      const amountRaw = balanceRaw * ratio / RATIO_SCALE;
+      if (amountRaw === 0n) {
+        throw new Error(
+          `Sell retry stopped because the associated token account has no sellable balance${lastError ? `: ${lastError.message}` : ""}`,
+        );
+      }
+
+      const slippageBps = Math.min(
+        FOMO_MAX_SLIPPAGE_BPS,
+        FOMO_BASE_SLIPPAGE_BPS + attempt * 500,
+      );
+      try {
+        const swapData = await getJupiterSellInstructions(this.ctx, {
+          user: owner,
+          tokenMint: mint,
+          tokenAmount: amountRaw.toString(),
+          outputMint,
+          slippage: slippageBps / 10000,
+          connection,
+          prioritizationFeeLamports: {
+            priorityLevelWithMaxLamports: {
+              priorityLevel: "veryHigh",
+              maxLamports: FOMO_MAX_PRIORITY_FEE_LAMPORTS,
+            },
+          },
+          price: FOMO_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+        }, {
+          fallbackOnAnyError: true,
+          preferDFlow: attempt % 2 === 1,
+          includeProvider: true,
+        });
+        logDuration(`sell route (${swapData.routeProvider}, attempt ${attempt + 1}, ${slippageBps} bps)`);
+
+        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+        const message = new TransactionMessage({
+          payerKey: owner,
+          recentBlockhash: blockhash,
+          instructions: swapData.instructions,
+        }).compileToV0Message(swapData.lookupTableAccounts);
+        const transaction = new VersionedTransaction(message);
+        transaction.sign([keypair]);
+        const rawTransaction = transaction.serialize();
+        const signature = bs58.encode(Buffer.from(transaction.signatures[0]));
+
+        try {
+          await broadcastRawTransaction(rawTransaction, signature);
+        } catch (broadcastError) {
+          this.ctx.logger.warn(
+            `[Fomo sell] initial broadcast failed (${signature}): ${broadcastError.message}`,
+          );
+        }
+        logDuration(`broadcast (${signature})`);
+
+        await confirmAndRebroadcast(
+          this.ctx,
+          rawTransaction,
+          signature,
+          lastValidBlockHeight,
+        );
+        logDuration(`confirmed (${signature})`);
+        return {
+          lineId,
+          address: owner.toBase58(),
+          token: mint.toBase58(),
+          outputMint: outputMint.toBase58(),
+          sellRatio: Number(ratio) / Number(RATIO_SCALE),
+          amountRaw: amountRaw.toString(),
+          amount: decimalAmount(amountRaw, decimals),
+          signature,
+          routeProvider: swapData.routeProvider,
+          attempts: attempt + 1,
+        };
+      } catch (error) {
+        lastError = error;
+        if (!error.retryable || attempt + 1 >= SELL_ATTEMPTS) throw error;
+        this.ctx.logger.warn(
+          `[Fomo sell] attempt ${attempt + 1}/${SELL_ATTEMPTS} failed; refreshing balance and route: ${error.message}`,
+        );
+      }
     }
-    logDuration(`confirmed (${signature})`);
-    return {
-      lineId,
-      address: owner.toBase58(),
-      token: mint.toBase58(),
-      outputMint: outputMint.toBase58(),
-      sellRatio: Number(ratio) / Number(RATIO_SCALE),
-      amountRaw: amountRaw.toString(),
-      amount: decimalAmount(amountRaw, tokenBalance.value.decimals),
-      signature,
-    };
+
+    throw lastError || new Error("Fomo sell failed");
   }
 }
 

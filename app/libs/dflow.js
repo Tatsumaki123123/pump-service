@@ -101,11 +101,19 @@ class DFlowSDK {
   }
 
   async getSellInstructions(ctx, params) {
-    const { user, tokenMint, tokenAmount, slippage, connection, price } = params;
+    const {
+      user,
+      tokenMint,
+      tokenAmount,
+      slippage,
+      connection,
+      price,
+      outputMint = "So11111111111111111111111111111111111111112",
+    } = params;
     return this.getSwapInstructions(ctx, {
       user,
       inputMint: tokenMint.toBase58(),
-      outputMint: "So11111111111111111111111111111111111111112",
+      outputMint: outputMint.toBase58 ? outputMint.toBase58() : String(outputMint),
       amount: tokenAmount,
       slippage,
       connection,
