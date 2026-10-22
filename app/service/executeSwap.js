@@ -32,7 +32,11 @@ const {
   getPoolsWithBaseMint,
   getPumpPoolsWithBaseMint,
 } = require("../libs/pool");
-const { NATIVE_MINT } = require("@solana/spl-token");
+const {
+  NATIVE_MINT,
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+} = require("@solana/spl-token");
 const { sleep, retryAsync } = require("../utils/utils");
 const { getRaydiumCpmmPoolId } = require("../utils/raydium");
 
@@ -208,8 +212,12 @@ class ExecuteSwap extends Service {
   }
 
   async withBossGenerationLock(line, action) {
+    return this.withLineOperationLock(line, "boss-generation", action);
+  }
+
+  async withLineOperationLock(line, operation, action) {
     const { ctx } = this;
-    const lockId = `boss-generation:${line}`;
+    const lockId = `${operation}:${line}`;
     const token = randomUUID();
     const expiresAt = new Date(Date.now() + BOSS_LOCK_TTL_MS);
     let lock = await ctx.model.ExecuteLineLock.findOneAndUpdate(
@@ -227,7 +235,7 @@ class ExecuteSwap extends Service {
         });
       } catch (error) {
         if (error.code === 11000) {
-          throw new Error(`Boss generation is already running for line ${line}`);
+          throw new Error(`${operation} is already running for line ${line}`);
         }
         throw error;
       }
@@ -243,7 +251,7 @@ class ExecuteSwap extends Service {
         if (result.matchedCount !== 1) lockLost = true;
       } catch (error) {
         lockLost = true;
-        ctx.logger.error("Failed to renew boss generation lock", error);
+        ctx.logger.error(`Failed to renew ${operation} lock`, error);
       }
     }, BOSS_LOCK_RENEW_MS);
     renewTimer.unref?.();
@@ -251,7 +259,7 @@ class ExecuteSwap extends Service {
     try {
       const assertLock = async () => {
         if (lockLost) {
-          throw new Error(`Boss generation lock was lost for line ${line}`);
+          throw new Error(`${operation} lock was lost for line ${line}`);
         }
         const currentLock = await ctx.model.ExecuteLineLock.exists({
           _id: lockId,
@@ -260,14 +268,14 @@ class ExecuteSwap extends Service {
         });
         if (!currentLock) {
           lockLost = true;
-          throw new Error(`Boss generation lock was lost for line ${line}`);
+          throw new Error(`${operation} lock was lost for line ${line}`);
         }
       };
       return await action(assertLock);
     } finally {
       clearInterval(renewTimer);
       await ctx.model.ExecuteLineLock.deleteOne({ _id: lockId, token }).catch(
-        (error) => ctx.logger.error("Failed to release boss generation lock", error),
+        (error) => ctx.logger.error(`Failed to release ${operation} lock`, error),
       );
     }
   }
@@ -1735,10 +1743,49 @@ class ExecuteSwap extends Service {
     }
   }
 
-  async nextWallet(line) {
+  async nextWallet(line, force = false) {
+    return this.withLineOperationLock(line, "wallet-rotation", async (assertLock) => {
+      return this.rotateWallets(line, force, assertLock);
+    });
+  }
+
+  async rotateWallets(line, force = false, assertLock) {
     const { ctx } = this;
     const wallets = await this.getWallets(line);
     const executeData = await this.getExecuteData(line);
+
+    if (force !== true) {
+      for (const wallet of wallets) {
+        const [tokenAccounts, token2022Accounts] = await Promise.all([
+          connection.getParsedTokenAccountsByOwner(
+            wallet.publicKey,
+            { programId: TOKEN_PROGRAM_ID },
+            "confirmed",
+          ),
+          connection.getParsedTokenAccountsByOwner(
+            wallet.publicKey,
+            { programId: TOKEN_2022_PROGRAM_ID },
+            "confirmed",
+          ),
+        ]);
+        const tokenAccount = [
+          ...tokenAccounts.value,
+          ...token2022Accounts.value,
+        ].find(({ account }) => {
+          const amount = account.data?.parsed?.info?.tokenAmount?.amount;
+          return amount != null && BigInt(amount) > 100n;
+        });
+
+        if (tokenAccount) {
+          const amount =
+            tokenAccount.account.data.parsed.info.tokenAmount.amount;
+          throw new Error(
+            `Wallet ${wallet.address} has token account ${tokenAccount.pubkey.toBase58()} with balance ${amount}. Set force=true to switch anyway.`,
+          );
+        }
+      }
+    }
+
     const oldAddress = [];
     const newAddress = [];
     const fun = async (wallet) => {
@@ -1749,7 +1796,7 @@ class ExecuteSwap extends Service {
         address: keypair.publicKey.toBase58(),
         privateKey: bs58.encode(keypair.secretKey),
         eid: executeData.eid,
-        active: false,
+        isActive: false,
       };
       await ctx.model.ExecuteWallet.create(newWalletData);
       await retryAsync(async () => {
@@ -1768,13 +1815,14 @@ class ExecuteSwap extends Service {
       await fun(wallet);
     }
 
-    await ctx.model.ExecuteWallet.updateMany(
-      { address: { $in: newAddress } },
-      { isActive: true },
-    );
+    await assertLock();
     await ctx.model.ExecuteWallet.updateMany(
       { address: { $in: oldAddress } },
       { isActive: false },
+    );
+    await ctx.model.ExecuteWallet.updateMany(
+      { address: { $in: newAddress } },
+      { isActive: true },
     );
     return true;
   }

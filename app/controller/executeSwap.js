@@ -336,10 +336,10 @@ class ExecuteSwap extends BaseController {
 
   async nextWallet() {
     const { ctx } = this;
-    const { line } = ctx.request.body;
+    const { line, force = false } = ctx.request.body;
 
     if (line) {
-      const res = await ctx.service.executeSwap.nextWallet(line);
+      const res = await ctx.service.executeSwap.nextWallet(line, force === true);
       this.success(res);
     } else {
       throw new Error("params");
