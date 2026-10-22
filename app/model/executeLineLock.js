@@ -1,0 +1,15 @@
+module.exports = (app) => {
+  const mongoose = app.mongoose;
+  const Schema = mongoose.Schema;
+
+  const schema = new Schema(
+    {
+      _id: { type: String },
+      token: { type: String },
+      expiresAt: { type: Date },
+    },
+    { versionKey: false },
+  );
+
+  return mongoose.model("ExecuteLineLock", schema);
+};

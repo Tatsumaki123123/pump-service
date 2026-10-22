@@ -21,7 +21,9 @@ const {
 } = require("../constants");
 
 const { PumpFunSDK, GlobalAccount } = require("../libs/pumpfun");
-const { createAxiomPumpfunBuyInstructions } = require("../libs/axiom");
+const {
+  createAxiomPumpfunBuyInstructions,
+} = require("../libs/axiom");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const { createTroProxyInstruction } = require("../libs/trogan");
 
@@ -213,6 +215,37 @@ class PumpFun extends Service {
       const { blockhash } = await connection.getLatestBlockhash();
       const buyTxns = [];
       let existJitoIx = false;
+      const allAxiomWallets = wallets.every((wallet) => wallet.isAxiom);
+      let batchAxiomCurveAccount = null;
+      let sequentialAxiomBuyPrices = null;
+      if (allAxiomWallets) {
+        batchAxiomCurveAccount = await pfSwap.getBondingCurveAccount(
+          tokenMint,
+          "processed",
+        );
+        if (!batchAxiomCurveAccount) {
+          throw new Error(`Bonding curve account not found: ${token}`);
+        }
+        const quoteAmounts = wallets.map((wallet) => {
+          const totalQuoteLamports = BigInt(
+            Math.trunc(Number(wallet.buyAmount) * LAMPORTS_PER_SOL),
+          );
+          const platformFeeLamports = BigInt(
+            Math.trunc(
+              wallet.axiomFeeLamports == null
+                ? Number(process.env.AXIOM_PLATFORM_FEE_LAMPORTS || 100000)
+                : Number(wallet.axiomFeeLamports),
+            ),
+          );
+          return totalQuoteLamports - platformFeeLamports;
+        });
+        if (quoteAmounts.some((amount) => amount <= 0n)) {
+          throw new Error("Axiom Pump.fun buy amount must exceed the platform fee");
+        }
+        // A bundle executes these buys sequentially against the same curve.
+        // Calculate each quote from the state left by the previous buy.
+        sequentialAxiomBuyPrices = batchAxiomCurveAccount.getBuyPrices(quoteAmounts);
+      }
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
@@ -242,18 +275,33 @@ class PumpFun extends Service {
             ...okxIxs,
           ];
         } else if (wallet.isAxiom) {
-          const curveAccount = await pfSwap.getBondingCurveAccount(
-            tokenMint,
-            "processed",
-          );
+          const curveAccount =
+            batchAxiomCurveAccount ||
+            (await pfSwap.getBondingCurveAccount(tokenMint, "processed"));
           const axiomBuy = await createAxiomPumpfunBuyInstructions({
             tokenMint,
             user,
             buyAmount,
             curveAccount,
             feeLamports: wallet.axiomFeeLamports,
+            expectedBaseAmountOverride: allAxiomWallets
+              ? sequentialAxiomBuyPrices[i]
+              : undefined,
           });
-          volumeIxs = [...axiomBuy.instructions, axiomBuy.feeInstruction];
+          volumeIxs = [
+            ...(limit
+              ? [ComputeBudgetProgram.setComputeUnitLimit({ units: limit })]
+              : []),
+            ...(price
+              ? [
+                  ComputeBudgetProgram.setComputeUnitPrice({
+                    microLamports: price,
+                  }),
+                ]
+              : []),
+            ...axiomBuy.instructions,
+            axiomBuy.feeInstruction,
+          ];
           if (i === 0 && !isNozomi) {
             volumeIxs.push(
               SystemProgram.transfer({

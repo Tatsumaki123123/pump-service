@@ -85,11 +85,13 @@ controller.executeSwap.start
 
 1. 生成一个 Solana `Keypair`。
 2. 创建 `ExecuteData`：
-   - `eid = line * 1000`；
+   - `eid` 从 MongoDB `ExecuteSequence` 全局原子序列分配；
    - 保存 boss 公钥和 Base58 私钥；
    - `active=true`、`createTime=当前时间`、`line=line`；
    - `walletsExist` 使用模型默认值 `false`。
 3. 同时把 boss 密钥写入项目根目录 `keypair.json`。
+
+`eid` 是跨线路唯一的批次编号，不再由 `line` 计算。MongoDB 中以 BSON Int64（Extended JSON 显示为 `$numberLong`）保存，分配前会用现有最大 `eid` 对齐序列，之后通过 MongoDB 原子 `$inc` 递增，因此首次部署不需要手工回填序列值。Mongoose getter 保持业务对象和 JSON 接口中的 `eid` 为安全范围内的数字。
 
 #### 后续启动：已有当前批次
 
@@ -101,12 +103,14 @@ controller.executeSwap.start
 `generateBoss` 的处理顺序：
 
 1. 解码旧 boss 私钥并检查余额（当前 `BOSS_MIN_AMOUNT=0`，实际上只要求查询成功）。
-2. 生成新 boss，`eid = oldEid + 1`。
+2. 生成新 boss，从同一个全局原子序列分配新 `eid`。
 3. 将该线路已有的 `active=true` 批次改为 `active=false`。
 4. 创建新的活动 `ExecuteData`。
 5. 将旧 boss 的 SOL 全额转给新 boss。
 
-因此，`eid` 是沿着同一条线路递增的批次号；线路切批次后，后续钱包和代币应绑定新 `eid`。
+同一线路的 boss 生成由 MongoDB 线路锁串行化，锁会定期续期，进程异常退出后也会在过期后自动释放。`generateNewBoss` 若发现该线路已有活动批次，也会先停用旧批次并把旧 boss 余额转入新 boss，避免保留多个活动批次。
+
+因此，`line` 表示批次归属线路，`eid` 表示全局唯一批次；线路切批次后，后续钱包和代币应绑定新 `eid`。
 
 ### 3.3 生成或补充 `ExecuteWallet`
 

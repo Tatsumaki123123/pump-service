@@ -1,6 +1,7 @@
 const { Service } = require("egg");
 const chalk = require("chalk");
 const fs = require("fs");
+const { randomUUID } = require("crypto");
 
 const bs58 = require("bs58");
 const {
@@ -43,6 +44,9 @@ const PUMP_FUN_NAME = "pump";
 const RAYDIUM_CPMM_NAME = "raydiumcpmm";
 const RAYDIUM_LANUCH_NAME = "raydiumlaunchlab";
 const AFTER_WALLET_DELAY_MS = Number(process.env.AFTER_WALLET_DELAY_MS || 0);
+const BOSS_LOCK_TTL_MS = 2 * 60 * 1000;
+const BOSS_LOCK_RENEW_MS = 30 * 1000;
+const EXECUTE_EID_SEQUENCE_ID = "execute-data-eid";
 
 class ExecuteSwap extends Service {
   constructor(props) {
@@ -95,7 +99,7 @@ class ExecuteSwap extends Service {
       .sort({ lineId: -1 })
       .lean();
     const lineId = Number(latestLine?.lineId || 0) + 1;
-    const eid = lineId * 1000;
+    const eid = await this.getNextEid();
     const boss = Keypair.generate();
     const linePayload = {
       lineId,
@@ -119,15 +123,22 @@ class ExecuteSwap extends Service {
     };
     let createdLine;
     try {
-      createdLine = await ctx.model.ExecuteLine.create(linePayload);
-      const createdData = await ctx.model.ExecuteData.create(dataPayload);
-      return {
-        executeLine: createdLine,
-        executeData: createdData,
-      };
+      return await this.withBossGenerationLock(lineId, async (assertLock) => {
+        await assertLock();
+        createdLine = await ctx.model.ExecuteLine.create(linePayload);
+        await assertLock();
+        const createdData = await ctx.model.ExecuteData.create(dataPayload);
+        return {
+          executeLine: createdLine,
+          executeData: createdData,
+        };
+      });
     } catch (error) {
       if (createdLine?._id) {
-        await ctx.model.ExecuteLine.deleteOne({ _id: createdLine._id });
+        const hasExecuteData = await ctx.model.ExecuteData.exists({ line: lineId });
+        if (!hasExecuteData) {
+          await ctx.model.ExecuteLine.deleteOne({ _id: createdLine._id });
+        }
       }
       throw error;
     }
@@ -160,18 +171,157 @@ class ExecuteSwap extends Service {
     return this.normalizeLineSlippage(lineData?.slippage);
   }
 
-  async generateNewBoss(line) {
+  async getNextEid() {
     const { ctx } = this;
-    const boss = Keypair.generate();
+    const latestExecuteData = await ctx.model.ExecuteData.findOne()
+      .sort({ eid: -1 })
+      .select("eid")
+      .lean();
+    const maxEid = Number(latestExecuteData?.eid || 0);
+    if (!Number.isSafeInteger(maxEid) || maxEid < 0) {
+      throw new Error("Existing ExecuteData eid is outside the safe integer range");
+    }
+    const sequenceFilter = { _id: EXECUTE_EID_SEQUENCE_ID };
 
+    try {
+      await ctx.model.ExecuteSequence.updateOne(
+        sequenceFilter,
+        { $max: { value: maxEid } },
+        { upsert: true },
+      );
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+      await ctx.model.ExecuteSequence.updateOne(sequenceFilter, {
+        $max: { value: maxEid },
+      });
+    }
+
+    const sequence = await ctx.model.ExecuteSequence.findOneAndUpdate(
+      sequenceFilter,
+      { $inc: { value: 1 } },
+      { new: true, upsert: true },
+    );
+    if (!Number.isSafeInteger(sequence?.value)) {
+      throw new Error("ExecuteData eid sequence is invalid");
+    }
+    return sequence.value;
+  }
+
+  async withBossGenerationLock(line, action) {
+    const { ctx } = this;
+    const lockId = `boss-generation:${line}`;
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + BOSS_LOCK_TTL_MS);
+    let lock = await ctx.model.ExecuteLineLock.findOneAndUpdate(
+      { _id: lockId, expiresAt: { $lte: new Date() } },
+      { $set: { token, expiresAt } },
+      { new: true },
+    ).lean();
+
+    if (!lock) {
+      try {
+        lock = await ctx.model.ExecuteLineLock.create({
+          _id: lockId,
+          token,
+          expiresAt,
+        });
+      } catch (error) {
+        if (error.code === 11000) {
+          throw new Error(`Boss generation is already running for line ${line}`);
+        }
+        throw error;
+      }
+    }
+
+    let lockLost = false;
+    const renewTimer = setInterval(async () => {
+      try {
+        const result = await ctx.model.ExecuteLineLock.updateOne(
+          { _id: lockId, token },
+          { $set: { expiresAt: new Date(Date.now() + BOSS_LOCK_TTL_MS) } },
+        );
+        if (result.matchedCount !== 1) lockLost = true;
+      } catch (error) {
+        lockLost = true;
+        ctx.logger.error("Failed to renew boss generation lock", error);
+      }
+    }, BOSS_LOCK_RENEW_MS);
+    renewTimer.unref?.();
+
+    try {
+      const assertLock = async () => {
+        if (lockLost) {
+          throw new Error(`Boss generation lock was lost for line ${line}`);
+        }
+        const currentLock = await ctx.model.ExecuteLineLock.exists({
+          _id: lockId,
+          token,
+          expiresAt: { $gt: new Date() },
+        });
+        if (!currentLock) {
+          lockLost = true;
+          throw new Error(`Boss generation lock was lost for line ${line}`);
+        }
+      };
+      return await action(assertLock);
+    } finally {
+      clearInterval(renewTimer);
+      await ctx.model.ExecuteLineLock.deleteOne({ _id: lockId, token }).catch(
+        (error) => ctx.logger.error("Failed to release boss generation lock", error),
+      );
+    }
+  }
+
+  async createBossForLine(line, previousExecuteData, assertLock) {
+    const { ctx } = this;
+    let previousBoss;
+    if (previousExecuteData) {
+      previousBoss = Keypair.fromSecretKey(
+        bs58.decode(previousExecuteData.privateKey),
+      );
+      const balance = await connection.getBalance(previousBoss.publicKey);
+      if (balance / LAMPORTS_PER_SOL < BOSS_MIN_AMOUNT) {
+        throw new Error("Boss balance is not enough");
+      }
+    }
+
+    const boss = Keypair.generate();
     const newData = {
-      eid: line * 1000,
+      eid: await this.getNextEid(),
       bossAddress: boss.publicKey.toBase58(),
       privateKey: bs58.encode(boss.secretKey),
       active: true,
       createTime: new Date(),
-      line: line,
+      line,
     };
+
+    try {
+      await assertLock();
+      if (previousExecuteData) {
+        await ctx.model.ExecuteData.updateMany(
+          { active: true, line },
+          { active: false },
+        );
+      }
+      await assertLock();
+      await ctx.model.ExecuteData.create(newData);
+    } catch (error) {
+      if (previousExecuteData) {
+        try {
+          await assertLock();
+          await ctx.model.ExecuteData.updateOne(
+            { _id: previousExecuteData._id },
+            { $set: { active: true } },
+          );
+        } catch (restoreError) {
+          ctx.logger.error(
+            "Failed to restore active ExecuteData after boss creation failed",
+            restoreError,
+          );
+        }
+      }
+      throw error;
+    }
 
     fs.writeFileSync(
       "keypair.json",
@@ -180,8 +330,19 @@ class ExecuteSwap extends Service {
         privateKey: bs58.encode(boss.secretKey),
       }),
     );
-    await ctx.model.ExecuteData.create(newData);
+
+    if (previousBoss) {
+      await assertLock();
+      await transferAllSol(connection, previousBoss, boss.publicKey);
+    }
     return true;
+  }
+
+  async generateNewBoss(line) {
+    return this.withBossGenerationLock(line, async (assertLock) => {
+      const previousExecuteData = await this.getExecuteData(line);
+      return this.createBossForLine(line, previousExecuteData, assertLock);
+    });
   }
 
   /**
@@ -189,39 +350,25 @@ class ExecuteSwap extends Service {
    * @param {} lastExecuteData
    */
   async generateBoss(lastExecuteData) {
-    const { ctx } = this;
-    const lastBoss = Keypair.fromSecretKey(
-      bs58.decode(lastExecuteData.privateKey),
+    return this.withBossGenerationLock(
+      lastExecuteData.line,
+      async (assertLock) => {
+        const currentExecuteData = await this.getExecuteData(lastExecuteData.line);
+        if (
+          !currentExecuteData ||
+          String(currentExecuteData._id) !== String(lastExecuteData._id)
+        ) {
+          throw new Error(
+            `Active ExecuteData changed for line ${lastExecuteData.line}`,
+          );
+        }
+        return this.createBossForLine(
+          lastExecuteData.line,
+          currentExecuteData,
+          assertLock,
+        );
+      },
     );
-    const balance = await connection.getBalance(lastBoss.publicKey);
-    const bossMinAmount = BOSS_MIN_AMOUNT;
-    if (balance / LAMPORTS_PER_SOL < bossMinAmount) {
-      throw new Error(`Boss balance is not enough`);
-    }
-    const boss = Keypair.generate();
-
-    const newData = {
-      eid: lastExecuteData.eid + 1,
-      bossAddress: boss.publicKey.toBase58(),
-      privateKey: bs58.encode(boss.secretKey),
-      active: true,
-      createTime: new Date(),
-      line: lastExecuteData.line,
-    };
-    fs.writeFileSync(
-      "keypair.json",
-      JSON.stringify({
-        bossAddress: boss.publicKey.toBase58(),
-        privateKey: bs58.encode(boss.secretKey),
-      }),
-    );
-    await ctx.model.ExecuteData.updateMany(
-      { active: true, line: lastExecuteData.line },
-      { active: false },
-    );
-    await ctx.model.ExecuteData.create(newData);
-    // transfer
-    await transferAllSol(connection, lastBoss, boss.publicKey);
   }
 
   /**

@@ -380,6 +380,7 @@ async function createAxiomPumpfunBuyInstructions({
   buyAmount,
   curveAccount,
   feeLamports,
+  expectedBaseAmountOverride,
 }) {
   const totalQuoteLamports = BigInt(
     Math.trunc(Number(buyAmount) * LAMPORTS_PER_SOL),
@@ -438,8 +439,10 @@ async function createAxiomPumpfunBuyInstructions({
     [Buffer.from("user_volume_accumulator"), user.toBuffer()],
     PUMPFUN_PROGRAM_ID,
   )[0];
+  const expectedBaseAmountBeforeSlippage =
+    expectedBaseAmountOverride ?? curveAccount.getBuyPrice(quoteAmountIn);
   const expectedBaseAmount =
-    (curveAccount.getBuyPrice(quoteAmountIn) *
+    (expectedBaseAmountBeforeSlippage *
       AXIOM_PUMPFUN_EXPECTED_BASE_NUMERATOR) /
     AXIOM_PUMPFUN_EXPECTED_BASE_DENOMINATOR;
   const minTokensOut = 1n;
