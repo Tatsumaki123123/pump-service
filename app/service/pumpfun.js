@@ -42,6 +42,23 @@ const okxSwap = new OKXSwapSDK();
 const TIP_ACCOUNT = new PublicKey(
   "6rYLG55Q9RpsPGvqdPNJs4z5WTxJVatMB8zV3WJhs5EK"
 );
+const PUMP_FUN_PROGRAM_ID = new PublicKey(
+  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+);
+const GMGN_PROGRAM_ID = new PublicKey(
+  "GMgnVFR8Jb39LoXsEVzb3DvBy3ywCmdmJquHUy1Lrkqb",
+);
+const GMGN_PUMPFUN_EXTRA_ACCOUNT = new PublicKey(
+  "4NMj1YYLtoe7XYsBtb17PRxmVPSi7oo5LbUcoxW1A9NE",
+);
+const GMGN_SERVICE_FEE_ACCOUNT = new PublicKey(
+  "DymeoWc5WLNiQBaoLuxrxDnDRvLgGZ1QGsEoCAM7Jsrx",
+);
+const GMGN_REFERRAL_FEE_ACCOUNT = new PublicKey(
+  "EeCSgSgNE1dTX5vbyJN5Mgz3eVUW9ZJfLP8QGYzKWDrH",
+);
+const GMGN_SERVICE_FEE_LAMPORTS = 10_000;
+const GMGN_REFERRAL_FEE_LAMPORTS = 10_000;
 const SLIPPAGE_BASIS_POINTS = 5000n;
 
 function getWalletSlippageBasisPoints(wallet) {
@@ -71,6 +88,44 @@ async function simulatePumpFunTransaction(transaction, user) {
   }
   console.log(chalk.green("Pump.fun simulation success", user.toBase58()));
   return simulationResult.value;
+}
+
+function createGmgnPumpfunBuyInstructions(
+  instructions,
+  solAmountLamports,
+  slippageBasisPoints,
+) {
+  let replaced = false;
+  const nextInstructions = instructions.map((instruction) => {
+    if (!instruction.programId.equals(PUMP_FUN_PROGRAM_ID)) {
+      return instruction;
+    }
+    if (instruction.data.length !== 24) {
+      return instruction;
+    }
+    const keys = instruction.keys.map((key) => ({ ...key }));
+    if (keys.length < 17) {
+      return instruction;
+    }
+    keys[16].pubkey = GMGN_PUMPFUN_EXTRA_ACCOUNT;
+    const expectedTokenAmount = instruction.data.readBigUInt64LE(8);
+    const minTokenAmount =
+      (expectedTokenAmount * (10_000n - slippageBasisPoints)) / 10_000n;
+    const data = Buffer.from(instruction.data);
+    data.writeBigUInt64LE(BigInt(solAmountLamports), 8);
+    data.writeBigUInt64LE(minTokenAmount, 16);
+    replaced = true;
+    return new TransactionInstruction({
+      programId: GMGN_PROGRAM_ID,
+      keys,
+      data,
+    });
+  });
+
+  if (!replaced) {
+    throw new Error("Could not find Pump.fun buy instruction for GMGN route");
+  }
+  return nextInstructions;
 }
 
 class PumpFun extends Service {
@@ -254,7 +309,42 @@ class PumpFun extends Service {
         const slippageBasisPoints = getWalletSlippageBasisPoints(wallet);
         let volumeIxs = [];
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
-        if (wallet.isOkx) {
+        if (wallet.isGmgn) {
+          const solAmountLamports = BigInt(
+            Math.trunc(buyAmount * LAMPORTS_PER_SOL),
+          );
+          const buyTx = await pfSwap.buy(
+            user,
+            tokenMint,
+            solAmountLamports,
+            slippageBasisPoints,
+            {
+              unitLimit: limit,
+              unitPrice: price,
+            },
+            "processed",
+          );
+          volumeIxs = [
+            // pfSwap.buy already prepends the configured compute budget
+            // instructions. Keep them in their original order and only
+            // replace the Pump.fun buy instruction with the GMGN wrapper.
+            ...createGmgnPumpfunBuyInstructions(
+              buyTx.instructions,
+              solAmountLamports,
+              slippageBasisPoints,
+            ),
+            SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: GMGN_SERVICE_FEE_ACCOUNT,
+              lamports: GMGN_SERVICE_FEE_LAMPORTS,
+            }),
+            SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: GMGN_REFERRAL_FEE_ACCOUNT,
+              lamports: GMGN_REFERRAL_FEE_LAMPORTS,
+            }),
+          ];
+        } else if (wallet.isOkx) {
           const okxIxs = await okxSwap.getLocalBuyInstructions(ctx, {
             user,
             tokenMint,
@@ -328,15 +418,7 @@ class PumpFun extends Service {
 
         const jipAcc = ctx.service.jito.getTipAcc(sendOptions);
         const tipAmount = ctx.service.jito.getTipAmount(sendOptions);
-        if (!wallet.isAxiom && wallet.isGmgn) {
-          const gmgnTipTx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: GMGN_FEES_VAULT,
-            lamports: GMGN_FEE * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(gmgnTipTx);
-        }
-        if (!wallet.isAxiom && wallet.isFomo) {
+        if (!wallet.isAxiom && !wallet.isGmgn && wallet.isFomo) {
           volumeIxs.push(
             SystemProgram.transfer({
               fromPubkey: user,
@@ -345,7 +427,11 @@ class PumpFun extends Service {
             }),
           );
         }
-        if (!wallet.isAxiom && (wallet.isTrogan || wallet.isTragon)) {
+        if (
+          !wallet.isAxiom &&
+          !wallet.isGmgn &&
+          (wallet.isTrogan || wallet.isTragon)
+        ) {
           const troganTipIx = createTroProxyInstruction(
             user,
             jipAcc,
@@ -355,7 +441,7 @@ class PumpFun extends Service {
           if (troganTipIx) {
             volumeIxs.push(troganTipIx);
           }
-        } else if (!wallet.isAxiom) {
+        } else if (!wallet.isAxiom && !wallet.isGmgn) {
           const jitoTipIx = SystemProgram.transfer({
             fromPubkey: user,
             toPubkey: jipAcc,
@@ -367,6 +453,7 @@ class PumpFun extends Service {
 
         if (
           !wallet.isAxiom &&
+          !wallet.isGmgn &&
           !isNozomi &&
           existJitoIx === false &&
           i !== 0 &&
@@ -380,7 +467,11 @@ class PumpFun extends Service {
           volumeIxs.push(jitoTipIx);
         }
 
-        if (isNozomi && (wallet.isTrogan || wallet.isTragon)) {
+        if (
+          isNozomi &&
+          !wallet.isGmgn &&
+          (wallet.isTrogan || wallet.isTragon)
+        ) {
           volumeIxs.push(
             SystemProgram.transfer({
               fromPubkey: user,
