@@ -269,7 +269,6 @@ class PumpFun extends Service {
         String(sendOptions.batchPlatform || "").toLowerCase() === "nozomi";
       const { blockhash } = await connection.getLatestBlockhash();
       const buyTxns = [];
-      let existJitoIx = false;
       const allAxiomWallets = wallets.every((wallet) => wallet.isAxiom);
       let batchAxiomCurveAccount = null;
       let sequentialAxiomBuyPrices = null;
@@ -392,15 +391,6 @@ class PumpFun extends Service {
             ...axiomBuy.instructions,
             axiomBuy.feeInstruction,
           ];
-          if (i === 0 && !isNozomi) {
-            volumeIxs.push(
-              SystemProgram.transfer({
-                fromPubkey: user,
-                toPubkey: ctx.service.jito.getTipAcc(sendOptions),
-                lamports: ctx.service.jito.getTipAmount(sendOptions),
-              }),
-            );
-          }
         } else {
           const buyTx = await pfSwap.buy(
             user,
@@ -441,37 +431,24 @@ class PumpFun extends Service {
           if (troganTipIx) {
             volumeIxs.push(troganTipIx);
           }
-        } else if (!wallet.isAxiom && !wallet.isGmgn) {
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: jipAcc,
-            lamports: isNozomi ? tipAmount : fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(jitoTipIx);
-          existJitoIx = true;
         }
 
-        if (
-          !wallet.isAxiom &&
-          !wallet.isGmgn &&
-          !isNozomi &&
-          existJitoIx === false &&
-          i !== 0 &&
-          i === wallets.length - 1
-        ) {
-          const jitoTipIx = SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: jipAcc,
-            lamports: fee * LAMPORTS_PER_SOL,
-          });
-          volumeIxs.push(jitoTipIx);
+        if (!isNozomi && i === 0) {
+          const configuredTipLamports = Number(fee) * LAMPORTS_PER_SOL;
+          volumeIxs.push(
+            SystemProgram.transfer({
+              fromPubkey: user,
+              toPubkey: jipAcc,
+              lamports:
+                Number.isFinite(configuredTipLamports) &&
+                configuredTipLamports > 0
+                  ? configuredTipLamports
+                  : tipAmount,
+            }),
+          );
         }
 
-        if (
-          isNozomi &&
-          !wallet.isGmgn &&
-          (wallet.isTrogan || wallet.isTragon)
-        ) {
+        if (isNozomi && !wallet.isAxiom && !wallet.isGmgn) {
           volumeIxs.push(
             SystemProgram.transfer({
               fromPubkey: user,
