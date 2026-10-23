@@ -48,9 +48,6 @@ const PUMP_FUN_PROGRAM_ID = new PublicKey(
 const GMGN_PROGRAM_ID = new PublicKey(
   "GMgnVFR8Jb39LoXsEVzb3DvBy3ywCmdmJquHUy1Lrkqb",
 );
-const GMGN_PUMPFUN_EXTRA_ACCOUNT = new PublicKey(
-  "4NMj1YYLtoe7XYsBtb17PRxmVPSi7oo5LbUcoxW1A9NE",
-);
 const GMGN_SERVICE_FEE_ACCOUNT = new PublicKey(
   "DymeoWc5WLNiQBaoLuxrxDnDRvLgGZ1QGsEoCAM7Jsrx",
 );
@@ -102,9 +99,14 @@ async function simulatePumpFunTransaction(transaction, user, ctx) {
 
 function createGmgnPumpfunBuyInstructions(
   instructions,
+  tokenMint,
   solAmountLamports,
   slippageBasisPoints,
 ) {
+  const bondingCurveV2 = PublicKey.findProgramAddressSync(
+    [Buffer.from("bonding-curve-v2"), tokenMint.toBuffer()],
+    PUMP_FUN_PROGRAM_ID,
+  )[0];
   let replaced = false;
   const nextInstructions = instructions.map((instruction) => {
     if (!instruction.programId.equals(PUMP_FUN_PROGRAM_ID)) {
@@ -117,7 +119,7 @@ function createGmgnPumpfunBuyInstructions(
     if (keys.length < 17) {
       return instruction;
     }
-    keys[16].pubkey = GMGN_PUMPFUN_EXTRA_ACCOUNT;
+    keys[16].pubkey = bondingCurveV2;
     const expectedTokenAmount = instruction.data.readBigUInt64LE(8);
     const minTokenAmount =
       (expectedTokenAmount * (10_000n - slippageBasisPoints)) / 10_000n;
@@ -339,6 +341,7 @@ class PumpFun extends Service {
             // replace the Pump.fun buy instruction with the GMGN wrapper.
             ...createGmgnPumpfunBuyInstructions(
               buyTx.instructions,
+              tokenMint,
               solAmountLamports,
               slippageBasisPoints,
             ),

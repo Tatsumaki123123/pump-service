@@ -48,10 +48,6 @@ const PUMPFUN_FEE_PROGRAM = new PublicKey(
   process.env.OKX_PUMPFUN_FEE_PROGRAM ||
     "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
 );
-const PUMPFUN_EXTRA_ACCOUNT = new PublicKey(
-  process.env.OKX_PUMPFUN_EXTRA_ACCOUNT ||
-    "XDo3UtHh3B9wEa57LR3DypgyhzhmXBzHQ1QP84zzZNH",
-);
 const PUMPFUN_BUYBACK_ACCOUNT = new PublicKey(
   process.env.OKX_PUMPFUN_BUYBACK_ACCOUNT ||
     "5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD",
@@ -270,6 +266,11 @@ async function getPumpfunAccounts(
     PUMP_PROGRAM_ID,
     curveAccount.creator,
   );
+  const bondingCurveV2 = getPda(
+    "bonding-curve-v2",
+    PUMP_PROGRAM_ID,
+    tokenMint,
+  );
 
   const account = (pubkey, isWritable = false) => ({
     pubkey,
@@ -298,7 +299,7 @@ async function getPumpfunAccounts(
       account(userVolumeAccumulator, true),
       account(PUMPFUN_FEE_CONFIG),
       account(PUMPFUN_FEE_PROGRAM),
-      account(PUMPFUN_EXTRA_ACCOUNT),
+      account(bondingCurveV2),
       account(PUMPFUN_BUYBACK_ACCOUNT, true),
     ],
   };

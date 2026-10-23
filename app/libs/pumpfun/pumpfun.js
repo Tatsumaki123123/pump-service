@@ -32,10 +32,6 @@ const PUMPFUN_FEE_PROGRAM = new web3_js_1.PublicKey(
   process.env.PUMPFUN_FEE_PROGRAM ||
     "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
 );
-const PUMPFUN_EXTRA_ACCOUNT = new web3_js_1.PublicKey(
-  process.env.PUMPFUN_EXTRA_ACCOUNT ||
-    "Aybh3ZbgfBR8SDiGjFtr2tXofM6a2H7pWZ6VSaqg7Rwk"
-);
 const PUMPFUN_BUYBACK_ACCOUNT = new web3_js_1.PublicKey(
   process.env.PUMPFUN_BUYBACK_ACCOUNT ||
     "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"
@@ -261,6 +257,10 @@ class PumpFunSDK {
       [Buffer.from(PUMPFUN_USER_VOLUME_ACCUMULATOR_SEED), buyer.toBuffer()],
       PUMP_PROGRAM_ID
     );
+    const bondingCurveV2 = web3_js_1.PublicKey.findProgramAddressSync(
+      [Buffer.from("bonding-curve-v2"), mint.toBuffer()],
+      PUMP_PROGRAM_ID,
+    )[0];
     const key = (pubkey, isWritable = false, isSigner = false) => ({
       pubkey,
       isWritable,
@@ -296,7 +296,7 @@ class PumpFunSDK {
           key(userVolumeAccumulator, true),
           key(PUMPFUN_FEE_CONFIG, true),
           key(PUMPFUN_FEE_PROGRAM, true),
-          key(PUMPFUN_EXTRA_ACCOUNT),
+          key(bondingCurveV2),
           key(PUMPFUN_BUYBACK_ACCOUNT, true),
         ],
       })
