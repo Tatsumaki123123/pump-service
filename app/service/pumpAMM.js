@@ -78,6 +78,13 @@ const MIN_SELL_TOKEN_AMOUNT_RAW = 100n;
 
 const SIMULATE_BEFORE_BUNDLE = process.env.SIMULATE_BEFORE_BUNDLE === "true";
 
+function isDevelopmentEnvironment(ctx) {
+  const env = String(
+    ctx?.app?.config?.env || process.env.NODE_ENV || "",
+  ).toLowerCase();
+  return env === "local" || env === "dev" || env === "development";
+}
+
 const RENT_SYSVAR = new PublicKey(
   "SysvarRent111111111111111111111111111111111",
 );
@@ -802,11 +809,14 @@ class PumpAMM extends Service {
                 }
             }
 
-            let simulationResult = await connection.simulateTransaction(tx, {
-              commitment: "confirmed",
-            });
+            let simulationResult = null;
+            if (isDevelopmentEnvironment(ctx)) {
+              simulationResult = await connection.simulateTransaction(tx, {
+                commitment: "confirmed",
+              });
+            }
 
-            if (wallet.isPadre && !isProxy) {
+            if (simulationResult && wallet.isPadre && !isProxy) {
               const chainBaseAmountOut = getPadreBuyBaseAmountOut(
                 simulationResult.value.logs,
                 poolDetail.address,
@@ -842,7 +852,7 @@ class PumpAMM extends Service {
               });
             }
 
-            if (simulationResult.value.err) {
+            if (simulationResult?.value?.err) {
               const chainBaseAmountOut = getChainBuyBaseAmountOut(
                 simulationResult.value.logs,
               );
@@ -899,7 +909,7 @@ class PumpAMM extends Service {
               }
             }
 
-            if (simulationResult.value.err) {
+            if (simulationResult?.value?.err) {
               console.error("simulation", simulationResult.value);
               throw new Error(
                 "Simulation failed: " +
@@ -908,7 +918,7 @@ class PumpAMM extends Service {
                   JSON.stringify(simulationResult.value.logs || []),
               );
             }
-            if (wallet.isOkx && !isProxy) {
+            if (simulationResult && wallet.isOkx && !isProxy) {
               const amountOut = getOkxAmmAmountOut(simulationResult.value.logs);
               if (amountOut === null || amountOut <= 0n) {
                 throw new Error("OKX Pump AMM simulation did not return an output quote");
@@ -949,7 +959,7 @@ class PumpAMM extends Service {
           );
           return;
         }
-        if (SIMULATE_BEFORE_BUNDLE) {
+        if (isDevelopmentEnvironment(ctx) && SIMULATE_BEFORE_BUNDLE) {
           for (let i = 0; i < buyTxns.length; i++) {
             const simulationResult = await connection.simulateTransaction(
               buyTxns[i].tx,
@@ -1315,7 +1325,7 @@ class PumpAMM extends Service {
         } else if (sellTxns.length === 1) {
           const signatures = await ctx.service.jito.sendTransactionsByRpc([
             sellTxns[0],
-          ]);
+          ], undefined, { skipPreflight: !isDevelopmentEnvironment(ctx) });
           console.log(signatures);
           console.log(chalk.green("Sell transaction completed."));
         }
@@ -1406,36 +1416,42 @@ class PumpAMM extends Service {
         }
         transactions.push(transaction);
       }
-      await Promise.all(transactions.map(async (transaction, i) => {
-        const signature = bs58.encode(Buffer.from(transaction.signatures[0]));
-        const user = prepared[i].user.toBase58();
-        let simulation;
-        try {
-          simulation = await connection.simulateTransaction(transaction, {
-            commitment: "confirmed",
-            replaceRecentBlockhash: true,
+      if (isDevelopmentEnvironment(ctx)) {
+        await Promise.all(transactions.map(async (transaction, i) => {
+          const signature = bs58.encode(Buffer.from(transaction.signatures[0]));
+          const user = prepared[i].user.toBase58();
+          let simulation;
+          try {
+            simulation = await connection.simulateTransaction(transaction, {
+              commitment: "confirmed",
+              replaceRecentBlockhash: true,
+            });
+          } catch (error) {
+            throw new Error(`Jupiter sell simulation RPC failed for ${user} (${signature}): ${error.message}`, {
+              cause: error,
+            });
+          }
+          console.log("Jupiter sell simulation", {
+            user,
+            signature,
+            slot: simulation.context?.slot,
+            unitsConsumed: simulation.value?.unitsConsumed,
+            err: simulation.value?.err,
+            logs: simulation.value?.logs,
           });
-        } catch (error) {
-          throw new Error(`Jupiter sell simulation RPC failed for ${user} (${signature}): ${error.message}`, {
-            cause: error,
-          });
-        }
-        console.log("Jupiter sell simulation", {
-          user,
-          signature,
-          slot: simulation.context?.slot,
-          unitsConsumed: simulation.value?.unitsConsumed,
-          err: simulation.value?.err,
-          logs: simulation.value?.logs,
-        });
-        if (!simulation.value || simulation.value.err) {
-          throw new Error(`Jupiter sell simulation failed for ${user} (${signature}): ${JSON.stringify(simulation.value?.err || "empty result")} ${JSON.stringify(simulation.value?.logs || [])}`);
-        }
-      }));
+          if (!simulation.value || simulation.value.err) {
+            throw new Error(`Jupiter sell simulation failed for ${user} (${signature}): ${JSON.stringify(simulation.value?.err || "empty result")} ${JSON.stringify(simulation.value?.logs || [])}`);
+          }
+        }));
+      }
       if (transactions.length > 1) {
         await ctx.service.jito.sendBundle(transactions);
       } else {
-        await ctx.service.jito.sendTransactionsByRpc(transactions);
+        await ctx.service.jito.sendTransactionsByRpc(
+          transactions,
+          undefined,
+          { skipPreflight: !isDevelopmentEnvironment(ctx) },
+        );
       }
     }
     return true;

@@ -61,6 +61,13 @@ const GMGN_SERVICE_FEE_LAMPORTS = 10_000;
 const GMGN_REFERRAL_FEE_LAMPORTS = 10_000;
 const SLIPPAGE_BASIS_POINTS = 5000n;
 
+function isDevelopmentEnvironment(ctx) {
+  const env = String(
+    ctx?.app?.config?.env || process.env.NODE_ENV || "",
+  ).toLowerCase();
+  return env === "local" || env === "dev" || env === "development";
+}
+
 function getWalletSlippageBasisPoints(wallet) {
   if (wallet?.slippage === undefined || wallet?.slippage === null) {
     return SLIPPAGE_BASIS_POINTS;
@@ -72,7 +79,10 @@ function getWalletSlippageBasisPoints(wallet) {
   return BigInt(Math.floor(slippage * 10000));
 }
 
-async function simulatePumpFunTransaction(transaction, user) {
+async function simulatePumpFunTransaction(transaction, user, ctx) {
+  if (!isDevelopmentEnvironment(ctx)) {
+    return null;
+  }
   const simulationResult = await connection.simulateTransaction(transaction, {
     commitment: "confirmed",
     sigVerify: true,
@@ -161,9 +171,9 @@ class PumpFun extends Service {
       }).compileToV0Message();
       const transaction = new VersionedTransaction(messageV0);
       transaction.sign([testWallet]);
-      await simulatePumpFunTransaction(transaction, testWallet.publicKey);
+      await simulatePumpFunTransaction(transaction, testWallet.publicKey, ctx);
       const signature = await connection.sendTransaction(transaction, {
-        skipPreflight: false,
+        skipPreflight: !isDevelopmentEnvironment(ctx),
         maxRetries: 2,
       });
       await connection.confirmTransaction(
@@ -216,7 +226,7 @@ class PumpFun extends Service {
 
     const tx = new VersionedTransaction(messageV0);
     tx.sign([testWallet]);
-    await simulatePumpFunTransaction(tx, testWallet.publicKey);
+    await simulatePumpFunTransaction(tx, testWallet.publicKey, ctx);
     // const volumeIxs = [...buyTx.instructions];
     const bundleResult = await ctx.service.jito.sendBundle([tx]);
     console.log(bundleResult);
@@ -467,7 +477,7 @@ class PumpFun extends Service {
 
           const tx = new VersionedTransaction(messageV0);
           tx.sign([keypair]);
-          await simulatePumpFunTransaction(tx, user);
+          await simulatePumpFunTransaction(tx, user, ctx);
           buyTxns.push(tx);
         } catch (error) {
           console.error(error.message);
@@ -488,7 +498,7 @@ class PumpFun extends Service {
         if (buyTxns.length === 1 && !isNozomi) {
           const transferTx = buyTxns[0];
           const signature = await connection.sendTransaction(transferTx, {
-            skipPreflight: false,
+            skipPreflight: !isDevelopmentEnvironment(ctx),
           });
           await connection.confirmTransaction(signature, "processed");
           return true;
@@ -595,7 +605,7 @@ class PumpFun extends Service {
 
             const tx = new VersionedTransaction(messageV0);
             tx.sign([keypair]);
-            await simulatePumpFunTransaction(tx, user);
+            await simulatePumpFunTransaction(tx, user, ctx);
             sellTxns.push(tx);
           } catch (error) {
             console.error(
@@ -613,7 +623,7 @@ class PumpFun extends Service {
           if (sellTxns.length === 1) {
             const transferTx = sellTxns[0];
             const signature = await connection.sendTransaction(transferTx, {
-              skipPreflight: false,
+              skipPreflight: !isDevelopmentEnvironment(ctx),
             });
             await connection.confirmTransaction(signature, "processed");
             return true;
