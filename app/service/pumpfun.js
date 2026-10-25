@@ -525,6 +525,9 @@ class PumpFun extends Service {
 
         const jipAcc = ctx.service.jito.getTipAcc(sendOptions);
         const tipAmount = ctx.service.jito.getTipAmount(sendOptions);
+        const isPadreRoute = wallet.isPadre || wallet.isPardre;
+        const shouldIncludePadreBundleTip =
+          !isPadreRoute || isNozomi || wallets.length > 1;
         if (!wallet.isAxiom && !wallet.isGmgn && wallet.isFomo) {
           volumeIxs.push(
             SystemProgram.transfer({
@@ -550,7 +553,7 @@ class PumpFun extends Service {
           }
         }
 
-        if (!wallet.isPadre && !wallet.isPardre && !isNozomi && i === 0) {
+        if (shouldIncludePadreBundleTip && !isNozomi && i === 0) {
           const configuredTipLamports = Number(fee) * LAMPORTS_PER_SOL;
           volumeIxs.push(
             SystemProgram.transfer({
@@ -568,9 +571,7 @@ class PumpFun extends Service {
         if (
           isNozomi &&
           !wallet.isAxiom &&
-          !wallet.isGmgn &&
-          !wallet.isPadre &&
-          !wallet.isPardre
+          !wallet.isGmgn
         ) {
           volumeIxs.push(
             SystemProgram.transfer({
