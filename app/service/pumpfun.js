@@ -89,7 +89,7 @@ function createPadrePumpFunHopKeys(buyInstruction, inputTokenAccount) {
     keys[4],
     keys[9],
     { ...keys[1], isSigner: false },
-    keys[12],
+    keys[13],
     keys[14],
     keys[10],
   ];
