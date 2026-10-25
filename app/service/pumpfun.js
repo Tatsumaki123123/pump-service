@@ -85,13 +85,13 @@ function createPadrePumpFunHopKeys(buyInstruction, inputTokenAccount) {
     readonly(NATIVE_MINT),
     { pubkey: inputTokenAccount, isSigner: false, isWritable: true },
     { ...keys[5], isSigner: false },
-    { ...keys[1], isSigner: false },
     keys[17],
     keys[4],
     keys[9],
-    keys[10],
+    { ...keys[1], isSigner: false },
     keys[12],
-    readonly(keys[15].pubkey),
+    keys[14],
+    keys[10],
   ];
 }
 
