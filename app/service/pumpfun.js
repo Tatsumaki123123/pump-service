@@ -677,6 +677,7 @@ class PumpFun extends Service {
           newWallets.push({ ...wallet, tokenAmount });
         }
       }
+      newWallets.reverse();
 
       const func = async (bundleWallets) => {
         const { blockhash } = await connection.getLatestBlockhash();
