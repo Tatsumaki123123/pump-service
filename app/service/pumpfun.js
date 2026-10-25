@@ -38,6 +38,7 @@ const {
   NATIVE_MINT,
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
 } = require("@solana/spl-token");
 
 const { sendV0Transaction, getSPLBalance } = require("../utils/solana");
@@ -77,6 +78,12 @@ function createPadrePumpFunHopKeys(buyInstruction, inputTokenAccount) {
     throw new Error("Pump.fun buy instruction is missing Padre route accounts");
   }
   const readonly = (pubkey) => ({ pubkey, isSigner: false, isWritable: false });
+  const associatedQuoteBondingCurve = getAssociatedTokenAddressSync(
+    NATIVE_MINT,
+    keys[3].pubkey,
+    true,
+    TOKEN_PROGRAM_ID,
+  );
   return [
     readonly(PUMP_FUN_PROGRAM_ID),
     keys[3],
@@ -87,7 +94,7 @@ function createPadrePumpFunHopKeys(buyInstruction, inputTokenAccount) {
     { ...keys[5], isSigner: false },
     keys[17],
     keys[4],
-    keys[9],
+    { pubkey: associatedQuoteBondingCurve, isSigner: false, isWritable: true },
     { ...keys[1], isSigner: false },
     keys[13],
     keys[14],
