@@ -283,12 +283,13 @@ class ExecuteSwap extends Service {
   async createBossForLine(line, previousExecuteData, assertLock) {
     const { ctx } = this;
     let previousBoss;
+    let previousBalance = 0;
     if (previousExecuteData) {
       previousBoss = Keypair.fromSecretKey(
         bs58.decode(previousExecuteData.privateKey),
       );
-      const balance = await connection.getBalance(previousBoss.publicKey);
-      if (balance / LAMPORTS_PER_SOL < BOSS_MIN_AMOUNT) {
+      previousBalance = await connection.getBalance(previousBoss.publicKey);
+      if (previousBalance / LAMPORTS_PER_SOL < BOSS_MIN_AMOUNT) {
         throw new Error("Boss balance is not enough");
       }
     }
@@ -298,29 +299,46 @@ class ExecuteSwap extends Service {
       eid: await this.getNextEid(),
       bossAddress: boss.publicKey.toBase58(),
       privateKey: bs58.encode(boss.secretKey),
-      active: true,
+      active: !previousExecuteData,
       createTime: new Date(),
       line,
     };
 
+    let createdExecuteData;
+    let transferCompleted = false;
     try {
+      await assertLock();
+      createdExecuteData = await ctx.model.ExecuteData.create(newData);
+      if (previousBoss) {
+        await assertLock();
+        await transferAllSol(connection, previousBoss, boss.publicKey);
+        transferCompleted = true;
+      }
       await assertLock();
       if (previousExecuteData) {
         await ctx.model.ExecuteData.updateMany(
           { active: true, line },
           { active: false },
         );
+        await ctx.model.ExecuteData.updateOne(
+          { _id: createdExecuteData._id },
+          { $set: { active: true } },
+        );
       }
-      await assertLock();
-      await ctx.model.ExecuteData.create(newData);
     } catch (error) {
-      if (previousExecuteData) {
+      if (createdExecuteData && previousExecuteData) {
         try {
           await assertLock();
           await ctx.model.ExecuteData.updateOne(
             { _id: previousExecuteData._id },
             { $set: { active: true } },
           );
+          if (!transferCompleted) {
+            await ctx.model.ExecuteData.deleteOne({
+              _id: createdExecuteData._id,
+              active: false,
+            });
+          }
         } catch (restoreError) {
           ctx.logger.error(
             "Failed to restore active ExecuteData after boss creation failed",
@@ -339,10 +357,6 @@ class ExecuteSwap extends Service {
       }),
     );
 
-    if (previousBoss) {
-      await assertLock();
-      await transferAllSol(connection, previousBoss, boss.publicKey);
-    }
     return true;
   }
 
@@ -1089,7 +1103,9 @@ class ExecuteSwap extends Service {
     const stageTrogan = buyStages.some(
       (stage) => stage.isTrogan === true || stage.isTragon === true,
     );
-    const stagePadre = buyStages.some((stage) => stage.isPadre === true);
+    const stagePadre = buyStages.some(
+      (stage) => stage.isPadre === true || stage.isPardre === true,
+    );
     return {
       ...config,
       isDflow:
@@ -1098,7 +1114,7 @@ class ExecuteSwap extends Service {
         stageDflow,
       isJup: config.isJup ?? stageJup,
       isTrogan: config.isTrogan ?? config.isTragon ?? stageTrogan,
-      isPadre: config.isPadre ?? stagePadre,
+      isPadre: config.isPadre ?? config.isPardre ?? stagePadre,
     };
   }
   /**

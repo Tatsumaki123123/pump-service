@@ -26,6 +26,19 @@ const {
 } = require("../libs/axiom");
 const OKXSwapSDK = require("../libs/okxRouterV2");
 const { createTroProxyInstruction } = require("../libs/trogan");
+const {
+  PADRE_FEE_RECIPIENT,
+  PADRE_FEE_BASIS_POINTS,
+  createPadreRouteInstruction,
+  createPadreNonceInstructions,
+  getPadreNonceAccount,
+  getPadreSwapAccounts,
+} = require("../libs/padre");
+const {
+  NATIVE_MINT,
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+} = require("@solana/spl-token");
 
 const { sendV0Transaction, getSPLBalance } = require("../utils/solana");
 const { splitIntoBundles } = require("../utils/utils");
@@ -57,6 +70,30 @@ const GMGN_REFERRAL_FEE_ACCOUNT = new PublicKey(
 const GMGN_SERVICE_FEE_LAMPORTS = 10_000;
 const GMGN_REFERRAL_FEE_LAMPORTS = 10_000;
 const SLIPPAGE_BASIS_POINTS = 5000n;
+
+function createPadrePumpFunHopKeys(buyInstruction, inputTokenAccount) {
+  const keys = buyInstruction.keys;
+  if (keys.length < 18) {
+    throw new Error("Pump.fun buy instruction is missing Padre route accounts");
+  }
+  const readonly = (pubkey) => ({ pubkey, isSigner: false, isWritable: false });
+  return [
+    readonly(PUMP_FUN_PROGRAM_ID),
+    keys[3],
+    keys[0],
+    keys[2],
+    readonly(NATIVE_MINT),
+    { pubkey: inputTokenAccount, isSigner: false, isWritable: true },
+    { ...keys[5], isSigner: false },
+    { ...keys[1], isSigner: false },
+    keys[17],
+    keys[4],
+    keys[9],
+    keys[10],
+    keys[12],
+    readonly(keys[15].pubkey),
+  ];
+}
 
 function isDevelopmentEnvironment(ctx) {
   const env = String(
@@ -404,6 +441,66 @@ class PumpFun extends Service {
             ...axiomBuy.instructions,
             axiomBuy.feeInstruction,
           ];
+        } else if (wallet.isPadre || wallet.isPardre) {
+          const buyTx = await pfSwap.buy(
+            user,
+            tokenMint,
+            BigInt(Math.trunc(buyAmount * LAMPORTS_PER_SOL)),
+            slippageBasisPoints,
+            {
+              unitLimit: limit,
+              unitPrice: price,
+            },
+            "processed",
+          );
+          const buyInstruction = buyTx.instructions.find((instruction) =>
+            instruction.programId.equals(PUMP_FUN_PROGRAM_ID),
+          );
+          if (!buyInstruction) {
+            throw new Error("Could not find Pump.fun buy instruction for Padre route");
+          }
+          const mintInfo = await connection.getAccountInfo(tokenMint, "processed");
+          if (!mintInfo) {
+            throw new Error(`Mint account not found: ${tokenMint.toBase58()}`);
+          }
+          const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID)
+            ? TOKEN_2022_PROGRAM_ID
+            : TOKEN_PROGRAM_ID;
+          const { inputTokenAccount, outputTokenAccount } = getPadreSwapAccounts(
+            user,
+            tokenMint,
+            tokenProgramId,
+          );
+          const expectedTokenAmount = buyInstruction.data.readBigUInt64LE(8);
+          const minTokenAmount =
+            (expectedTokenAmount * (10_000n - slippageBasisPoints)) / 10_000n;
+          const routeInstruction = createPadreRouteInstruction({
+            user,
+            inputAmount: BigInt(Math.trunc(buyAmount * LAMPORTS_PER_SOL)),
+            minFinalOut: minTokenAmount,
+            inputTokenAccount,
+            outputTokenAccount,
+            outputMint: tokenMint,
+            hopProtocol: 21,
+            hopKeys: createPadrePumpFunHopKeys(
+              buyInstruction,
+              inputTokenAccount,
+            ),
+            feeBasisPoints: PADRE_FEE_BASIS_POINTS,
+            feeRecipient: PADRE_FEE_RECIPIENT,
+          });
+          const nonceAccount = getPadreNonceAccount(user);
+          const nonceInfo = await connection.getAccountInfo(
+            nonceAccount,
+            "confirmed",
+          );
+          volumeIxs = [
+            ...buyTx.instructions.filter((instruction) =>
+              instruction.programId.equals(ComputeBudgetProgram.programId),
+            ),
+            ...createPadreNonceInstructions(user, undefined, !!nonceInfo),
+            routeInstruction,
+          ];
         } else {
           const buyTx = await pfSwap.buy(
             user,
@@ -446,7 +543,7 @@ class PumpFun extends Service {
           }
         }
 
-        if (!isNozomi && i === 0) {
+        if (!wallet.isPadre && !wallet.isPardre && !isNozomi && i === 0) {
           const configuredTipLamports = Number(fee) * LAMPORTS_PER_SOL;
           volumeIxs.push(
             SystemProgram.transfer({
@@ -461,7 +558,13 @@ class PumpFun extends Service {
           );
         }
 
-        if (isNozomi && !wallet.isAxiom && !wallet.isGmgn) {
+        if (
+          isNozomi &&
+          !wallet.isAxiom &&
+          !wallet.isGmgn &&
+          !wallet.isPadre &&
+          !wallet.isPardre
+        ) {
           volumeIxs.push(
             SystemProgram.transfer({
               fromPubkey: user,
