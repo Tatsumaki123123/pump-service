@@ -23,7 +23,10 @@ async function getJupiterSellInstructions(ctx, params, options = {}) {
       return includeProvider ? { ...result, routeProvider: providerName } : result;
     } catch (error) {
       errors.push({ providerName, error });
-      const canFallback = fallbackOnAnyError || TEMPORARY_HTTP_STATUSES.has(error.status);
+      const canFallback =
+        fallbackOnAnyError ||
+        error.retryable === true ||
+        TEMPORARY_HTTP_STATUSES.has(error.status);
       if (index === providers.length - 1 || !canFallback) {
         break;
       }
@@ -61,7 +64,10 @@ async function getJupiterSellTransaction(ctx, params, options = {}) {
       return { ...result, routeProvider: providerName };
     } catch (error) {
       errors.push({ providerName, error });
-      const canFallback = fallbackOnAnyError || TEMPORARY_HTTP_STATUSES.has(error.status);
+      const canFallback =
+        fallbackOnAnyError ||
+        error.retryable === true ||
+        TEMPORARY_HTTP_STATUSES.has(error.status);
       if (index === providers.length - 1 || !canFallback) break;
       console.warn(
         `${providerName} sell route unavailable for ${params.tokenMint.toBase58()}: ${error.message}; trying ${providers[index + 1][0]}`,

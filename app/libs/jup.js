@@ -8,6 +8,9 @@ const {
 const BASE_URL = "https://lite-api.jup.ag";
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const RETRY_DELAYS_MS = [250, 500, 1000];
+const REQUEST_TIMEOUT_MS = Number(
+  process.env.JUPITER_REQUEST_TIMEOUT_MS || 15000,
+);
 const JUP_PROGRAM_V6 = new PublicKey(
   "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
 );
@@ -44,12 +47,21 @@ class JupSDK {
       try {
         // Jupiter can return an HTML error page. Read the body as text so the
         // HTTP status is available before attempting to parse JSON.
-        response = await ctx.curl(uri, { ...options, dataType: "text" });
+        response = await ctx.curl(uri, {
+          ...options,
+          timeout: REQUEST_TIMEOUT_MS,
+          dataType: "text",
+        });
       } catch (error) {
         const status = error.status || error.res?.status;
         if (!RETRYABLE_STATUS.has(status) || attempt === RETRY_DELAYS_MS.length) {
           if (status) {
             throw this.httpError(operation, status, attempt + 1, error);
+          }
+          if (/ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|ECONNABORTED|ABORT_ERR|timeout|timed out/i.test(
+            `${error.code || ""} ${error.name || ""} ${error.message || ""}`,
+          )) {
+            error.retryable = true;
           }
           throw error;
         }

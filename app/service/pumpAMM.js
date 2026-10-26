@@ -1351,54 +1351,69 @@ class PumpAMM extends Service {
       seen.add(address);
       return true;
     });
-    const sellWallets = [];
-    for (const wallet of uniqueWallets) {
-      const owner = wallet.keypair.publicKey;
-      const tokenAccount = getAssociatedTokenAddressSync(
-        tokenMint,
-        owner,
-        false,
-        tokenProgramId,
-      );
-      const accounts = await connection.getParsedTokenAccountsByOwner(
-        owner,
-        { mint: tokenMint },
-        "confirmed",
-      );
-      const source = accounts.value.find(({ pubkey }) => pubkey.equals(tokenAccount));
-      const balanceRaw = source
-        ? BigInt(source.account.data.parsed.info.tokenAmount.amount)
-        : 0n;
-      const percentBasisPoints = BigInt(Math.round(getWalletSellPercent(wallet) * 100));
-      const amountRaw = balanceRaw * percentBasisPoints / 10000n;
-      if (amountRaw >= MIN_SELL_TOKEN_AMOUNT_RAW) {
-        sellWallets.push({ wallet, amountRaw });
-      }
-    }
+    const sellWallets = (
+      await Promise.all(
+        uniqueWallets.map(async (wallet) => {
+          const owner = wallet.keypair.publicKey;
+          const tokenAccount = getAssociatedTokenAddressSync(
+            tokenMint,
+            owner,
+            false,
+            tokenProgramId,
+          );
+          const accounts = await connection.getParsedTokenAccountsByOwner(
+            owner,
+            { mint: tokenMint },
+            "confirmed",
+          );
+          const source = accounts.value.find(({ pubkey }) =>
+            pubkey.equals(tokenAccount),
+          );
+          const balanceRaw = source
+            ? BigInt(source.account.data.parsed.info.tokenAmount.amount)
+            : 0n;
+          const percentBasisPoints = BigInt(
+            Math.round(getWalletSellPercent(wallet) * 100),
+          );
+          const amountRaw = (balanceRaw * percentBasisPoints) / 10000n;
+          return amountRaw >= MIN_SELL_TOKEN_AMOUNT_RAW
+            ? { wallet, amountRaw }
+            : null;
+        }),
+      )
+    ).filter(Boolean);
     if (sellWallets.length === 0) return true;
 
     for (const batch of splitIntoBundles(sellWallets.reverse())) {
-      const prepared = [];
-      for (const { wallet, amountRaw } of batch) {
-        const keypair = wallet.keypair;
-        const user = keypair.publicKey;
-        const swapData = await getJupiterSellInstructions(ctx, {
-          user,
-          tokenMint,
-          tokenAmount: amountRaw.toString(),
-          slippage: wallet.slippage ?? 0.30,
-          connection,
-        });
-        const instructions = [...swapData.instructions];
-        if (batch.length > 1 && prepared.length === 0) {
-          instructions.push(SystemProgram.transfer({
-            fromPubkey: user,
-            toPubkey: ctx.service.jito.getTipAcc(),
-            lamports: ctx.service.jito.getTipAmount(),
-          }));
-        }
-        prepared.push({ keypair, user, instructions, lookupTableAccounts: swapData.lookupTableAccounts });
-      }
+      const prepared = await Promise.all(
+        batch.map(async ({ wallet, amountRaw }, index) => {
+          const keypair = wallet.keypair;
+          const user = keypair.publicKey;
+          const swapData = await getJupiterSellInstructions(ctx, {
+            user,
+            tokenMint,
+            tokenAmount: amountRaw.toString(),
+            slippage: wallet.slippage ?? 0.3,
+            connection,
+          });
+          const instructions = [...swapData.instructions];
+          if (batch.length > 1 && index === 0) {
+            instructions.push(
+              SystemProgram.transfer({
+                fromPubkey: user,
+                toPubkey: ctx.service.jito.getTipAcc(),
+                lamports: ctx.service.jito.getTipAmount(),
+              }),
+            );
+          }
+          return {
+            keypair,
+            user,
+            instructions,
+            lookupTableAccounts: swapData.lookupTableAccounts,
+          };
+        }),
+      );
 
       // Quotes and lookup tables can take time; sign with a fresh blockhash.
       const { blockhash } = await connection.getLatestBlockhash();
