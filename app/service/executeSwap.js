@@ -875,7 +875,11 @@ class ExecuteSwap extends Service {
     }
     const token = tokenInfo.token;
     console.log(chalk.green(`Step 4: Selling ${token}, `));
-    const wallets = await this.getWalletsWithConfig(tokenInfo.line);
+    const wallets = await this.getWalletsWithSellConfig(
+      tokenInfo.line,
+      "all",
+      percent,
+    );
     const wallet = wallets.find(
       (item) => item.publicKey.toBase58() === walletAddress,
     );
@@ -986,11 +990,14 @@ class ExecuteSwap extends Service {
     const buyAmountArr = Array.isArray(config.buyAmount)
       ? config.buyAmount
       : [config.buyAmount];
-    const { buyAmount: defaultBuyAmount } = this.resolveStageBuyAmount(
-      config.buyAmount,
-      buyAmountArr[0],
-      stageKey || "wallet",
-    );
+    const defaultBuyAmount =
+      config.buyAmount === undefined || config.buyAmount === null
+        ? undefined
+        : this.resolveStageBuyAmount(
+            config.buyAmount,
+            buyAmountArr[0],
+            stageKey || "wallet",
+          ).buyAmount;
     const stageFlags = {
       firstBuy: false,
       secondBuy: false,
