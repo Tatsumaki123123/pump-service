@@ -986,14 +986,11 @@ class ExecuteSwap extends Service {
     const buyAmountArr = Array.isArray(config.buyAmount)
       ? config.buyAmount
       : [config.buyAmount];
-    const indexMap = {
-      first: 0,
-      second: 1,
-      third: 2,
-      multi: 0,
-    };
-    const defaultBuyAmount =
-      buyAmountArr[indexMap[type] ?? 0] ?? buyAmountArr[0];
+    const { buyAmount: defaultBuyAmount } = this.resolveStageBuyAmount(
+      config.buyAmount,
+      buyAmountArr[0],
+      stageKey || "wallet",
+    );
     const stageFlags = {
       firstBuy: false,
       secondBuy: false,
