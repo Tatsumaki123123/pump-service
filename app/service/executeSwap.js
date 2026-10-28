@@ -63,6 +63,9 @@ class ExecuteSwap extends Service {
       const res = this.generateNewBoss(line);
       return res;
     }
+    const recoveredBoss = await this.generateBoss(lastExecuteData, true);
+    if (recoveredBoss) return true;
+
     const wallets = await this.getWallets(line);
     let canStart = true;
     if (wallets && wallets.length > 0) {
@@ -409,7 +412,7 @@ class ExecuteSwap extends Service {
    * Step 1, start -> generateBoss
    * @param {} lastExecuteData
    */
-  async generateBoss(lastExecuteData) {
+  async generateBoss(lastExecuteData, recoverOnly = false) {
     const { ctx } = this;
     return this.withBossGenerationLock(
       lastExecuteData.line,
@@ -513,6 +516,7 @@ class ExecuteSwap extends Service {
             }
           }
         }
+        if (recoverOnly) return false;
         return this.createBossForLine(
           lastExecuteData.line,
           currentExecuteData,
