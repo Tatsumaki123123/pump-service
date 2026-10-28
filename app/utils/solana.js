@@ -10,6 +10,7 @@ const {
   Transaction,
 } = require("@solana/web3.js");
 const chalk = require("chalk");
+const bs58 = require("bs58");
 const {
   getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
@@ -28,7 +29,8 @@ const {
 
 const { WSOL_TOKEN_ACCOUNT, connection } = require("../constants/index");
 
-const { sleep } = require("./utils");
+const TRANSFER_CONFIRM_TIMEOUT_MS = 10_000;
+const TRANSFER_STATUS_POLL_MS = 500;
 
 async function getSPLBalance(
   connection,
@@ -240,8 +242,9 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
     throw new Error(error);
   }
 }
-async function transferAllSol(connection, from, to, remain = 0) {
-  const { blockhash } = await connection.getLatestBlockhash();
+async function transferAllSol(connection, from, to, remain = 0, onPrepared) {
+  const { blockhash, lastValidBlockHeight } =
+    await connection.getLatestBlockhash("confirmed");
   const TRANSACTION_FEE = 5000;
   const balance = await connection.getBalance(from.publicKey);
   // const ataRent = await connection.getMinimumBalanceForRentExemption(165); // ATA 大小约为 165 字节
@@ -258,7 +261,7 @@ async function transferAllSol(connection, from, to, remain = 0) {
         `Insufficient balance for ${from.publicKey.toBase58()}, skipping.`,
       ),
     );
-    return;
+    return false;
   }
 
   const ix = SystemProgram.transfer({
@@ -278,15 +281,110 @@ async function transferAllSol(connection, from, to, remain = 0) {
   const tx = new VersionedTransaction(messageV0);
   tx.sign([from]);
 
+  const signature = bs58.encode(Buffer.from(tx.signatures[0]));
+  await onPrepared?.({ signature, blockhash, lastValidBlockHeight });
   try {
-    const signature = await connection.sendTransaction(tx, {
+    const sentSignature = await connection.sendTransaction(tx, {
       skipPreflight: false,
     });
-    await connection.confirmTransaction(signature, "confirmed");
-    // await sleep(1);
-    console.log(chalk.green(`Transaction sent: ${signature}`));
+    if (sentSignature !== signature) {
+      throw new Error(`Unexpected transfer signature: ${sentSignature}`);
+    }
+    const deadline = Date.now() + TRANSFER_CONFIRM_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const remainingMs = deadline - Date.now();
+      let timeoutId;
+      let statusResponse;
+      try {
+        statusResponse = await Promise.race([
+          connection.getSignatureStatuses([signature], {
+            searchTransactionHistory: true,
+          }),
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
+              const timeout = new Error("Transfer status request timed out");
+              timeout.code = "TRANSFER_CONFIRMATION_UNKNOWN";
+              reject(timeout);
+            }, remainingMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      const status = statusResponse.value?.[0];
+      if (status?.err) {
+        const error = new Error(
+          `Transfer transaction ${signature} failed: ${JSON.stringify(status.err)}`,
+        );
+        error.code = "TRANSFER_FAILED";
+        throw error;
+      }
+      if (
+        status &&
+        (status.confirmationStatus === "confirmed" ||
+          status.confirmationStatus === "finalized" ||
+          status.confirmations === null)
+      ) {
+        console.log(chalk.green(`Transaction sent: ${signature}`));
+        return true;
+      }
+      await new Promise((resolve) =>
+        setTimeout(
+          resolve,
+          Math.min(TRANSFER_STATUS_POLL_MS, deadline - Date.now()),
+        ),
+      );
+    }
+    const unknown = new Error(
+      `Transfer confirmation timed out after ${TRANSFER_CONFIRM_TIMEOUT_MS}ms: ${signature}`,
+    );
+    unknown.code = "TRANSFER_CONFIRMATION_UNKNOWN";
+    throw unknown;
   } catch (error) {
-    throw new Error(`Failed to send transaction: ${error.message}`);
+    if (
+      error.code === "TRANSFER_FAILED" ||
+      error.code === "TRANSFER_CONFIRMATION_UNKNOWN"
+    ) {
+      throw error;
+    }
+    try {
+      const [{ value }, blockHeight] = await Promise.all([
+        connection.getSignatureStatuses([signature], {
+          searchTransactionHistory: true,
+        }),
+        connection.getBlockHeight("confirmed"),
+      ]);
+      const status = value?.[0];
+      if (status?.err) {
+        const failed = new Error(
+          `Transfer transaction ${signature} failed: ${JSON.stringify(status.err)}`,
+        );
+        failed.code = "TRANSFER_FAILED";
+        throw failed;
+      }
+      if (
+        status &&
+        (status.confirmationStatus === "confirmed" ||
+          status.confirmationStatus === "finalized" ||
+          status.confirmations === null)
+      ) {
+        return true;
+      }
+      if (blockHeight > lastValidBlockHeight) {
+        const expired = new Error(
+          `Transfer transaction ${signature} expired before landing`,
+        );
+        expired.code = "TRANSFER_FAILED";
+        throw expired;
+      }
+    } catch (statusError) {
+      if (statusError.code === "TRANSFER_FAILED") throw statusError;
+    }
+    const unknown = new Error(
+      `Transfer status is unknown for ${signature}; keep the pending boss and reconcile before retrying`,
+    );
+    unknown.code = "TRANSFER_CONFIRMATION_UNKNOWN";
+    throw unknown;
   }
 }
 

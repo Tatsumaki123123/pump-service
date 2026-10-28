@@ -810,7 +810,7 @@ class PumpAMM extends Service {
             }
 
             let simulationResult = null;
-            if (isDevelopmentEnvironment(ctx)) {
+            if (isDevelopmentEnvironment(ctx) || wallet.isGmgn) {
               simulationResult = await connection.simulateTransaction(tx, {
                 commitment: "confirmed",
               });

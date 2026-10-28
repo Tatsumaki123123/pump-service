@@ -15,6 +15,9 @@ module.exports = (app) => {
       createTime: { type: Date },
       walletsExist: { type: Boolean, default: false },
       line: { type: Number },
+      transferSignature: { type: String },
+      transferBlockhash: { type: String },
+      transferLastValidBlockHeight: { type: Number },
     },
     { toJSON: { getters: true }, toObject: { getters: true } },
   );

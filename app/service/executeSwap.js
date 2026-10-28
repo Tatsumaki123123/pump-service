@@ -311,8 +311,27 @@ class ExecuteSwap extends Service {
       createdExecuteData = await ctx.model.ExecuteData.create(newData);
       if (previousBoss) {
         await assertLock();
-        await transferAllSol(connection, previousBoss, boss.publicKey);
-        transferCompleted = true;
+        transferCompleted = await transferAllSol(
+          connection,
+          previousBoss,
+          boss.publicKey,
+          0,
+          async (transfer) => {
+            const result = await ctx.model.ExecuteData.updateOne(
+              { _id: createdExecuteData._id, active: false },
+              {
+                $set: {
+                  transferSignature: transfer.signature,
+                  transferBlockhash: transfer.blockhash,
+                  transferLastValidBlockHeight: transfer.lastValidBlockHeight,
+                },
+              },
+            );
+            if (result.matchedCount !== 1) {
+              throw new Error("Could not save pending boss transfer signature");
+            }
+          },
+        );
       }
       await assertLock();
       if (previousExecuteData) {
@@ -328,12 +347,31 @@ class ExecuteSwap extends Service {
     } catch (error) {
       if (createdExecuteData && previousExecuteData) {
         try {
-          await assertLock();
-          await ctx.model.ExecuteData.updateOne(
-            { _id: previousExecuteData._id },
-            { $set: { active: true } },
-          );
-          if (!transferCompleted) {
+          if (error.code === "TRANSFER_CONFIRMATION_UNKNOWN") {
+            ctx.logger.error(
+              `Boss transfer status is unknown; retaining pending boss ${createdExecuteData.bossAddress}`,
+              error,
+            );
+          } else if (transferCompleted) {
+            await ctx.model.ExecuteData.updateMany(
+              { active: true, line, _id: previousExecuteData._id },
+              { $set: { active: false } },
+            );
+            const activation = await ctx.model.ExecuteData.updateOne(
+              { _id: createdExecuteData._id, line },
+              { $set: { active: true } },
+            );
+            if (activation.matchedCount !== 1) {
+              throw new Error(
+                `Could not activate new boss ${createdExecuteData.bossAddress} after SOL transfer`,
+              );
+            }
+          } else {
+            await assertLock();
+            await ctx.model.ExecuteData.updateOne(
+              { _id: previousExecuteData._id },
+              { $set: { active: true } },
+            );
             await ctx.model.ExecuteData.deleteOne({
               _id: createdExecuteData._id,
               active: false,
@@ -372,6 +410,7 @@ class ExecuteSwap extends Service {
    * @param {} lastExecuteData
    */
   async generateBoss(lastExecuteData) {
+    const { ctx } = this;
     return this.withBossGenerationLock(
       lastExecuteData.line,
       async (assertLock) => {
@@ -383,6 +422,96 @@ class ExecuteSwap extends Service {
           throw new Error(
             `Active ExecuteData changed for line ${lastExecuteData.line}`,
           );
+        }
+        const pendingExecuteData = await ctx.model.ExecuteData.findOne({
+          line: lastExecuteData.line,
+          active: false,
+          transferSignature: { $exists: true },
+          transferLastValidBlockHeight: { $exists: true },
+          eid: { $gt: currentExecuteData.eid },
+        })
+          .sort({ eid: -1 })
+          .lean();
+        if (pendingExecuteData) {
+          const [{ value }, blockHeight] = await Promise.all([
+            connection.getSignatureStatuses(
+              [pendingExecuteData.transferSignature],
+              { searchTransactionHistory: true },
+            ),
+            connection.getBlockHeight("confirmed"),
+          ]);
+          const transferStatus = value?.[0];
+          const pendingBalance = await connection.getBalance(
+            new PublicKey(pendingExecuteData.bossAddress),
+          );
+          if (transferStatus?.err) {
+            await ctx.model.ExecuteData.deleteOne({
+              _id: pendingExecuteData._id,
+              active: false,
+            });
+          } else if (
+            pendingBalance > 0 ||
+            (transferStatus &&
+              (transferStatus.confirmationStatus === "confirmed" ||
+                transferStatus.confirmationStatus === "finalized" ||
+                transferStatus.confirmations === null))
+          ) {
+            await assertLock();
+            await ctx.model.ExecuteData.updateOne(
+              { _id: currentExecuteData._id, active: true },
+              { $set: { active: false } },
+            );
+            const activation = await ctx.model.ExecuteData.updateOne(
+              { _id: pendingExecuteData._id, active: false },
+              { $set: { active: true } },
+            );
+            if (activation.matchedCount !== 1) {
+              throw new Error(
+                `Could not activate transferred boss ${pendingExecuteData.bossAddress}`,
+              );
+            }
+            return true;
+          } else if (
+            blockHeight <= pendingExecuteData.transferLastValidBlockHeight
+          ) {
+            throw new Error(
+              `Boss transfer ${pendingExecuteData.transferSignature} is still unresolved; retry after its blockhash expires`,
+            );
+          } else {
+            await ctx.model.ExecuteData.deleteOne({
+              _id: pendingExecuteData._id,
+              active: false,
+            });
+          }
+        }
+        const currentBalance = await connection.getBalance(
+          new PublicKey(currentExecuteData.bossAddress),
+        );
+        if (currentBalance <= 5000) {
+          const pendingExecuteData = await ctx.model.ExecuteData.findOne({
+            line: lastExecuteData.line,
+            active: false,
+            eid: { $gt: currentExecuteData.eid },
+          })
+            .sort({ eid: -1 })
+            .lean();
+          if (pendingExecuteData) {
+            const pendingBalance = await connection.getBalance(
+              new PublicKey(pendingExecuteData.bossAddress),
+            );
+            if (pendingBalance > 5000) {
+              await assertLock();
+              await ctx.model.ExecuteData.updateOne(
+                { _id: currentExecuteData._id, active: true },
+                { $set: { active: false } },
+              );
+              await ctx.model.ExecuteData.updateOne(
+                { _id: pendingExecuteData._id, active: false },
+                { $set: { active: true } },
+              );
+              return true;
+            }
+          }
         }
         return this.createBossForLine(
           lastExecuteData.line,
