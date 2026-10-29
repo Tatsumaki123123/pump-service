@@ -10,9 +10,9 @@ const { closeAllTokenAccounts } = require("../utils/solana");
 class ExecuteSwap extends BaseController {
   async start() {
     const { ctx } = this;
-    const { line } = ctx.request.body;
+    const { line, times } = ctx.request.body;
     if (line) {
-      const res = await ctx.service.executeSwap.start(line);
+      const res = await ctx.service.executeSwap.start(line, times);
       this.success(true);
     } else {
       throw new Error("Params error");

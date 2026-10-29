@@ -57,11 +57,15 @@ class ExecuteSwap extends Service {
     super(props);
   }
 
-  async start(line) {
+  async start(line, times = 1) {
+    const count = Number(times);
+    if (!Number.isSafeInteger(count) || count < 1) {
+      throw new Error("times must be a positive integer");
+    }
+
     const lastExecuteData = await this.getExecuteData(line);
     if (!lastExecuteData) {
-      const res = this.generateNewBoss(line);
-      return res;
+      return this.generateNewBoss(line, count);
     }
     const recoveredBoss = await this.generateBoss(lastExecuteData, true);
     if (recoveredBoss) return true;
@@ -82,7 +86,7 @@ class ExecuteSwap extends Service {
       throw new Error("Wallet has balance");
     }
 
-    await this.generateBoss(lastExecuteData);
+    await this.generateNewBoss(line, count);
   }
 
   async end(line, force = false) {
@@ -342,10 +346,15 @@ class ExecuteSwap extends Service {
           { active: true, line },
           { active: false },
         );
-        await ctx.model.ExecuteData.updateOne(
+        const activation = await ctx.model.ExecuteData.updateOne(
           { _id: createdExecuteData._id },
           { $set: { active: true } },
         );
+        if (activation.matchedCount !== 1) {
+          throw new Error(
+            `Could not activate new boss ${createdExecuteData.bossAddress} after SOL transfer`,
+          );
+        }
       }
     } catch (error) {
       if (createdExecuteData && previousExecuteData) {
@@ -401,10 +410,19 @@ class ExecuteSwap extends Service {
     return true;
   }
 
-  async generateNewBoss(line) {
+  async generateNewBoss(line, times = 1) {
+    const count = Number(times);
+    if (!Number.isSafeInteger(count) || count < 1) {
+      throw new Error("times must be a positive integer");
+    }
+
     return this.withBossGenerationLock(line, async (assertLock) => {
-      const previousExecuteData = await this.getExecuteData(line);
-      return this.createBossForLine(line, previousExecuteData, assertLock);
+      for (let index = 0; index < count; index++) {
+        await assertLock();
+        const previousExecuteData = await this.getExecuteData(line);
+        await this.createBossForLine(line, previousExecuteData, assertLock);
+      }
+      return true;
     });
   }
 
