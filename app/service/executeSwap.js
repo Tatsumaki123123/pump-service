@@ -734,7 +734,6 @@ class ExecuteSwap extends Service {
     const { ctx } = this;
     const executeData = await this.getExecuteData(line);
     if (!executeData) throw new Error("execute data not found");
-    if (executeData.walletsExist) throw new Error("wallets already generated");
 
     const walletConfig = await this.getWalletConfig(line);
     if (!Array.isArray(walletConfig) || walletConfig.length === 0) {
@@ -748,6 +747,40 @@ class ExecuteSwap extends Service {
       return amount;
     });
     const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
+    if (executeData.walletsExist) {
+      const walletData = await this.getWallets(line);
+      const wallets = [];
+      const transferAmounts = [];
+      for (let index = 0; index < walletData.length; index++) {
+        const wallet = walletData[index];
+        if (!walletConfig[index]) {
+          throw new Error(`walletConfig missing for wallet index ${index}`);
+        }
+        const balance = await connection.getBalance(wallet.publicKey);
+        if (balance === 0) {
+          wallets.push(wallet.publicKey);
+          transferAmounts.push(amounts[index]);
+        }
+      }
+      if (wallets.length === 0) throw new Error("no wallet to transfer");
+
+      await transferSol(connection, boss, wallets, transferAmounts, {
+        throwOnError: true,
+      });
+      await ctx.model.ExecuteWalletAddress.updateMany(
+        {
+          address: { $in: wallets.map((wallet) => wallet.toBase58()) },
+          useEid: executeData.eid,
+          status: { $in: ["in_use", "ended"] },
+        },
+        {
+          $set: { status: "in_use", useTime: new Date() },
+          $unset: { endTime: 1 },
+        },
+      );
+      return true;
+    }
+
     const existingWalletCount = await ctx.model.ExecuteWallet.countDocuments({
       eid: executeData.eid,
     });
