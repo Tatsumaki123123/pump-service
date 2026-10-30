@@ -6,7 +6,7 @@ const {
 
 const AVE_API_URL = "https://api.gejbckf.com/";
 const AVE_TOKEN_INFO_API_URL =
-  process.env.AVE_TOKEN_INFO_BASE_URL || "https://yiyulu.com/";
+  process.env.AVE_TOKEN_INFO_BASE_URL || "https://ccwlsc.com/";
 const AVE_TOKEN_DETAIL_API_URL = "https://primpom.com/";
 const AVE_AUTH_BASE_URL =
   process.env.AVE_AUTH_BASE_URL ||
@@ -151,6 +151,8 @@ class Ave extends Service {
     try {
       response = await ctx.curl(uri, {
         dataType: "json",
+        // Bound AVE calls instead of inheriting the global ten-minute timeout.
+        timeout: [5000, 15000],
         ...options,
       });
     } catch (error) {
@@ -346,7 +348,18 @@ class Ave extends Service {
       `/v1api/v2/tokens/${encodeURIComponent(tokenId)}/extraDetail`,
     );
 
-    const res = await this.requestAve(uri);
+    let res;
+    try {
+      res = await this.requestAve(uri);
+    } catch (error) {
+      if (isAuthExpiredError(error)) throw error;
+      const requestError = new Error(
+        `AVE buy-tax check failed (${error.code || error.name || "request error"}) at ${new URL(uri).origin}; check server connectivity and AVE_TOKEN_INFO_BASE_URL. Buy-tax validation was not completed.`,
+        { cause: error },
+      );
+      requestError.code = error.code || "AVE_EXTRA_DETAIL_REQUEST_FAILED";
+      throw requestError;
+    }
     const data = res.data?.data;
     if (String(res.data?.status) === "1" && data) {
       return data;
