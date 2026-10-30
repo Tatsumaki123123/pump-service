@@ -19,6 +19,7 @@ module.exports = (app) => {
         type: String,
         enum: ["awaiting_funds", "pending", "active", "retired", "failed"],
       },
+      bossPending: { type: Boolean },
       previousExecuteDataId: { type: Schema.Types.ObjectId },
       activatedAt: { type: Date },
       activationBalanceLamports: { type: Number },
@@ -35,6 +36,10 @@ module.exports = (app) => {
   ExecuteDataSchema.index(
     { line: 1 },
     { name: "one_active_boss_per_line", unique: true, partialFilterExpression: { active: true } },
+  );
+  ExecuteDataSchema.index(
+    { line: 1, bossPending: 1 },
+    { name: "one_pending_boss_per_line", unique: true, partialFilterExpression: { bossPending: true } },
   );
 
   return mongoose.model("ExecuteData", ExecuteDataSchema);

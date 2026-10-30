@@ -83,7 +83,7 @@ controller.executeSwap.start
 
 `generateNewBoss(line)`：
 
-1. 检查 MongoDB 支持 replica set/mongos，并确保每条线路最多一个活动 boss 的唯一索引可建立。
+1. 检查活动和待切换记录的唯一索引。支持 MongoDB 4.4 standalone，不需要副本集或多文档事务。
 2. 创建一个待充值的 Solana boss 和 `ExecuteData`：
    - `eid` 从 MongoDB `ExecuteSequence` 全局原子序列分配；
    - 保存 boss 公钥和 Base58 私钥；
@@ -103,20 +103,20 @@ controller.executeSwap.start
 
 `start`、`generateBoss`、`generateNewBoss` 共用的处理顺序：
 
-1. 获取线路资金锁，检查数据库事务支持和活动记录唯一索引。
+1. 获取线路资金锁，检查活动记录和待切换记录的唯一索引。
 2. 若存在 pending/awaiting_funds boss，先恢复它；未确认时不新建目标地址，不重复签署另一笔转账。
 3. 旧 boss 余额必须足够支付转账手续费，并使目标余额达到激活门槛；否则报错，不激活空钱包。
 4. 保存新 boss：新 `eid`、`active=false`、`bossStatus=pending`。广播前持久化已签名交易、signature、blockhash、有效高度，进程中断后仍能重播同一笔交易。
 5. 转账等待 finalized，单次等待 20 秒。超时保留 pending，下一次请求继续查询/重播同一交易。
 6. 交易 finalized 后，从不早于交易 slot 的 finalized 状态读取目标余额；低于门槛不激活。
-7. 使用带锁校验的 MongoDB 事务先提交旧 boss 退役，再提交新 boss 激活；采用两次提交以释放活动线路唯一索引键。两次提交之间允许暂时无活动记录，宕机后从 pending 恢复，绝不靠激活空地址补位。
+7. 使用单文档条件更新先退役旧 boss，再激活已到账的新 boss。新目标保留 `bossPending=true` 直到激活，唯一索引防止创建第二个待切换目标。每步检查资金锁；中间宕机允许暂时无活动记录，重试从 pending 恢复。
 8. 返回成功前，再确认活动记录是目标 boss，且 finalized 余额仍达到门槛。保存激活余额、slot 和时间供排查。
 
-同一线路的 boss 切换、钱包充值、回收、提现和换钱包共用 MongoDB 资金锁，锁会定期续期，进程异常退出后过期释放。存在 pending 时资金操作被拒绝，需先调用 `start` 对账。数据库用 partial unique index 限制每条线路最多一条 `active=true`。部署必须支持 MongoDB 事务；若存量数据同一线路有多条活动记录，应先人工核对处理，唯一索引无法建立时会在转账前失败。
+同一线路的 boss 切换、钱包充值、回收、提现和换钱包共用 MongoDB 资金锁，锁会续期。存在 pending 时需先调用 `start` 对账。数据库分别限制每条线路最多一条 `active=true` 和一条 `bossPending=true`。关键记录使用 `w:1, j:true`，日志持久化后才继续。支持 MongoDB 4.4 standalone；存量重复活动记录或待切换标记会导致索引失败，应先人工核对处理。
 
 已 finalized 的失败交易或确认过期且目标 finalized 余额为 0 的交易可标为 `failed`，保留密钥和签名后重新尝试。交易历史不可用但目标已有余额时保持 pending，提示人工对账，不丢弃地址。`getBoss` 响应增加 `active`、`bossStatus`、`ready`、`minimumBalanceLamports` 和 `pending`（地址、eid、状态、签名），可观察当前活动记录和待恢复目标。
 
-部署期间先停止旧版本的 boss/充值/提现任务，再切换所有实例；旧版本使用不同锁名，不能和新版本同时操作同一线路资金。上线前需在 MongoDB 副本集和测试链环境验证：余额不足、首次充值、转账成功但激活前宕机、退役后宕机、RPC 超时与历史缺失、并发切换，以及同一签名重复广播。本次代码改动不执行数据库迁移或真实转账。
+部署期间先停止旧版本的资金任务再更新所有实例。上线前需在 MongoDB 4.4 standalone 和测试链环境验证：余额不足、首次充值、转账后和退役后宕机、RPC 超时、历史缺失、并发切换及同一签名重播。本次改动不执行真实转账或数据库迁移。
 
 这个流程保证成功响应前完成资金和活动记录检查；后续业务充值/提现或外部持钥人的操作仍可能消耗余额。已确认链上转账与 MongoDB 不能组成分布式原子事务，中间故障通过保存的状态恢复。
 

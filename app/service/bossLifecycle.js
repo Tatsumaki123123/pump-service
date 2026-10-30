@@ -8,6 +8,8 @@ const { connection } = require("../constants");
 const { transferAllSol } = require("../utils/solana");
 
 const ACTIVE_BOSS_INDEX = "one_active_boss_per_line";
+const PENDING_BOSS_INDEX = "one_pending_boss_per_line";
+const DURABLE_WRITE = { writeConcern: { w: 1, j: true } };
 
 class BossLifecycle extends Service {
   writeKeypair(candidate) {
@@ -32,10 +34,6 @@ class BossLifecycle extends Service {
 
   async prepareStorage() {
     const model = this.ctx.model.ExecuteData;
-    const hello = await model.db.db.admin().command({ hello: 1 });
-    if (!hello.setName && hello.msg !== "isdbgrid") {
-      throw new Error("Boss activation requires a MongoDB replica set or mongos; no SOL was transferred");
-    }
     // Fail before sending funds if existing duplicate active records prevent the index.
     await model.collection.createIndex(
       { line: 1 },
@@ -43,6 +41,14 @@ class BossLifecycle extends Service {
         name: ACTIVE_BOSS_INDEX,
         unique: true,
         partialFilterExpression: { active: true },
+      },
+    );
+    await model.collection.createIndex(
+      { line: 1, bossPending: 1 },
+      {
+        name: PENDING_BOSS_INDEX,
+        unique: true,
+        partialFilterExpression: { bossPending: true },
       },
     );
   }
@@ -61,7 +67,11 @@ class BossLifecycle extends Service {
     return this.ctx.model.ExecuteData.findOne({
       line,
       active: false,
-      $or: [{ bossStatus: { $in: ["pending", "awaiting_funds"] } }, legacy],
+      $or: [
+        { bossPending: true },
+        { bossStatus: { $in: ["pending", "awaiting_funds"] } },
+        legacy,
+      ],
     }).select("+transferTransaction").read("primary").sort({ eid: -1 }).lean();
   }
 
@@ -88,54 +98,46 @@ class BossLifecycle extends Service {
       throw new Error(`Boss ${candidate.bossAddress} is awaiting funds: needs at least ${this.minimumBalance()} lamports, found ${balance.value}; active was not changed`);
     }
 
-    const session = await ctx.model.ExecuteData.db.startSession();
-    try {
-      // Commit retirement first: the unique active-line key must be released
-      // before assigning it to another document. A crash leaves a recoverable
-      // pending destination, never two active bosses or a newly active empty one.
-      await session.withTransaction(async () => {
-        // A write to the lease fences concurrent database activation after lease loss.
-        await assertLock(session);
-        const active = await ctx.model.ExecuteData.findOne({ line: candidate.line, active: true })
-          .session(session).lean();
-        if (active && String(active._id) !== String(previous?._id)) {
-          throw new Error("Active boss changed before activation; reconcile before retrying");
-        }
-        if (active) {
-          await ctx.model.ExecuteData.updateOne(
-            { _id: active._id, active: true },
-            { $set: { active: false, bossStatus: "retired" } },
-            { session },
-          );
-        }
-        const pending = await ctx.model.ExecuteData.exists({ _id: candidate._id, active: false })
-          .session(session);
-        if (!pending) throw new Error("Pending boss no longer exists");
-      }, { readConcern: { level: "snapshot" }, writeConcern: { w: "majority" } });
-
-      await session.withTransaction(async () => {
-        await assertLock(session);
-        const active = await ctx.model.ExecuteData.exists({ line: candidate.line, active: true })
-          .session(session);
-        if (active) throw new Error("An active boss already exists; reconcile before retrying");
-        const result = await ctx.model.ExecuteData.updateOne(
-          { _id: candidate._id, active: false },
-          {
-            $set: {
-              active: true,
-              bossStatus: "active",
-              activatedAt: new Date(),
-              activationBalanceLamports: balance.value,
-              activationSlot: balance.context.slot,
-            },
-          },
-          { session },
-        );
-        if (result.matchedCount !== 1) throw new Error("Pending boss could not be activated");
-      }, { readConcern: { level: "snapshot" }, writeConcern: { w: "majority" } });
-    } finally {
-      await session.endSession();
+    // Single-document conditional writes also work on MongoDB standalone.
+    // The pending marker remains until activation, so a crash between writes
+    // leaves a saved destination for the next request to recover.
+    await assertLock();
+    const pending = await ctx.model.ExecuteData.exists({
+      _id: candidate._id, active: false, bossPending: true,
+    });
+    if (!pending) throw new Error("Pending boss no longer exists");
+    const active = await ctx.service.executeSwap.getExecuteData(candidate.line);
+    if (active && String(active._id) !== String(previous?._id)) {
+      throw new Error("Active boss changed before activation; reconcile before retrying");
     }
+    if (active) {
+      await assertLock();
+      const retired = await ctx.model.ExecuteData.updateOne(
+        { _id: active._id, active: true },
+        { $set: { active: false, bossStatus: "retired" } },
+        DURABLE_WRITE,
+      );
+      if (retired.matchedCount !== 1) throw new Error("Source boss changed before retirement");
+    }
+    await assertLock();
+    if (await ctx.model.ExecuteData.exists({ line: candidate.line, active: true })) {
+      throw new Error("An active boss already exists; reconcile before retrying");
+    }
+    const result = await ctx.model.ExecuteData.updateOne(
+      { _id: candidate._id, active: false, bossPending: true },
+      {
+        $set: {
+          active: true,
+          bossStatus: "active",
+          bossPending: false,
+          activatedAt: new Date(),
+          activationBalanceLamports: balance.value,
+          activationSlot: balance.context.slot,
+        },
+      },
+      DURABLE_WRITE,
+    );
+    if (result.matchedCount !== 1) throw new Error("Pending boss could not be activated");
 
     await this.verifyActive(candidate, assertLock, balance.context.slot);
     this.writeKeypair(candidate);
@@ -161,6 +163,13 @@ class BossLifecycle extends Service {
     const pending = await this.findPending(line, current);
     if (!pending) return false;
     await assertLock();
+    // Adopt records created before the pending-line uniqueness guard existed.
+    const adopted = await this.ctx.model.ExecuteData.updateOne(
+      { _id: pending._id, active: false, bossStatus: { $nin: ["failed", "retired", "active"] } },
+      { $set: { bossPending: true } },
+      DURABLE_WRITE,
+    );
+    if (adopted.matchedCount !== 1) throw new Error("Pending boss changed; reconcile before retrying");
     if (!pending.transferSignature) {
       // A crash before preparing a transfer must reuse the saved keypair.
       if (pending.bossStatus === "pending") {
@@ -212,9 +221,9 @@ class BossLifecycle extends Service {
   async markFailed(candidate, assertLock) {
     await assertLock();
     await this.ctx.model.ExecuteData.updateOne(
-      { _id: candidate._id, active: false },
-      { $set: { bossStatus: "failed" } },
-      { writeConcern: { w: "majority" } },
+      { _id: candidate._id, active: false, bossPending: true },
+      { $set: { bossStatus: "failed", bossPending: false } },
+      DURABLE_WRITE,
     );
     // Keep the address/key/signature for reconciliation; never delete a funded keypair.
   }
@@ -232,7 +241,7 @@ class BossLifecycle extends Service {
       async (transfer) => {
         await assertLock();
         const saved = await this.ctx.model.ExecuteData.updateOne(
-          { _id: candidate._id, active: false, transferSignature: { $exists: false } },
+          { _id: candidate._id, active: false, bossPending: true, transferSignature: { $exists: false } },
           {
             $set: {
               transferSignature: transfer.signature,
@@ -241,7 +250,7 @@ class BossLifecycle extends Service {
               transferTransaction: transfer.transaction,
             },
           },
-          { writeConcern: { w: "majority" } },
+          DURABLE_WRITE,
         );
         if (saved.matchedCount !== 1) throw new Error("Could not persist boss transfer before broadcast");
         await assertLock();
@@ -272,20 +281,13 @@ class BossLifecycle extends Service {
       privateKey: bs58.encode(boss.secretKey),
       line,
       active: false,
+      bossPending: true,
       bossStatus: previous ? "pending" : "awaiting_funds",
       previousExecuteDataId: previous?._id,
       createTime: new Date(),
     };
-    let candidate;
-    const session = await this.ctx.model.ExecuteData.db.startSession();
-    try {
-      await session.withTransaction(async () => {
-        await assertLock(session);
-        [candidate] = await this.ctx.model.ExecuteData.create([payload], { session });
-      }, { readConcern: { level: "snapshot" }, writeConcern: { w: "majority" } });
-    } finally {
-      await session.endSession();
-    }
+    await assertLock();
+    const [candidate] = await this.ctx.model.ExecuteData.create([payload], DURABLE_WRITE);
     this.writeKeypair(candidate);
     if (!previous) {
       throw new Error(`Boss ${candidate.bossAddress} created awaiting funds; deposit at least ${this.minimumBalance()} lamports then call start again`);

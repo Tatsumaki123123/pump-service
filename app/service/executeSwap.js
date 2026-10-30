@@ -101,6 +101,7 @@ class ExecuteSwap extends Service {
       privateKey: bs58.encode(boss.secretKey),
       active: false,
       bossStatus: "awaiting_funds",
+      bossPending: true,
       createTime: new Date(),
       walletsExist: false,
       line: lineId,
@@ -113,7 +114,7 @@ class ExecuteSwap extends Service {
         createdLine = await ctx.model.ExecuteLine.create(linePayload);
         await assertLock();
         const [createdData] = await ctx.model.ExecuteData.create(
-          [dataPayload], { writeConcern: { w: "majority" } },
+          [dataPayload], { writeConcern: { w: 1, j: true } },
         );
         return {
           executeLine: createdLine,
@@ -255,18 +256,9 @@ class ExecuteSwap extends Service {
     renewTimer.unref?.();
 
     try {
-      const assertLock = async (session) => {
+      const assertLock = async () => {
         if (lockLost) {
           throw new Error(`${operation} lock was lost for line ${line}`);
-        }
-        if (session) {
-          const result = await ctx.model.ExecuteLineLock.updateOne(
-            { _id: lockId, token, expiresAt: { $gt: new Date() } },
-            { $set: { expiresAt: new Date(Date.now() + BOSS_LOCK_TTL_MS) } },
-            { session },
-          );
-          if (result.matchedCount !== 1) throw new Error(`${operation} lock was lost for line ${line}`);
-          return;
         }
         const currentLock = await ctx.model.ExecuteLineLock.exists({
           _id: lockId,
