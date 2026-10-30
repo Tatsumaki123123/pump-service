@@ -39,10 +39,11 @@ class ExecuteSwap extends BaseController {
   }
 
   async getWalletAddresses() {
-    const { status, page, pageSize, sortOrder } = this.ctx.request.body;
+    const { status, lineId, page, pageSize, sortOrder } = this.ctx.request.body;
     this.success(
       await this.ctx.service.executeSwap.getWalletAddresses({
         status,
+        lineId,
         page,
         pageSize,
         sortOrder,
@@ -53,6 +54,11 @@ class ExecuteSwap extends BaseController {
   async deleteWalletAddresses() {
     const { ids } = this.ctx.request.body;
     this.success(await this.ctx.service.executeSwap.deleteWalletAddresses(ids));
+  }
+
+  async getWalletAddressBalances() {
+    const { addresses } = this.ctx.request.body;
+    this.success(await this.ctx.service.walletAdmin.getWalletBalances(addresses));
   }
 
   async end() {

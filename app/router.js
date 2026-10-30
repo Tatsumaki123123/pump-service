@@ -26,6 +26,10 @@ module.exports = (app) => {
     "/v1/execute/walletAddress/delete",
     controller.executeSwap.deleteWalletAddresses,
   );
+  router.post(
+    "/v1/execute/walletAddress/balances",
+    controller.executeSwap.getWalletAddressBalances,
+  );
 
   router.post(
     "/v1/execute/generateWallets",

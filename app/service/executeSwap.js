@@ -637,7 +637,13 @@ class ExecuteSwap extends Service {
     return { count, addresses: records.map(({ address }) => address) };
   }
 
-  async getWalletAddresses({ status, page = 1, pageSize = 50, sortOrder = "desc" } = {}) {
+  async getWalletAddresses({
+    status,
+    lineId,
+    page = 1,
+    pageSize = 50,
+    sortOrder = "desc",
+  } = {}) {
     const { ctx } = this;
     const currentPage = Number(page);
     const limit = Number(pageSize);
@@ -668,6 +674,16 @@ class ExecuteSwap extends Service {
     }
 
     const filter = { status: { $in: [...new Set(statuses)] } };
+    if (lineId !== undefined && lineId !== null && lineId !== "") {
+      const parsedLineId = Number(lineId);
+      if (
+        !["string", "number"].includes(typeof lineId) ||
+        !Number.isSafeInteger(parsedLineId)
+      ) {
+        throw new Error("lineId must be an integer");
+      }
+      filter.useLine = parsedLineId;
+    }
     const [list, total] = await Promise.all([
       ctx.model.ExecuteWalletAddress.find(filter)
         .select("address status createTime useEid useLine useTime endTime")

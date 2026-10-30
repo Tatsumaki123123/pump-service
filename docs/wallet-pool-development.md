@@ -63,6 +63,7 @@
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `status` | String | `unused,in_use` | 可传单个或多个状态；允许显式查询 `ended` |
+| `lineId` | Number | 无 | 按 `useLine` 关联线路筛选；尚未分配到线路的未使用地址不会匹配 |
 | `sortBy` | String | `createTime` | 第一阶段只开放创建时间排序 |
 | `sortOrder` | String | `desc` | `desc` 或 `asc` |
 | `page` | Number | `1` | 页码 |
@@ -70,7 +71,25 @@
 
 默认按创建时间倒序，默认不返回 `ended` 地址。传 `status=ended` 时可以查看已结束地址；支持 `unused`、`in_use` 和 `ended` 状态筛选。列表仅返回地址、状态、批次/线路关联和时间，不返回私钥。
 
-### 4.3 批量删除地址
+按线路查询示例：
+
+```json
+{ "lineId": 1, "status": ["in_use", "ended"] }
+```
+
+### 4.3 查询地址 SOL 余额
+
+`POST /v1/execute/walletAddress/balances`
+
+```json
+{ "addresses": ["地址1", "地址2"] }
+```
+
+`addresses` 必须为非空数组，地址必须是合法 Solana 公钥。复用现有批量余额服务，地址去重后每 100 个一批查询。不要求地址在维护表中存在。
+
+响应沿用 `{ code: 0, data: { total, totalBalanceLamports, totalBalance, totalSol, list } }`。每项包含 `address`、`exists`、`balanceLamports`、`balance` 和 `sol`，其中 `balance` 和 `sol` 单位为 SOL。未创建的链上账户返回 `exists=false` 和余额 0；RPC 失败会报错。
+
+### 4.4 批量删除地址
 
 `POST /v1/execute/walletAddress/delete`
 
@@ -82,7 +101,7 @@
 
 只允许删除 `unused` 地址。`in_use` 和 `ended` 记录拒绝删除，以保留批次关联及历史可追溯性。响应提供删除数量和未删除 ID/原因。请求需限制最大批量数；重复 ID 按一个处理。
 
-### 4.4 选择旧地址生成执行钱包
+### 4.5 选择旧地址生成执行钱包
 
 扩展 `POST /v1/execute/generateWallets`：
 
