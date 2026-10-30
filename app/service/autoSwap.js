@@ -34,6 +34,17 @@ class AutoSwap extends Service {
       return;
     }
 
+    this.executeData = await ctx.service.executeSwap.getExecuteData(line);
+    const pendingBoss = await ctx.service.bossLifecycle.findPending(line, this.executeData);
+    if (pendingBoss || !this.executeData) {
+      await ctx.service.executeSwap.generateNewBoss(line);
+      this.executeData = await ctx.service.executeSwap.getExecuteData(line);
+    }
+    if (!this.executeData.walletsExist) {
+      await ctx.service.executeSwap.generateWallets(line);
+      this.executeData = await ctx.service.executeSwap.getExecuteData(line);
+    }
+
     const isEnough = await this.checkWalletBalance();
     console.log(chalk.green("Wallet balance is Enough: ", isEnough));
     if (isEnough) {

@@ -15,14 +15,27 @@ module.exports = (app) => {
       createTime: { type: Date },
       walletsExist: { type: Boolean, default: false },
       line: { type: Number },
+      bossStatus: {
+        type: String,
+        enum: ["awaiting_funds", "pending", "active", "retired", "failed"],
+      },
+      previousExecuteDataId: { type: Schema.Types.ObjectId },
+      activatedAt: { type: Date },
+      activationBalanceLamports: { type: Number },
+      activationSlot: { type: Number },
       transferSignature: { type: String },
       transferBlockhash: { type: String },
       transferLastValidBlockHeight: { type: Number },
+      transferTransaction: { type: String, select: false },
     },
     { toJSON: { getters: true }, toObject: { getters: true } },
   );
 
   ExecuteDataSchema.index({ createTime: 1, eid: 1 });
+  ExecuteDataSchema.index(
+    { line: 1 },
+    { name: "one_active_boss_per_line", unique: true, partialFilterExpression: { active: true } },
+  );
 
   return mongoose.model("ExecuteData", ExecuteDataSchema);
 };

@@ -83,32 +83,42 @@ controller.executeSwap.start
 
 `generateNewBoss(line)`：
 
-1. 生成一个 Solana `Keypair`。
-2. 创建 `ExecuteData`：
+1. 检查 MongoDB 支持 replica set/mongos，并确保每条线路最多一个活动 boss 的唯一索引可建立。
+2. 创建一个待充值的 Solana boss 和 `ExecuteData`：
    - `eid` 从 MongoDB `ExecuteSequence` 全局原子序列分配；
    - 保存 boss 公钥和 Base58 私钥；
-   - `active=true`、`createTime=当前时间`、`line=line`；
+   - `active=false`、`bossStatus=awaiting_funds`、`createTime=当前时间`、`line=line`；
    - `walletsExist` 使用模型默认值 `false`。
-3. 同时把 boss 密钥写入项目根目录 `keypair.json`。
+3. 密钥存入 MongoDB 并继续写出 `keypair.json`。接口返回待充值错误，包含新地址；可通过 `/v1/execute/getBoss` 查询 `active=false` 的待充值记录，响应不包含私钥。
+4. 向该地址充值后再次调用 `start`，确认 finalized 余额达到门槛后才激活。默认激活门槛为 10000 lamports（0.00001 SOL），可用 `BOSS_ACTIVATION_MIN_LAMPORTS` 配置为正整数；实际首次充值还须满足链上账户租金等要求。
 
 `eid` 是跨线路唯一的批次编号，不再由 `line` 计算。MongoDB 中以 BSON Int64（Extended JSON 显示为 `$numberLong`）保存，分配前会用现有最大 `eid` 对齐序列，之后通过 MongoDB 原子 `$inc` 递增，因此首次部署不需要手工回填序列值。Mongoose getter 保持业务对象和 JSON 接口中的 `eid` 为安全范围内的数字。
 
 #### 后续启动：已有当前批次
 
-`start(line)` 会先读取当前批次的当前 `ExecuteWallet`，检查这些钱包的链上 SOL 余额：
+`start(line)` 首先恢复待确认 boss；没有待确认记录时读取当前批次活动 `ExecuteWallet`，检查这些钱包的 finalized SOL 余额：
 
 - 只要有一个钱包余额大于 0，直接抛出 `Wallet has balance`，防止未回收资金时换批次。
-- 所有钱包余额为 0 时调用 `generateBoss(lastExecuteData)`。
+- 所有钱包余额为 0 时进入统一的 `bossLifecycle` 创建流程。
 
-`generateBoss` 的处理顺序：
+`start`、`generateBoss`、`generateNewBoss` 共用的处理顺序：
 
-1. 解码旧 boss 私钥并检查余额（当前 `BOSS_MIN_AMOUNT=0`，实际上只要求查询成功）。
-2. 生成新 boss，从同一个全局原子序列分配新 `eid`。
-3. 将该线路已有的 `active=true` 批次改为 `active=false`。
-4. 创建新的活动 `ExecuteData`。
-5. 将旧 boss 的 SOL 全额转给新 boss。
+1. 获取线路资金锁，检查数据库事务支持和活动记录唯一索引。
+2. 若存在 pending/awaiting_funds boss，先恢复它；未确认时不新建目标地址，不重复签署另一笔转账。
+3. 旧 boss 余额必须足够支付转账手续费，并使目标余额达到激活门槛；否则报错，不激活空钱包。
+4. 保存新 boss：新 `eid`、`active=false`、`bossStatus=pending`。广播前持久化已签名交易、signature、blockhash、有效高度，进程中断后仍能重播同一笔交易。
+5. 转账等待 finalized，单次等待 20 秒。超时保留 pending，下一次请求继续查询/重播同一交易。
+6. 交易 finalized 后，从不早于交易 slot 的 finalized 状态读取目标余额；低于门槛不激活。
+7. 使用带锁校验的 MongoDB 事务先提交旧 boss 退役，再提交新 boss 激活；采用两次提交以释放活动线路唯一索引键。两次提交之间允许暂时无活动记录，宕机后从 pending 恢复，绝不靠激活空地址补位。
+8. 返回成功前，再确认活动记录是目标 boss，且 finalized 余额仍达到门槛。保存激活余额、slot 和时间供排查。
 
-同一线路的 boss 生成由 MongoDB 线路锁串行化，锁会定期续期，进程异常退出后也会在过期后自动释放。`generateNewBoss` 若发现该线路已有活动批次，也会先停用旧批次并把旧 boss 余额转入新 boss，避免保留多个活动批次。
+同一线路的 boss 切换、钱包充值、回收、提现和换钱包共用 MongoDB 资金锁，锁会定期续期，进程异常退出后过期释放。存在 pending 时资金操作被拒绝，需先调用 `start` 对账。数据库用 partial unique index 限制每条线路最多一条 `active=true`。部署必须支持 MongoDB 事务；若存量数据同一线路有多条活动记录，应先人工核对处理，唯一索引无法建立时会在转账前失败。
+
+已 finalized 的失败交易或确认过期且目标 finalized 余额为 0 的交易可标为 `failed`，保留密钥和签名后重新尝试。交易历史不可用但目标已有余额时保持 pending，提示人工对账，不丢弃地址。`getBoss` 响应增加 `active`、`bossStatus`、`ready`、`minimumBalanceLamports` 和 `pending`（地址、eid、状态、签名），可观察当前活动记录和待恢复目标。
+
+部署期间先停止旧版本的 boss/充值/提现任务，再切换所有实例；旧版本使用不同锁名，不能和新版本同时操作同一线路资金。上线前需在 MongoDB 副本集和测试链环境验证：余额不足、首次充值、转账成功但激活前宕机、退役后宕机、RPC 超时与历史缺失、并发切换，以及同一签名重复广播。本次代码改动不执行数据库迁移或真实转账。
+
+这个流程保证成功响应前完成资金和活动记录检查；后续业务充值/提现或外部持钥人的操作仍可能消耗余额。已确认链上转账与 MongoDB 不能组成分布式原子事务，中间故障通过保存的状态恢复。
 
 因此，`line` 表示批次归属线路，`eid` 表示全局唯一批次；线路切批次后，后续钱包和代币应绑定新 `eid`。
 
@@ -318,7 +328,7 @@ pending --买入成功--> buy --全部卖出--> sell
 以下是阅读当前实现时需要特别注意的地方：
 
 1. **自动交易开关不会真正启动服务。** `POST /v1/execute/autoSwap` 只更新 `ExecuteLine.autoSwap`；启用分支中的 `ctx.service.autoSwap.start(line)` 当前被注释掉了。
-2. **`autoSwap.start` 存在初始化顺序风险。** `checkWalletBalance()` 使用 `this.executeData.eid`，但 `this.executeData` 是在余额检查通过后才赋值的。按当前构造流程，首次进入可能出现空对象访问，需要先获取当前 `ExecuteData` 或调整检查逻辑。
+2. **`autoSwap.start` 先初始化批次。** 启动时先获取当前 `ExecuteData`，恢复 pending boss，并在新活动批次尚无钱包时生成钱包，然后执行余额检查。首次 boss 未充值时会返回待充值提示。
 3. **钱包和配置依赖数组下标匹配。** `walletConfig[index]` 与数据库查询结果的 `ExecuteWallet[index]` 被直接配对，但查询没有显式排序。钱包数量变化或替换后，建议增加稳定排序/序号字段，否则可能把错误的交易配置配给钱包。
 4. **`nextWallet` 创建时使用了 `active:false`，模型字段实际叫 `isActive`。** 后续代码会再把新地址更新成 `isActive=true`，但字段命名不一致，且新记录没有补充 `createTime` 等批次元数据。
 5. **私钥以明文 Base58 保存。** `ExecuteData`、`ExecuteWallet`、根目录 `keypair.json` 都直接保存私钥；生产环境至少应限制数据库和文件权限，并考虑加密存储和密钥轮换。

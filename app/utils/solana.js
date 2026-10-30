@@ -242,11 +242,14 @@ async function closeAllTokenAccounts(connection, keypair, force = false) {
     throw new Error(error);
   }
 }
-async function transferAllSol(connection, from, to, remain = 0, onPrepared) {
+async function transferAllSol(
+  connection, from, to, remain = 0, onPrepared,
+  { commitment = "confirmed", minimumTransferLamports = 1, confirmationTimeoutMs = TRANSFER_CONFIRM_TIMEOUT_MS } = {},
+) {
   const { blockhash, lastValidBlockHeight } =
-    await connection.getLatestBlockhash("confirmed");
+    await connection.getLatestBlockhash(commitment);
   const TRANSACTION_FEE = 5000;
-  const balance = await connection.getBalance(from.publicKey);
+  const balance = await connection.getBalance(from.publicKey, commitment);
   // const ataRent = await connection.getMinimumBalanceForRentExemption(165); // ATA 大小约为 165 字节
   // const minRent = await connection.getMinimumBalanceForRentExemption(0);
   const minRent = 0;
@@ -255,7 +258,7 @@ async function transferAllSol(connection, from, to, remain = 0, onPrepared) {
 
   const minAmount = minRent + TRANSACTION_FEE + remainAmount;
 
-  if (balance <= minAmount) {
+  if (balance - minAmount < minimumTransferLamports) {
     console.log(
       chalk.yellow(
         `Insufficient balance for ${from.publicKey.toBase58()}, skipping.`,
@@ -282,7 +285,10 @@ async function transferAllSol(connection, from, to, remain = 0, onPrepared) {
   tx.sign([from]);
 
   const signature = bs58.encode(Buffer.from(tx.signatures[0]));
-  await onPrepared?.({ signature, blockhash, lastValidBlockHeight });
+  await onPrepared?.({
+    signature, blockhash, lastValidBlockHeight,
+    transaction: Buffer.from(tx.serialize()).toString("base64"),
+  });
   try {
     const sentSignature = await connection.sendTransaction(tx, {
       skipPreflight: false,
@@ -290,7 +296,7 @@ async function transferAllSol(connection, from, to, remain = 0, onPrepared) {
     if (sentSignature !== signature) {
       throw new Error(`Unexpected transfer signature: ${sentSignature}`);
     }
-    const deadline = Date.now() + TRANSFER_CONFIRM_TIMEOUT_MS;
+    const deadline = Date.now() + confirmationTimeoutMs;
     while (Date.now() < deadline) {
       const remainingMs = deadline - Date.now();
       let timeoutId;
@@ -321,7 +327,7 @@ async function transferAllSol(connection, from, to, remain = 0, onPrepared) {
       }
       if (
         status &&
-        (status.confirmationStatus === "confirmed" ||
+        ((commitment !== "finalized" && status.confirmationStatus === "confirmed") ||
           status.confirmationStatus === "finalized" ||
           status.confirmations === null)
       ) {
@@ -336,7 +342,7 @@ async function transferAllSol(connection, from, to, remain = 0, onPrepared) {
       );
     }
     const unknown = new Error(
-      `Transfer confirmation timed out after ${TRANSFER_CONFIRM_TIMEOUT_MS}ms: ${signature}`,
+      `Transfer confirmation timed out after ${confirmationTimeoutMs}ms: ${signature}`,
     );
     unknown.code = "TRANSFER_CONFIRMATION_UNKNOWN";
     throw unknown;
@@ -352,7 +358,7 @@ async function transferAllSol(connection, from, to, remain = 0, onPrepared) {
         connection.getSignatureStatuses([signature], {
           searchTransactionHistory: true,
         }),
-        connection.getBlockHeight("confirmed"),
+        connection.getBlockHeight(commitment),
       ]);
       const status = value?.[0];
       if (status?.err) {
@@ -364,11 +370,18 @@ async function transferAllSol(connection, from, to, remain = 0, onPrepared) {
       }
       if (
         status &&
-        (status.confirmationStatus === "confirmed" ||
+        ((commitment !== "finalized" && status.confirmationStatus === "confirmed") ||
           status.confirmationStatus === "finalized" ||
           status.confirmations === null)
       ) {
         return true;
+      }
+      if (status) {
+        const unknown = new Error(
+          `Transfer ${signature} landed but has not reached ${commitment} commitment`,
+        );
+        unknown.code = "TRANSFER_CONFIRMATION_UNKNOWN";
+        throw unknown;
       }
       if (blockHeight > lastValidBlockHeight) {
         const expired = new Error(

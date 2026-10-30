@@ -58,35 +58,7 @@ class ExecuteSwap extends Service {
   }
 
   async start(line, times = 1) {
-    const count = Number(times);
-    if (!Number.isSafeInteger(count) || count < 1) {
-      throw new Error("times must be a positive integer");
-    }
-
-    const lastExecuteData = await this.getExecuteData(line);
-    if (!lastExecuteData) {
-      return this.generateNewBoss(line, count);
-    }
-    const recoveredBoss = await this.generateBoss(lastExecuteData, true);
-    if (recoveredBoss) return true;
-
-    const wallets = await this.getWallets(line);
-    let canStart = true;
-    if (wallets && wallets.length > 0) {
-      for (let index = 0; index < wallets.length; index++) {
-        const keypair = wallets[index].keypair;
-        const balance = await connection.getBalance(keypair.publicKey);
-        if (balance > 0) {
-          canStart = false;
-          break;
-        }
-      }
-    }
-    if (!canStart) {
-      throw new Error("Wallet has balance");
-    }
-
-    await this.generateNewBoss(line, count);
+    return this.ctx.service.bossLifecycle.generate(line, times, true);
   }
 
   async end(line, force = false) {
@@ -100,7 +72,7 @@ class ExecuteSwap extends Service {
     const executeData = await ctx.model.ExecuteData.findOne({
       active: true,
       line,
-    }).lean();
+    }).read("primary").lean();
     return executeData;
   }
 
@@ -127,7 +99,8 @@ class ExecuteSwap extends Service {
       eid,
       bossAddress: boss.publicKey.toBase58(),
       privateKey: bs58.encode(boss.secretKey),
-      active: true,
+      active: false,
+      bossStatus: "awaiting_funds",
       createTime: new Date(),
       walletsExist: false,
       line: lineId,
@@ -135,10 +108,13 @@ class ExecuteSwap extends Service {
     let createdLine;
     try {
       return await this.withBossGenerationLock(lineId, async (assertLock) => {
+        await ctx.service.bossLifecycle.prepareStorage();
         await assertLock();
         createdLine = await ctx.model.ExecuteLine.create(linePayload);
         await assertLock();
-        const createdData = await ctx.model.ExecuteData.create(dataPayload);
+        const [createdData] = await ctx.model.ExecuteData.create(
+          [dataPayload], { writeConcern: { w: "majority" } },
+        );
         return {
           executeLine: createdLine,
           executeData: createdData,
@@ -219,7 +195,22 @@ class ExecuteSwap extends Service {
   }
 
   async withBossGenerationLock(line, action) {
-    return this.withLineOperationLock(line, "boss-generation", action);
+    const lineId = Number(line);
+    if (
+      !["string", "number"].includes(typeof line) ||
+      !Number.isSafeInteger(lineId) || lineId < 1
+    ) {
+      throw new Error("line must be a positive integer");
+    }
+    return this.withLineOperationLock(lineId, "boss-funds", action);
+  }
+
+  async withBossFundsLock(line, action) {
+    return this.withBossGenerationLock(line, async (assertLock) => {
+      await this.ctx.service.bossLifecycle.assertNoPending(line);
+      await assertLock();
+      return action(assertLock);
+    });
   }
 
   async withLineOperationLock(line, operation, action) {
@@ -264,9 +255,18 @@ class ExecuteSwap extends Service {
     renewTimer.unref?.();
 
     try {
-      const assertLock = async () => {
+      const assertLock = async (session) => {
         if (lockLost) {
           throw new Error(`${operation} lock was lost for line ${line}`);
+        }
+        if (session) {
+          const result = await ctx.model.ExecuteLineLock.updateOne(
+            { _id: lockId, token, expiresAt: { $gt: new Date() } },
+            { $set: { expiresAt: new Date(Date.now() + BOSS_LOCK_TTL_MS) } },
+            { session },
+          );
+          if (result.matchedCount !== 1) throw new Error(`${operation} lock was lost for line ${line}`);
+          return;
         }
         const currentLock = await ctx.model.ExecuteLineLock.exists({
           _id: lockId,
@@ -287,261 +287,12 @@ class ExecuteSwap extends Service {
     }
   }
 
-  async createBossForLine(line, previousExecuteData, assertLock) {
-    const { ctx } = this;
-    let previousBoss;
-    let previousBalance = 0;
-    if (previousExecuteData) {
-      previousBoss = Keypair.fromSecretKey(
-        bs58.decode(previousExecuteData.privateKey),
-      );
-      previousBalance = await connection.getBalance(previousBoss.publicKey);
-      if (previousBalance / LAMPORTS_PER_SOL < BOSS_MIN_AMOUNT) {
-        throw new Error("Boss balance is not enough");
-      }
-    }
-
-    const boss = Keypair.generate();
-    const newData = {
-      eid: await this.getNextEid(),
-      bossAddress: boss.publicKey.toBase58(),
-      privateKey: bs58.encode(boss.secretKey),
-      active: !previousExecuteData,
-      createTime: new Date(),
-      line,
-    };
-
-    let createdExecuteData;
-    let transferCompleted = false;
-    try {
-      await assertLock();
-      createdExecuteData = await ctx.model.ExecuteData.create(newData);
-      if (previousBoss) {
-        await assertLock();
-        transferCompleted = await transferAllSol(
-          connection,
-          previousBoss,
-          boss.publicKey,
-          0,
-          async (transfer) => {
-            const result = await ctx.model.ExecuteData.updateOne(
-              { _id: createdExecuteData._id, active: false },
-              {
-                $set: {
-                  transferSignature: transfer.signature,
-                  transferBlockhash: transfer.blockhash,
-                  transferLastValidBlockHeight: transfer.lastValidBlockHeight,
-                },
-              },
-            );
-            if (result.matchedCount !== 1) {
-              throw new Error("Could not save pending boss transfer signature");
-            }
-          },
-        );
-      }
-      await assertLock();
-      if (previousExecuteData) {
-        await ctx.model.ExecuteData.updateMany(
-          { active: true, line },
-          { active: false },
-        );
-        const activation = await ctx.model.ExecuteData.updateOne(
-          { _id: createdExecuteData._id },
-          { $set: { active: true } },
-        );
-        if (activation.matchedCount !== 1) {
-          throw new Error(
-            `Could not activate new boss ${createdExecuteData.bossAddress} after SOL transfer`,
-          );
-        }
-      }
-    } catch (error) {
-      if (createdExecuteData && previousExecuteData) {
-        try {
-          if (error.code === "TRANSFER_CONFIRMATION_UNKNOWN") {
-            ctx.logger.error(
-              `Boss transfer status is unknown; retaining pending boss ${createdExecuteData.bossAddress}`,
-              error,
-            );
-          } else if (transferCompleted) {
-            await ctx.model.ExecuteData.updateMany(
-              { active: true, line, _id: previousExecuteData._id },
-              { $set: { active: false } },
-            );
-            const activation = await ctx.model.ExecuteData.updateOne(
-              { _id: createdExecuteData._id, line },
-              { $set: { active: true } },
-            );
-            if (activation.matchedCount !== 1) {
-              throw new Error(
-                `Could not activate new boss ${createdExecuteData.bossAddress} after SOL transfer`,
-              );
-            }
-          } else {
-            await assertLock();
-            await ctx.model.ExecuteData.updateOne(
-              { _id: previousExecuteData._id },
-              { $set: { active: true } },
-            );
-            await ctx.model.ExecuteData.deleteOne({
-              _id: createdExecuteData._id,
-              active: false,
-            });
-          }
-        } catch (restoreError) {
-          ctx.logger.error(
-            "Failed to restore active ExecuteData after boss creation failed",
-            restoreError,
-          );
-        }
-      }
-      throw error;
-    }
-
-    fs.writeFileSync(
-      "keypair.json",
-      JSON.stringify({
-        bossAddress: boss.publicKey.toBase58(),
-        privateKey: bs58.encode(boss.secretKey),
-      }),
-    );
-
-    return true;
-  }
-
   async generateNewBoss(line, times = 1) {
-    const count = Number(times);
-    if (!Number.isSafeInteger(count) || count < 1) {
-      throw new Error("times must be a positive integer");
-    }
-
-    return this.withBossGenerationLock(line, async (assertLock) => {
-      for (let index = 0; index < count; index++) {
-        await assertLock();
-        const previousExecuteData = await this.getExecuteData(line);
-        await this.createBossForLine(line, previousExecuteData, assertLock);
-      }
-      return true;
-    });
+    return this.ctx.service.bossLifecycle.generate(line, times);
   }
 
-  /**
-   * Step 1, start -> generateBoss
-   * @param {} lastExecuteData
-   */
   async generateBoss(lastExecuteData, recoverOnly = false) {
-    const { ctx } = this;
-    return this.withBossGenerationLock(
-      lastExecuteData.line,
-      async (assertLock) => {
-        const currentExecuteData = await this.getExecuteData(lastExecuteData.line);
-        if (
-          !currentExecuteData ||
-          String(currentExecuteData._id) !== String(lastExecuteData._id)
-        ) {
-          throw new Error(
-            `Active ExecuteData changed for line ${lastExecuteData.line}`,
-          );
-        }
-        const pendingExecuteData = await ctx.model.ExecuteData.findOne({
-          line: lastExecuteData.line,
-          active: false,
-          transferSignature: { $exists: true },
-          transferLastValidBlockHeight: { $exists: true },
-          eid: { $gt: currentExecuteData.eid },
-        })
-          .sort({ eid: -1 })
-          .lean();
-        if (pendingExecuteData) {
-          const [{ value }, blockHeight] = await Promise.all([
-            connection.getSignatureStatuses(
-              [pendingExecuteData.transferSignature],
-              { searchTransactionHistory: true },
-            ),
-            connection.getBlockHeight("confirmed"),
-          ]);
-          const transferStatus = value?.[0];
-          const pendingBalance = await connection.getBalance(
-            new PublicKey(pendingExecuteData.bossAddress),
-          );
-          if (transferStatus?.err) {
-            await ctx.model.ExecuteData.deleteOne({
-              _id: pendingExecuteData._id,
-              active: false,
-            });
-          } else if (
-            pendingBalance > 0 ||
-            (transferStatus &&
-              (transferStatus.confirmationStatus === "confirmed" ||
-                transferStatus.confirmationStatus === "finalized" ||
-                transferStatus.confirmations === null))
-          ) {
-            await assertLock();
-            await ctx.model.ExecuteData.updateOne(
-              { _id: currentExecuteData._id, active: true },
-              { $set: { active: false } },
-            );
-            const activation = await ctx.model.ExecuteData.updateOne(
-              { _id: pendingExecuteData._id, active: false },
-              { $set: { active: true } },
-            );
-            if (activation.matchedCount !== 1) {
-              throw new Error(
-                `Could not activate transferred boss ${pendingExecuteData.bossAddress}`,
-              );
-            }
-            return true;
-          } else if (
-            blockHeight <= pendingExecuteData.transferLastValidBlockHeight
-          ) {
-            throw new Error(
-              `Boss transfer ${pendingExecuteData.transferSignature} is still unresolved; retry after its blockhash expires`,
-            );
-          } else {
-            await ctx.model.ExecuteData.deleteOne({
-              _id: pendingExecuteData._id,
-              active: false,
-            });
-          }
-        }
-        const currentBalance = await connection.getBalance(
-          new PublicKey(currentExecuteData.bossAddress),
-        );
-        if (currentBalance <= 5000) {
-          const pendingExecuteData = await ctx.model.ExecuteData.findOne({
-            line: lastExecuteData.line,
-            active: false,
-            eid: { $gt: currentExecuteData.eid },
-          })
-            .sort({ eid: -1 })
-            .lean();
-          if (pendingExecuteData) {
-            const pendingBalance = await connection.getBalance(
-              new PublicKey(pendingExecuteData.bossAddress),
-            );
-            if (pendingBalance > 5000) {
-              await assertLock();
-              await ctx.model.ExecuteData.updateOne(
-                { _id: currentExecuteData._id, active: true },
-                { $set: { active: false } },
-              );
-              await ctx.model.ExecuteData.updateOne(
-                { _id: pendingExecuteData._id, active: false },
-                { $set: { active: true } },
-              );
-              return true;
-            }
-          }
-        }
-        if (recoverOnly) return false;
-        return this.createBossForLine(
-          lastExecuteData.line,
-          currentExecuteData,
-          assertLock,
-        );
-      },
-    );
+    return this.ctx.service.bossLifecycle.generate(lastExecuteData.line, 1, false, recoverOnly);
   }
 
   /**
@@ -549,15 +300,21 @@ class ExecuteSwap extends Service {
    * 生成一批新的地址
    */
   async generateWallets(line, isOld = false) {
+    return this.withBossFundsLock(line, (assertLock) =>
+      this.generateWalletsUnderLock(line, isOld, assertLock),
+    );
+  }
+
+  async generateWalletsUnderLock(line, isOld, assertLock) {
     if (isOld === true) {
-      return this.withLineOperationLock(line, "wallet-generation", () =>
-        this.generateWalletsFromAddressPool(line),
-      );
+      return this.generateWalletsFromAddressPool(line, assertLock);
     }
 
     const { ctx } = this;
 
     const executeData = await this.getExecuteData(line);
+
+    if (!executeData) throw new Error("No active boss; fund the pending boss and call start first");
 
     const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
     const balance = await connection.getBalance(boss.publicKey);
@@ -605,6 +362,7 @@ class ExecuteSwap extends Service {
       if (wallets.length === 0) {
         throw new Error("no wallet to transfer");
       }
+      await assertLock();
       await transferSol(connection, boss, wallets, amounts);
       await ctx.model.ExecuteData.updateOne(
         { eid: executeData.eid },
@@ -730,7 +488,7 @@ class ExecuteSwap extends Service {
     };
   }
 
-  async generateWalletsFromAddressPool(line) {
+  async generateWalletsFromAddressPool(line, assertLock) {
     const { ctx } = this;
     const executeData = await this.getExecuteData(line);
     if (!executeData) throw new Error("execute data not found");
@@ -764,6 +522,7 @@ class ExecuteSwap extends Service {
       }
       if (wallets.length === 0) throw new Error("no wallet to transfer");
 
+      await assertLock();
       await transferSol(connection, boss, wallets, transferAmounts, {
         throwOnError: true,
       });
@@ -861,6 +620,7 @@ class ExecuteSwap extends Service {
     const wallets = claimed.map((item) => new PublicKey(item.address));
 
     // Keep addresses reserved if transfer confirmation fails; retrying could double-fund them.
+    await assertLock();
     await transferSol(connection, boss, wallets, amounts, {
       throwOnError: true,
     });
@@ -872,6 +632,10 @@ class ExecuteSwap extends Service {
   }
 
   async transferSolToWallets(line) {
+    return this.withBossFundsLock(line, (assertLock) => this.transferSolToWalletsUnderLock(line, assertLock));
+  }
+
+  async transferSolToWalletsUnderLock(line, assertLock) {
     const wallets = await this.getWallets(line);
     const executeData = await this.getExecuteData(line);
     const walletConfig = await this.getWalletConfig(line);
@@ -880,12 +644,17 @@ class ExecuteSwap extends Service {
       const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
       const amounts = walletConfig.map((item) => item.transferAmount);
       const newWallets = wallets.map((item) => new PublicKey(item.address));
+      await assertLock();
       await transferSol(connection, boss, newWallets, amounts);
     }
   }
 
   // Boss回收sol
   async recycleSol(line, force = false) {
+    return this.withBossFundsLock(line, (assertLock) => this.recycleSolUnderLock(line, force, assertLock));
+  }
+
+  async recycleSolUnderLock(line, force, assertLock) {
     console.log(chalk.green("Ended：recycle"));
     const { ctx } = this;
     const wallets = await this.getWallets(line, true);
@@ -898,6 +667,7 @@ class ExecuteSwap extends Service {
         console.log(
           chalk.green("transfer sol", wallet.address, executeData.bossAddress),
         );
+        await assertLock();
         await transferAllSol(
           connection,
           wallet.keypair,
@@ -1737,9 +1507,13 @@ class ExecuteSwap extends Service {
 
   async getBossWithBalance(line) {
     const { ctx } = this;
-    const executeData = await this.getExecuteData(line);
+    const active = await this.getExecuteData(line);
+    const pending = await ctx.service.bossLifecycle.findPending(line, active);
+    const executeData = active || pending;
+    if (!executeData) throw new Error("No boss exists for this line; call start first");
     const bossBalance = await connection.getBalance(
       new PublicKey(executeData.bossAddress),
+      "finalized",
     );
 
     const tokenCount = await ctx.model.ExecuteToken.count({
@@ -1753,6 +1527,16 @@ class ExecuteSwap extends Service {
       eid: executeData.eid,
       tokenCount: tokenCount,
       line: executeData.line,
+      active: executeData.active,
+      ready: Boolean(active && !pending && bossBalance >= ctx.service.bossLifecycle.minimumBalance()),
+      bossStatus: executeData.bossStatus || (executeData.active ? "active" : "pending"),
+      minimumBalanceLamports: ctx.service.bossLifecycle.minimumBalance(),
+      pending: pending ? {
+        address: pending.bossAddress,
+        eid: pending.eid,
+        bossStatus: pending.bossStatus || "pending",
+        transferSignature: pending.transferSignature || null,
+      } : null,
     };
   }
 
@@ -2088,12 +1872,18 @@ class ExecuteSwap extends Service {
   }
 
   async withdraw(line, amount) {
+    return this.withBossFundsLock(line, (assertLock) => this.withdrawUnderLock(line, amount, assertLock));
+  }
+
+  async withdrawUnderLock(line, amount, assertLock) {
     const { ctx } = this;
     const executeData = await this.getExecuteData(line);
+    if (!executeData) throw new Error("No active boss; call start to reconcile first");
     const lineData = await ctx.model.ExecuteLine.findOne({ lineId: line });
     console.log(chalk.green("withdraw", amount));
     if (lineData.withdrawAddress) {
       const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
+      await assertLock();
       if (amount) {
         await transferSol(
           connection,
@@ -2197,7 +1987,7 @@ class ExecuteSwap extends Service {
   }
 
   async nextWallet(line, force = false) {
-    return this.withLineOperationLock(line, "wallet-rotation", async (assertLock) => {
+    return this.withBossFundsLock(line, async (assertLock) => {
       return this.rotateWallets(line, force, assertLock);
     });
   }
