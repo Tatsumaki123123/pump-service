@@ -6,6 +6,8 @@ module.exports = (app) => {
     {
       address: { type: String, unique: true },
       privateKey: { type: String },
+      walletAddressId: { type: Schema.Types.ObjectId, index: true },
+      wid: { type: Number },
       eid: {
         type: Schema.Types.BigInt,
         get: (value) => (value == null ? value : Number(value)),

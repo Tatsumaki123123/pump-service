@@ -548,7 +548,13 @@ class ExecuteSwap extends Service {
    * Step 2, generateWallets
    * 生成一批新的地址
    */
-  async generateWallets(line) {
+  async generateWallets(line, isOld = false) {
+    if (isOld === true) {
+      return this.withLineOperationLock(line, "wallet-generation", () =>
+        this.generateWalletsFromAddressPool(line),
+      );
+    }
+
     const { ctx } = this;
 
     const executeData = await this.getExecuteData(line);
@@ -610,6 +616,212 @@ class ExecuteSwap extends Service {
     }
   }
 
+  async generateWalletAddresses(num) {
+    const { ctx } = this;
+    const count = Number(num);
+    const maxCount = 500;
+    if (!Number.isSafeInteger(count) || count < 1 || count > maxCount) {
+      throw new Error(`num must be an integer between 1 and ${maxCount}`);
+    }
+
+    const records = Array.from({ length: count }, () => {
+      const keypair = Keypair.generate();
+      return {
+        address: keypair.publicKey.toBase58(),
+        privateKey: bs58.encode(keypair.secretKey),
+        status: "unused",
+        createTime: new Date(),
+      };
+    });
+    await ctx.model.ExecuteWalletAddress.insertMany(records);
+    return { count, addresses: records.map(({ address }) => address) };
+  }
+
+  async getWalletAddresses({ status, page = 1, pageSize = 50, sortOrder = "desc" } = {}) {
+    const { ctx } = this;
+    const currentPage = Number(page);
+    const limit = Number(pageSize);
+    if (!Number.isSafeInteger(currentPage) || currentPage < 1) {
+      throw new Error("page must be a positive integer");
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+      throw new Error("pageSize must be an integer between 1 and 200");
+    }
+    if (!["asc", "desc"].includes(sortOrder)) {
+      throw new Error("sortOrder must be asc or desc");
+    }
+
+    const allowedStatuses = ["unused", "in_use", "ended"];
+    const statuses =
+      status == null || status === ""
+        ? ["unused", "in_use"]
+        : Array.isArray(status)
+          ? status
+          : String(status)
+              .split(",")
+              .map((item) => item.trim());
+    if (
+      statuses.length === 0 ||
+      statuses.some((item) => !allowedStatuses.includes(item))
+    ) {
+      throw new Error("status must contain unused, in_use, or ended");
+    }
+
+    const filter = { status: { $in: [...new Set(statuses)] } };
+    const [list, total] = await Promise.all([
+      ctx.model.ExecuteWalletAddress.find(filter)
+        .select("address status createTime useEid useLine useTime endTime")
+        .sort({ createTime: sortOrder === "asc" ? 1 : -1, _id: 1 })
+        .skip((currentPage - 1) * limit)
+        .limit(limit)
+        .lean(),
+      ctx.model.ExecuteWalletAddress.countDocuments(filter),
+    ]);
+    return { list, total, page: currentPage, pageSize: limit };
+  }
+
+  async deleteWalletAddresses(ids) {
+    const { ctx } = this;
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500) {
+      throw new Error("ids must contain between 1 and 500 address ids");
+    }
+    const uniqueIds = [...new Set(ids.map(String))];
+    const validIds = uniqueIds.filter((id) =>
+      ctx.app.mongoose.Types.ObjectId.isValid(id),
+    );
+    const deleted = validIds.length
+      ? await ctx.model.ExecuteWalletAddress.deleteMany({
+          _id: { $in: validIds },
+          status: "unused",
+        })
+      : { deletedCount: 0 };
+    const remaining = validIds.length
+      ? await ctx.model.ExecuteWalletAddress.find({ _id: { $in: validIds } })
+          .select("_id status")
+          .lean()
+      : [];
+    return {
+      deletedCount: deleted.deletedCount,
+      rejected: [
+        ...uniqueIds
+          .filter((id) => !validIds.includes(id))
+          .map((id) => ({ id, reason: "invalid id" })),
+        ...remaining.map((item) => ({
+          id: String(item._id),
+          reason: item.status === "unused" ? "not found" : `status is ${item.status}`,
+        })),
+      ],
+    };
+  }
+
+  async generateWalletsFromAddressPool(line) {
+    const { ctx } = this;
+    const executeData = await this.getExecuteData(line);
+    if (!executeData) throw new Error("execute data not found");
+    if (executeData.walletsExist) throw new Error("wallets already generated");
+
+    const walletConfig = await this.getWalletConfig(line);
+    if (!Array.isArray(walletConfig) || walletConfig.length === 0) {
+      throw new Error("walletConfig is empty");
+    }
+    const amounts = walletConfig.map((item, index) => {
+      const amount = Number(item.transferAmount);
+      if (!Number.isFinite(amount) || amount < 0) {
+        throw new Error(`Invalid transferAmount for wallet index ${index}`);
+      }
+      return amount;
+    });
+    const boss = Keypair.fromSecretKey(bs58.decode(executeData.privateKey));
+    const existingWalletCount = await ctx.model.ExecuteWallet.countDocuments({
+      eid: executeData.eid,
+    });
+    if (existingWalletCount > 0) {
+      throw new Error("wallets already exist for this execute batch");
+    }
+
+    const candidates = await ctx.model.ExecuteWalletAddress.find({ status: "unused" })
+      .sort({ createTime: 1, _id: 1 })
+      .limit(walletConfig.length)
+      .lean();
+    if (candidates.length < walletConfig.length) {
+      throw new Error(
+        `Not enough unused wallet addresses: need ${walletConfig.length}, found ${candidates.length}`,
+      );
+    }
+
+    const now = new Date();
+    const claimed = [];
+    const releaseClaimed = async () => {
+      if (claimed.length === 0) return;
+      await ctx.model.ExecuteWalletAddress.updateMany(
+        {
+          _id: { $in: claimed.map((item) => item._id) },
+          status: "in_use",
+          useEid: executeData.eid,
+        },
+        {
+          $set: { status: "unused" },
+          $unset: { useEid: 1, useLine: 1, useTime: 1 },
+        },
+      );
+    };
+    try {
+      for (const candidate of candidates) {
+        const updated = await ctx.model.ExecuteWalletAddress.findOneAndUpdate(
+          { _id: candidate._id, status: "unused" },
+          {
+            $set: {
+              status: "in_use",
+              useEid: executeData.eid,
+              useLine: line,
+              useTime: now,
+            },
+          },
+          { new: true },
+        ).lean();
+        if (updated) claimed.push(updated);
+      }
+    } catch (error) {
+      await releaseClaimed();
+      throw error;
+    }
+
+    if (claimed.length !== walletConfig.length) {
+      await releaseClaimed();
+      throw new Error("Wallet addresses were claimed concurrently; retry generateWallets");
+    }
+
+    const dbData = claimed.map((item, index) => ({
+      wid: index + 1,
+      address: item.address,
+      privateKey: item.privateKey,
+      walletAddressId: item._id,
+      eid: executeData.eid,
+    }));
+    try {
+      await ctx.model.ExecuteWallet.insertMany(dbData);
+    } catch (error) {
+      await ctx.model.ExecuteWallet.deleteMany({
+        eid: executeData.eid,
+        walletAddressId: { $in: claimed.map((item) => item._id) },
+      });
+      await releaseClaimed();
+      throw error;
+    }
+
+    const wallets = claimed.map((item) => new PublicKey(item.address));
+
+    // Keep addresses reserved if transfer confirmation fails; retrying could double-fund them.
+    await transferSol(connection, boss, wallets, amounts, {
+      throwOnError: true,
+    });
+    await ctx.model.ExecuteData.updateOne(
+      { eid: executeData.eid },
+      { $set: { walletsExist: true } },
+    );
+    return true;
+  }
+
   async transferSolToWallets(line) {
     const wallets = await this.getWallets(line);
     const executeData = await this.getExecuteData(line);
@@ -646,6 +858,24 @@ class ExecuteSwap extends Service {
 
       for (const wallet of wallets) {
         await fun(wallet);
+      }
+
+      const assignedWallets = await ctx.model.ExecuteWallet.find({
+        eid: executeData.eid,
+        walletAddressId: { $ne: null },
+      }).select("walletAddressId").lean();
+      const walletAddressIds = assignedWallets
+        .map((wallet) => wallet.walletAddressId)
+        .filter(Boolean);
+      if (walletAddressIds.length > 0) {
+        await ctx.model.ExecuteWalletAddress.updateMany(
+          {
+            _id: { $in: walletAddressIds },
+            status: "in_use",
+            useEid: executeData.eid,
+          },
+          { $set: { status: "ended", endTime: new Date() } },
+        );
       }
 
       // const res = await Promise.all(arr);
@@ -1285,7 +1515,10 @@ class ExecuteSwap extends Service {
       if (!isAll) {
         filter = { ...filter, isActive: true };
       }
-      const dbData = await ctx.model.ExecuteWallet.find(filter);
+      const dbData = await ctx.model.ExecuteWallet.find(filter).sort({
+        wid: 1,
+        _id: 1,
+      });
       if (dbData && dbData.length > 0) {
         const wallets = dbData.map((wallet, index) => ({
           address: wallet.address,

@@ -21,13 +21,38 @@ class ExecuteSwap extends BaseController {
 
   async generateWallets() {
     const { ctx } = this;
-    const { line } = ctx.request.body;
+    const { line, isOld = false } = ctx.request.body;
+    if (typeof isOld !== "boolean") {
+      throw new Error("isOld must be a boolean");
+    }
     if (line) {
-      const res = await ctx.service.executeSwap.generateWallets(line);
-      this.success(true);
+      const res = await ctx.service.executeSwap.generateWallets(line, isOld);
+      this.success(res);
     } else {
       throw new Error("Params error");
     }
+  }
+
+  async generateWalletAddresses() {
+    const { num } = this.ctx.request.body;
+    this.success(await this.ctx.service.executeSwap.generateWalletAddresses(num));
+  }
+
+  async getWalletAddresses() {
+    const { status, page, pageSize, sortOrder } = this.ctx.request.body;
+    this.success(
+      await this.ctx.service.executeSwap.getWalletAddresses({
+        status,
+        page,
+        pageSize,
+        sortOrder,
+      }),
+    );
+  }
+
+  async deleteWalletAddresses() {
+    const { ids } = this.ctx.request.body;
+    this.success(await this.ctx.service.executeSwap.deleteWalletAddresses(ids));
   }
 
   async end() {

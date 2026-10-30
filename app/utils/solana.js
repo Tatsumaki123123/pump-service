@@ -388,7 +388,13 @@ async function transferAllSol(connection, from, to, remain = 0, onPrepared) {
   }
 }
 
-async function transferSol(connection, from, wallets, amounts) {
+async function transferSol(
+  connection,
+  from,
+  wallets,
+  amounts,
+  { throwOnError = false } = {},
+) {
   console.log(
     "transferSol",
     from.publicKey.toBase58(),
@@ -420,9 +426,15 @@ async function transferSol(connection, from, wallets, amounts) {
         skipPreflight: false,
       });
       const tx = await connection.confirmTransaction(signature, "confirmed");
+      if (tx.value?.err) {
+        throw new Error(
+          `Transfer transaction ${signature} failed: ${JSON.stringify(tx.value.err)}`,
+        );
+      }
       console.log(chalk.green(`Transaction sent: ${signature}`));
     } catch (error) {
       console.error(chalk.red(`Failed to send transaction: ${error.message}`));
+      if (throwOnError) throw error;
     }
     console.log(chalk.green("SOL transfers completed."));
   } else {

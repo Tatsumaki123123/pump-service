@@ -14,6 +14,18 @@ module.exports = (app) => {
   router.post("/v1/execute/fomo/swapUsdcToSol", controller.fomo.swapUsdcToSol);
 
   router.post("/v1/execute/start", controller.executeSwap.start);
+  router.post(
+    "/v1/execute/walletAddress/generate",
+    controller.executeSwap.generateWalletAddresses,
+  );
+  router.post(
+    "/v1/execute/walletAddress/list",
+    controller.executeSwap.getWalletAddresses,
+  );
+  router.post(
+    "/v1/execute/walletAddress/delete",
+    controller.executeSwap.deleteWalletAddresses,
+  );
 
   router.post(
     "/v1/execute/generateWallets",
