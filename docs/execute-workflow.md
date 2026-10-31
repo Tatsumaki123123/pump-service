@@ -8,6 +8,10 @@ Pump AMM 买卖需要代币与 WSOL 的报价池。若链上有 Pump AMM 池但�
 
 `Bundle accepted but not landed` 表示观察超时；买入超时补充 token、发送平台和区块高度，需按原 signature 对账，不能据此认定交易失败后重新买入。单笔模拟无法保证批量内前序交易造成价格变化后，后序交易仍满足滑点。
 
+Jupiter 和 DFlow 的公共 `/quote` 入口默认发送 `excludeDexes=Manifest`，覆盖使用这两个 SDK 的买入、卖出及回退路径，不局限于非 WSOL 池。分别通过 `JUPITER_EXCLUDE_DEXES`、`DFLOW_EXCLUDE_DEXES` 覆盖排除列表，多个 DEX 用英文逗号分隔；显式设置空字符串则不传排除参数。排除后没有可用路径会返回报价错误，不会自动移除排除条件重试。DFlow 的排除条件会计入报价缓存键；修改环境变量需重启服务。
+
+DFlow 参数参考：[Get Quote](https://pond.dflow.net/resources/trading-api/imperative/quote)。DEX 名称需使用各服务支持的准确标签，可分别查看 Jupiter 的 `/swap/v1/program-id-to-label` 与 DFlow 的 `/venues`。
+
 ## 1. 一句话概览
 
 `ExecuteLine` 定义“怎么执行”，`ExecuteData` 定义“当前哪一批执行实例”，`ExecuteWallet` 保存该批次实际使用的钱包，`ExecuteToken` 保存该批次处理过的代币任务。

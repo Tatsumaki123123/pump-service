@@ -6,6 +6,11 @@ const {
 } = require("@solana/web3.js");
 
 const BASE_URL = "https://lite-api.jup.ag";
+const EXCLUDED_DEXES = (process.env.JUPITER_EXCLUDE_DEXES ?? "Manifest")
+  .split(",")
+  .map((dex) => dex.trim())
+  .filter(Boolean)
+  .join(",");
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const RETRY_DELAYS_MS = [250, 500, 1000];
 const REQUEST_TIMEOUT_MS = Number(
@@ -282,6 +287,7 @@ class JupSDK {
       slippageBps: String(slippageBps),
       restrictIntermediateTokens: "true",
       instructionVersion: "V2",
+      ...(EXCLUDED_DEXES ? { excludeDexes: EXCLUDED_DEXES } : {}),
     });
     const uri = `${BASE_URL}/swap/v1/quote?${query.toString()}`;
     const quote = await this.requestJson(ctx, uri, {

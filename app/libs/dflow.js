@@ -1,6 +1,11 @@
 const { PublicKey, TransactionInstruction } = require("@solana/web3.js");
 
 const BASE_URL = process.env.DFLOW_API_URL || "https://quote-api.dflow.net";
+const EXCLUDED_DEXES = (process.env.DFLOW_EXCLUDE_DEXES ?? "Manifest")
+  .split(",")
+  .map((dex) => dex.trim())
+  .filter(Boolean)
+  .join(",");
 const API_KEY = process.env.DFLOW_API_KEY || "";
 const DEV_API_HOST = "dev-quote-api.dflow.net";
 const QUOTE_CACHE_TTL_MS = Number(process.env.DFLOW_QUOTE_CACHE_TTL_MS || 1500);
@@ -146,6 +151,7 @@ class DFlowSDK {
       amount: String(amount),
       slippageBps: String(slippageBps),
       transactionVersion: "v0",
+      ...(EXCLUDED_DEXES ? { excludeDexes: EXCLUDED_DEXES } : {}),
     };
     const quote = await this.getQuote(ctx, quoteParams, headers);
     assertQuoteQuality(quote, slippage);
