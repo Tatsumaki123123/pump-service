@@ -50,6 +50,7 @@ const RAYDIUM_LANUCH_NAME = "raydiumlaunchlab";
 const AFTER_WALLET_DELAY_MS = Number(process.env.AFTER_WALLET_DELAY_MS || 0);
 const BOSS_LOCK_TTL_MS = 2 * 60 * 1000;
 const BOSS_LOCK_RENEW_MS = 30 * 1000;
+const BOSS_LOCK_WAIT_MS = 30 * 1000;
 const EXECUTE_EID_SEQUENCE_ID = "execute-data-eid";
 
 class ExecuteSwap extends Service {
@@ -195,7 +196,7 @@ class ExecuteSwap extends Service {
     return sequence.value;
   }
 
-  async withBossGenerationLock(line, action, { skipLock = false } = {}) {
+  async withBossGenerationLock(line, action, { skipLock = false, waitMs = BOSS_LOCK_WAIT_MS, owner } = {}) {
     const lineId = Number(line);
     if (
       !["string", "number"].includes(typeof line) ||
@@ -206,7 +207,7 @@ class ExecuteSwap extends Service {
     if (skipLock) {
       return action(async () => {});
     }
-    return this.withLineOperationLock(lineId, "boss-funds", action);
+    return this.withLineOperationLock(lineId, "boss-funds", action, { waitMs, owner });
   }
 
   async withBossFundsLock(line, action, options) {
@@ -217,52 +218,76 @@ class ExecuteSwap extends Service {
     }, options);
   }
 
-  async withLineOperationLock(line, operation, action) {
+  async withLineOperationLock(line, operation, action, { waitMs = BOSS_LOCK_WAIT_MS, owner } = {}) {
     const { ctx } = this;
+    if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > 60000) {
+      throw new Error("Lock waitMs must be an integer between 0 and 60000");
+    }
     const lockId = `${operation}:${line}`;
     const token = randomUUID();
-    const expiresAt = new Date(Date.now() + BOSS_LOCK_TTL_MS);
-    let lock = await ctx.model.ExecuteLineLock.findOneAndUpdate(
-      { _id: lockId, expiresAt: { $lte: new Date() } },
-      { $set: { token, expiresAt } },
-      { new: true },
-    ).lean();
-
-    if (!lock) {
-      try {
-        lock = await ctx.model.ExecuteLineLock.create({
-          _id: lockId,
-          token,
-          expiresAt,
-        });
-      } catch (error) {
-        if (error.code === 11000) {
-          const locked = new Error(`${operation} is already running for line ${line}`);
-          locked.code = "LINE_OPERATION_LOCKED";
-          throw locked;
+    const lockOwner = owner || ctx.path || operation;
+    const deadline = Date.now() + waitMs;
+    let lock;
+    while (!lock) {
+      const acquiredAt = new Date();
+      const payload = {
+        token, owner: lockOwner, pid: process.pid, acquiredAt,
+        expiresAt: new Date(acquiredAt.getTime() + BOSS_LOCK_TTL_MS),
+      };
+      lock = await ctx.model.ExecuteLineLock.findOneAndUpdate(
+        { _id: lockId, $or: [
+          { expiresAt: { $lte: acquiredAt } },
+          { expiresAt: { $exists: false } },
+        ] },
+        { $set: payload },
+        { new: true },
+      ).lean();
+      if (!lock) {
+        try {
+          lock = await ctx.model.ExecuteLineLock.create({ _id: lockId, ...payload });
+        } catch (error) {
+          if (error.code !== 11000) throw error;
         }
-        throw error;
       }
+      if (lock) break;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        const holder = await ctx.model.ExecuteLineLock.findById(lockId)
+          .select("owner acquiredAt expiresAt pid").read("primary").lean();
+        const heldMs = holder?.acquiredAt
+          ? Math.max(0, Date.now() - new Date(holder.acquiredAt).getTime()) : null;
+        const locked = new Error(`${operation} is already running for line ${line}; waited ${waitMs}ms, owner=${holder?.owner || "unknown"}, pid=${holder?.pid || "unknown"}, heldMs=${heldMs ?? "unknown"}, expiresAt=${holder?.expiresAt?.toISOString() || "unknown"}`);
+        locked.code = "LINE_OPERATION_LOCKED";
+        throw locked;
+      }
+      // Only acquisition is retried; business actions and transfers run once.
+      await new Promise((resolve) => setTimeout(resolve, Math.min(200 + Math.floor(Math.random() * 200), remainingMs)));
     }
 
     let lockLost = false;
+    let actionFinished = false;
+    let renewing = false;
     const renewTimer = setInterval(async () => {
+      if (actionFinished || lockLost || renewing) return;
+      renewing = true;
       try {
         const result = await ctx.model.ExecuteLineLock.updateOne(
-          { _id: lockId, token },
+          { _id: lockId, token, expiresAt: { $gt: new Date() } },
           { $set: { expiresAt: new Date(Date.now() + BOSS_LOCK_TTL_MS) } },
         );
         if (result.matchedCount !== 1) lockLost = true;
       } catch (error) {
         lockLost = true;
         ctx.logger.error(`Failed to renew ${operation} lock`, error);
+      } finally {
+        renewing = false;
       }
     }, BOSS_LOCK_RENEW_MS);
     renewTimer.unref?.();
 
     try {
       const assertLock = async () => {
-        if (lockLost) {
+        if (lockLost || actionFinished) {
           throw new Error(`${operation} lock was lost for line ${line}`);
         }
         const currentLock = await ctx.model.ExecuteLineLock.exists({
@@ -277,6 +302,7 @@ class ExecuteSwap extends Service {
       };
       return await action(assertLock);
     } finally {
+      actionFinished = true;
       clearInterval(renewTimer);
       await ctx.model.ExecuteLineLock.deleteOne({ _id: lockId, token }).catch(
         (error) => ctx.logger.error(`Failed to release ${operation} lock`, error),

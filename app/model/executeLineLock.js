@@ -7,6 +7,9 @@ module.exports = (app) => {
       _id: { type: String },
       token: { type: String },
       expiresAt: { type: Date },
+      owner: { type: String },
+      acquiredAt: { type: Date },
+      pid: { type: Number },
     },
     { versionKey: false },
   );

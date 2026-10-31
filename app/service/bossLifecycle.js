@@ -12,6 +12,24 @@ const PENDING_BOSS_INDEX = "one_pending_boss_per_line";
 const DURABLE_WRITE = { writeConcern: { w: 1, j: true } };
 
 class BossLifecycle extends Service {
+  async rpcWithTimeout(method, ...args) {
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => connection[method](...args)),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            const error = new Error(`Boss RPC ${method} timed out after 5000ms; pending state retained`);
+            error.code = "BOSS_RPC_TIMEOUT";
+            reject(error);
+          }, 5000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   writeKeypair(candidate) {
     try {
       fs.writeFileSync("keypair.json", JSON.stringify({
@@ -97,7 +115,7 @@ class BossLifecycle extends Service {
   async activate(candidate, previous, assertLock, minContextSlot) {
     const { ctx } = this;
     await assertLock();
-    const balance = await connection.getBalanceAndContext(
+    const balance = await this.rpcWithTimeout("getBalanceAndContext",
       new PublicKey(candidate.bossAddress),
       { commitment: "finalized", ...(minContextSlot == null ? {} : { minContextSlot }) },
     );
@@ -161,7 +179,7 @@ class BossLifecycle extends Service {
     if (!active || String(active._id) !== String(candidate._id)) {
       throw new Error("Boss activation could not be verified");
     }
-    const { value } = await connection.getBalanceAndContext(
+    const { value } = await this.rpcWithTimeout("getBalanceAndContext",
       new PublicKey(candidate.bossAddress),
       { commitment: "finalized", ...(minContextSlot == null ? {} : { minContextSlot }) },
     );
@@ -207,7 +225,7 @@ class BossLifecycle extends Service {
       if (keypair.publicKey.toBase58() !== candidate.bossAddress) {
         throw new Error("Latest boss private key does not match its address; repair refused");
       }
-      const balance = await connection.getBalanceAndContext(
+      const balance = await this.rpcWithTimeout("getBalanceAndContext",
         new PublicKey(candidate.bossAddress), { commitment: "finalized" },
       );
       if (balance.value < this.minimumBalance()) {
@@ -270,7 +288,7 @@ class BossLifecycle extends Service {
     if (!pending.transferSignature) {
       // A crash before preparing a transfer must reuse the saved keypair.
       if (pending.bossStatus === "pending") {
-        const balance = await connection.getBalanceAndContext(
+        const balance = await this.rpcWithTimeout("getBalanceAndContext",
           new PublicKey(pending.bossAddress), { commitment: "finalized" },
         );
         if (balance.value >= this.minimumBalance()) {
@@ -285,7 +303,7 @@ class BossLifecycle extends Service {
 
     let status;
     try {
-      const { value } = await connection.getSignatureStatuses(
+      const { value } = await this.rpcWithTimeout("getSignatureStatuses",
         [pending.transferSignature], { searchTransactionHistory: true },
       );
       status = value?.[0];
@@ -300,8 +318,8 @@ class BossLifecycle extends Service {
       return false;
     }
     if (!status) {
-      const head = await connection.getEpochInfo({ commitment: "finalized" });
-      const balance = await connection.getBalanceAndContext(
+      const head = await this.rpcWithTimeout("getEpochInfo", { commitment: "finalized" });
+      const balance = await this.rpcWithTimeout("getBalanceAndContext",
         new PublicKey(pending.bossAddress),
         { commitment: "finalized", minContextSlot: head.absoluteSlot },
       );
@@ -322,7 +340,7 @@ class BossLifecycle extends Service {
       if (pending.transferTransaction) {
         await assertLock();
         try {
-          const signature = await connection.sendRawTransaction(
+          const signature = await this.rpcWithTimeout("sendRawTransaction",
             Buffer.from(pending.transferTransaction, "base64"),
             { skipPreflight: false, maxRetries: 0 },
           );
@@ -348,14 +366,30 @@ class BossLifecycle extends Service {
     for (const line of lines) {
       if (!Number.isSafeInteger(line) || line < 1) continue;
       try {
+        // A read-only probe does not compete with interactive funds operations.
+        // Re-read and validate the exact destination after acquiring its lock.
+        const current = await ctx.service.executeSwap.getExecuteData(line);
+        const pending = await this.findPending(line, current);
+        if (!pending) continue;
+        const balance = await this.rpcWithTimeout("getBalanceAndContext",
+          new PublicKey(pending.bossAddress), { commitment: "finalized" },
+        );
+        if (balance.value < this.minimumBalance()) continue;
         await ctx.service.executeSwap.withBossGenerationLock(line, async (assertLock) => {
           await this.prepareStorage();
-          const current = await ctx.service.executeSwap.getExecuteData(line);
-          // Only recover saved work. Never create a boss or sign another transfer.
-          if (await this.recover(line, current, assertLock, { allowFunding: false })) {
-            ctx.logger.info(`Pending boss activated by reconciliation: line=${line}`);
-          }
-        });
+          const active = await ctx.service.executeSwap.getExecuteData(line);
+          const target = await this.findPending(line, active);
+          if (!target || String(target._id) !== String(pending._id)) return;
+          await assertLock();
+          const adopted = await ctx.model.ExecuteData.updateOne(
+            { _id: target._id, active: false, bossStatus: { $nin: ["failed", "retired", "active"] } },
+            { $set: { bossPending: true } },
+            DURABLE_WRITE,
+          );
+          if (adopted.matchedCount !== 1) return;
+          await this.activate(target, active, assertLock, balance.context.slot);
+          ctx.logger.info(`Pending boss activated by reconciliation: line=${line}`);
+        }, { waitMs: 0, owner: "bossRecovery" });
       } catch (error) {
         if (["BOSS_RECOVERY_PENDING", "LINE_OPERATION_LOCKED"].includes(error.code)) continue;
         ctx.logger.error(`Boss reconciliation failed: line=${line}`, error);
@@ -381,10 +415,19 @@ class BossLifecycle extends Service {
     if (source.publicKey.toBase58() !== previous.bossAddress) {
       throw new Error("Source boss private key does not match its address");
     }
+    // Timeout individual RPC calls, not the entire funding action: releasing
+    // a lock must not leave a detached action that can later sign a new transfer.
+    const fundingConnection = Object.fromEntries(
+      ["getLatestBlockhash", "getBalance", "getSignatureStatuses", "getBlockHeight", "sendTransaction"]
+        .map((method) => [method, async (...args) => {
+          if (method === "sendTransaction") await assertLock();
+          return this.rpcWithTimeout(method, ...args);
+        }]),
+    );
     let transferred;
     try {
       transferred = await transferAllSol(
-        connection, source, new PublicKey(candidate.bossAddress), 0,
+        fundingConnection, source, new PublicKey(candidate.bossAddress), 0,
         async (transfer) => {
           await assertLock();
           const saved = await this.ctx.model.ExecuteData.updateOne(
@@ -426,7 +469,7 @@ class BossLifecycle extends Service {
   async create(line, previous, assertLock) {
     await assertLock();
     if (previous) {
-      const balance = await connection.getBalance(new PublicKey(previous.bossAddress), "finalized");
+      const balance = await this.rpcWithTimeout("getBalance", new PublicKey(previous.bossAddress), "finalized");
       if (balance < this.minimumBalance() + 5000) {
         throw new Error(`Boss balance must cover ${this.minimumBalance()} lamports plus transfer fees; no new boss was created`);
       }
@@ -467,7 +510,7 @@ class BossLifecycle extends Service {
         if (checkWallets && current) {
           const wallets = await this.ctx.service.executeSwap.getWallets(line);
           for (const wallet of wallets) {
-            if (await connection.getBalance(wallet.publicKey, "finalized") > 0) {
+            if (await this.rpcWithTimeout("getBalance", wallet.publicKey, "finalized") > 0) {
               throw new Error("Wallet has balance");
             }
           }
