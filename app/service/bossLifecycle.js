@@ -170,6 +170,92 @@ class BossLifecycle extends Service {
     }
   }
 
+  async repairActive(line) {
+    const { ctx } = this;
+    return ctx.service.executeSwap.withBossGenerationLock(line, async (assertLock) => {
+      const lineId = Number(line);
+      await this.prepareStorage();
+      const candidate = await ctx.model.ExecuteData.findOne({ line: lineId })
+        .sort({ eid: -1, _id: -1 }).read("primary").lean();
+      if (!candidate) throw new Error(`No ExecuteData exists for line ${lineId}`);
+      const current = await ctx.service.executeSwap.getExecuteData(lineId);
+      const result = (repaired, balance) => ({
+        repaired,
+        line: lineId,
+        eid: Number(candidate.eid),
+        address: candidate.bossAddress,
+        active: true,
+        bossStatus: "active",
+        balanceLamports: balance.value,
+        balance: balance.value / 1e9,
+        minimumBalanceLamports: this.minimumBalance(),
+        slot: balance.context.slot,
+        previousAddress: current && String(current._id) !== String(candidate._id)
+          ? current.bossAddress : null,
+      });
+      if (["failed", "retired"].includes(candidate.bossStatus)) {
+        throw new Error(`Latest boss ${candidate.bossAddress} is ${candidate.bossStatus}; repair refused`);
+      }
+      if (candidate.active !== true && candidate.active !== false) {
+        throw new Error("Latest boss has an invalid active state; repair refused");
+      }
+      if (candidate.active === false && ![undefined, null, "pending", "awaiting_funds", "active"].includes(candidate.bossStatus)) {
+        throw new Error("Latest boss is not in a repairable state");
+      }
+      // Validate the stored key before retiring the source. Never expose it.
+      const keypair = Keypair.fromSecretKey(bs58.decode(candidate.privateKey));
+      if (keypair.publicKey.toBase58() !== candidate.bossAddress) {
+        throw new Error("Latest boss private key does not match its address; repair refused");
+      }
+      const balance = await connection.getBalanceAndContext(
+        new PublicKey(candidate.bossAddress), { commitment: "finalized" },
+      );
+      if (balance.value < this.minimumBalance()) {
+        throw new Error(`Latest boss ${candidate.bossAddress} needs at least ${this.minimumBalance()} finalized lamports, found ${balance.value}; no active state was changed`);
+      }
+      await assertLock();
+      if (candidate.active === true && candidate.bossStatus === "active" && candidate.bossPending === false) {
+        await this.verifyActive(candidate, assertLock, balance.context.slot);
+        return result(false, balance);
+      }
+      const otherPending = await ctx.model.ExecuteData.exists({
+        line: lineId, _id: { $ne: candidate._id },
+        $or: [{ bossPending: true }, { bossStatus: { $in: ["pending", "awaiting_funds"] } }],
+      });
+      if (otherPending) throw new Error("Another pending boss exists for this line; repair refused");
+      const latest = await ctx.model.ExecuteData.findOne({ line: lineId })
+        .sort({ eid: -1, _id: -1 }).select("_id").read("primary").lean();
+      if (String(latest?._id) !== String(candidate._id)) {
+        throw new Error("Latest boss changed during repair; retry repairBoss");
+      }
+      await assertLock();
+      if (candidate.active === true) {
+        const updated = await ctx.model.ExecuteData.updateOne(
+          { _id: candidate._id, line: lineId, active: true, bossStatus: { $nin: ["failed", "retired"] } },
+          { $set: { bossStatus: "active", bossPending: false } },
+          DURABLE_WRITE,
+        );
+        if (updated.matchedCount !== 1) throw new Error("Latest boss changed during repair");
+        await this.verifyActive(candidate, assertLock, balance.context.slot);
+      } else {
+        if (current && candidate.previousExecuteDataId && String(current._id) !== String(candidate.previousExecuteDataId)) {
+          throw new Error("Latest boss does not belong to the active source; repair refused");
+        }
+        const adopted = await ctx.model.ExecuteData.updateOne(
+          { _id: candidate._id, line: lineId, active: false, bossStatus: { $nin: ["failed", "retired"] } },
+          { $set: { bossPending: true, bossStatus: "pending" } },
+          DURABLE_WRITE,
+        );
+        if (adopted.matchedCount !== 1) throw new Error("Latest boss changed during repair");
+        // Uses conditional writes and the active unique index on standalone.
+        // If activation fails after retirement, this pending record is retryable.
+        await this.activate(candidate, current, assertLock, balance.context.slot);
+      }
+      ctx.logger.info(`Boss state repaired: line=${lineId}, address=${candidate.bossAddress}, previousAddress=${current?.bossAddress || "none"}`);
+      return result(true, balance);
+    });
+  }
+
   async recover(line, current, assertLock, { allowFunding = true } = {}) {
     const pending = await this.findPending(line, current);
     if (!pending) return false;
@@ -184,6 +270,12 @@ class BossLifecycle extends Service {
     if (!pending.transferSignature) {
       // A crash before preparing a transfer must reuse the saved keypair.
       if (pending.bossStatus === "pending") {
+        const balance = await connection.getBalanceAndContext(
+          new PublicKey(pending.bossAddress), { commitment: "finalized" },
+        );
+        if (balance.value >= this.minimumBalance()) {
+          return this.activate(pending, current, assertLock, balance.context.slot);
+        }
         if (!allowFunding) return false;
         if (!current) throw new Error(`Pending boss ${pending.bossAddress} has no source boss; manual reconciliation required`);
         return this.fund(pending, current, assertLock);

@@ -72,6 +72,7 @@ module.exports = (app) => {
     controller.executeSwap.claimCashback,
   );
   router.post("/v1/execute/getBoss", controller.executeSwap.getBoss);
+  router.post("/v1/execute/repairBoss", controller.executeSwap.repairBoss);
   router.post("/v1/execute/getLines", controller.executeSwap.getLines);
   router.post("/v1/execute/addLine", controller.executeSwap.addLine);
   router.post("/v1/execute/checkToken", controller.executeSwap.checkToken);

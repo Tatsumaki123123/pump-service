@@ -124,7 +124,7 @@ controller.executeSwap.start
 
 已 finalized 的失败交易或确认过期且目标 finalized 余额为 0 的交易可标为 `failed`，保留密钥和签名后重新尝试。交易历史查不到或查询失败时，读取不早于本次 finalized 链头的目标余额：达到门槛即可激活保存的目标，兼容缺少过期高度的旧记录；余额大于 0 但不足门槛时保留 pending。不能因为历史缺失和余额为 0 就提前丢弃尚未过期的交易。
 
-后台任务使用相同线路资金锁，只恢复保存的目标和交易，可重播原始签名交易，不创建新 boss、不签署新转账。没有交易签名的 `pending` 创建记录仍需显式 `start` 执行首次转账；`awaiting_funds` 记录可在充值确认后自动激活。单次任务未结束时避免在同一进程重复扫描，某条线路恢复失败会记录 `Boss reconciliation failed: line=...` 并继续处理其他线路。激活日志 `Boss activated` 包含线路、地址、余额和 slot。10 秒是调度间隔，实际恢复时间还取决于链上 finalized、资金锁、RPC 和数据库可用性。
+后台任务使用相同线路资金锁，只恢复保存的目标和交易，可重播原始签名交易，不创建新 boss、不签署新转账。没有交易签名的 `pending` 记录也先查 finalized 余额，已达到门槛则直接激活；不足门槛时仍需显式 `start` 执行首次转账。`awaiting_funds` 记录可在充值确认后自动激活。单次任务未结束时避免在同一进程重复扫描，某条线路恢复失败会记录 `Boss reconciliation failed: line=...` 并继续处理其他线路。激活日志 `Boss activated` 包含线路、地址、余额和 slot。10 秒是调度间隔，实际恢复时间还取决于链上 finalized、资金锁、RPC 和数据库可用性。
 
 `getBoss` 响应增加 `active`、`bossStatus`、`ready`、`minimumBalanceLamports` 和 `pending`（地址、eid、状态、签名），可观察当前活动记录和待恢复目标。
 
@@ -133,6 +133,43 @@ controller.executeSwap.start
 这个流程保证成功响应前完成资金和活动记录检查；后续业务充值/提现或外部持钥人的操作仍可能消耗余额。已确认链上转账与 MongoDB 不能组成分布式原子事务，中间故障通过保存的状态恢复。
 
 因此，`line` 表示批次归属线路，`eid` 表示全局唯一批次；线路切批次后，后续钱包和代币应绑定新 `eid`。
+
+#### 手动修复已到账但未激活的 Boss
+
+接口：`POST /v1/execute/repairBoss`
+
+请求：
+
+```json
+{ "line": 1 }
+```
+
+`line` 为正整数，可传数字或数字字符串。接口获取线路资金锁，按 `eid` 倒序（`_id` 倒序兜底）选择该线路最新的 `ExecuteData`，不会选择更早的有余额记录。校验已保存私钥与地址匹配，目标 finalized SOL 余额达到 `BOSS_ACTIVATION_MIN_LAMPORTS`（默认 10000 lamports，即 0.00001 SOL）后，修复 `pending`、`awaiting_funds`、缺失状态或 `active=false/bossStatus=active` 的不一致记录。
+
+修复关闭原活动记录（`active=false,bossStatus=retired`），将最新记录设为 `active=true,bossStatus=active,bossPending=false`，并核对余额与活动记录。无需查询原转账签名，不创建钱包、不广播或重播交易。已正确激活且余额达标时返回 `repaired=false`，重复调用不会轮换 Boss。
+
+响应示例（地址为占位符）：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "repaired": true,
+    "line": 1,
+    "eid": 101,
+    "address": "NEW_BOSS_ADDRESS",
+    "active": true,
+    "bossStatus": "active",
+    "balanceLamports": 10000000,
+    "balance": 0.01,
+    "minimumBalanceLamports": 10000,
+    "slot": 123456789,
+    "previousAddress": "OLD_BOSS_ADDRESS"
+  }
+}
+```
+
+记录不存在、目标余额不足、状态为 `failed/retired`、密钥不匹配、源记录不匹配、其他 pending 记录冲突、唯一索引冲突或资金锁被占用时拒绝修复。目标无余额时保留原 active 状态；RPC 查询失败不会跳过余额校验。MongoDB 4.4 standalone 使用带日志持久化的单文档条件更新，旧记录退役和新记录激活不是一个原子事务，中间宕机后可再次调用本接口恢复。响应不返回私钥。
 
 ### 3.3 生成或补充 `ExecuteWallet`
 

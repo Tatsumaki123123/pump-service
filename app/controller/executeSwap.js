@@ -210,6 +210,11 @@ class ExecuteSwap extends BaseController {
     }
   }
 
+  async repairBoss() {
+    const { line } = this.ctx.request.body;
+    this.success(await this.ctx.service.bossLifecycle.repairActive(line));
+  }
+
   async getLines() {
     const { ctx } = this;
     const res = await ctx.model.ExecuteLine.find().sort({ lineId: "asc" });
