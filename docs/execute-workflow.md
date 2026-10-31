@@ -4,6 +4,10 @@
 
 Pump AMM 买卖需要代币与 WSOL 的报价池。若链上有 Pump AMM 池但没有 WSOL 报价池，未配置专用路由的普通钱包会改用 Jupiter 进行 SOL 买入或代币卖出，默认滑点为 1%（线路显式设置滑点时以线路配置为准）。配置了 Axiom、Padre、Ave、代理、OKX 等专用路由的钱包仍使用原路由；这些路由当前依赖 WSOL Pump AMM 池，缺少该池时会明确报错，不会静默改走 Jupiter。Jupiter 请求未设置平台手续费，但仍需支付所选交易池的费用、链上手续费以及现有批量发送配置的 tip。
 
+`wallet.isJup=true` 选择 Jupiter 换币路由，买入仍通过现有 Bundle 平台发送。买入按实际批次并行获取 Jupiter 指令，再获取新的 blockhash；Jupiter 买入及非 WSOL 池的 Jupiter 卖出在生产环境也执行模拟，失败时返回程序错误和 logs。Jupiter 买入交易超长时可拆出 tip，但不会删除计算预算指令。包含 Jupiter 的买入批次构建或模拟失败时不会发送已构建的部分交易。
+
+`Bundle accepted but not landed` 表示观察超时；买入超时补充 token、发送平台和区块高度，需按原 signature 对账，不能据此认定交易失败后重新买入。单笔模拟无法保证批量内前序交易造成价格变化后，后序交易仍满足滑点。
+
 ## 1. 一句话概览
 
 `ExecuteLine` 定义“怎么执行”，`ExecuteData` 定义“当前哪一批执行实例”，`ExecuteWallet` 保存该批次实际使用的钱包，`ExecuteToken` 保存该批次处理过的代币任务。

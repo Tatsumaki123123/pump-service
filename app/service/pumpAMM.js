@@ -288,7 +288,6 @@ class PumpAMM extends Service {
 
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
-      const { blockhash } = await connection.getLatestBlockhash();
 
       const tokenProgramId = await getTokenProgramId(tokenMint);
       const needsPoolDetail = wallets.some(
@@ -374,11 +373,46 @@ class PumpAMM extends Service {
             });
           }),
         );
+        const isJupiterWallet = (wallet) =>
+          (wallet.isJup || useJupFallback) && !usesDedicatedPumpRoute(wallet);
+        const hasJupiterWallet = wallets.some(isJupiterWallet);
+        // Fetch this batch's quotes in parallel, before starting the blockhash
+        // lifetime. Do not reuse the hash across later buy stages or bundles.
+        const jupiterBuyData = await Promise.all(
+          wallets.map((wallet) => {
+            if (!isJupiterWallet(wallet)) return null;
+            return jupSwap.getBuyInstructions(ctx, {
+              user: wallet.keypair.publicKey,
+              tokenMint,
+              buyAmount: wallet.buyAmount,
+              slippage: wallet.slippage ?? (useJupFallback ? 0.01 : SLIPPAGE_BASIS_POINTS),
+              connection,
+            });
+          }),
+        );
+        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+        const sendBuyBundle = async (transactions) => {
+          try {
+            return await ctx.service.jito.sendBundle(transactions, sendOptions);
+          } catch (error) {
+            if (hasJupiterWallet && ctx.service.jito.isBundleNotLandedError(error)) {
+              let currentBlockHeight;
+              try {
+                currentBlockHeight = await connection.getBlockHeight("confirmed");
+              } catch (heightError) {
+                ctx.logger.warn("Could not read block height after Jupiter bundle timeout");
+              }
+              error.message += `; Jupiter buy context: token=${tokenMint.toBase58()}, provider=${isNozomi ? "nozomi" : BUNDLE_PROVIDER}, currentBlockHeight=${currentBlockHeight ?? "unknown"}, lastValidBlockHeight=${lastValidBlockHeight}. Check the original signatures before retrying; a timeout does not prove the transaction failed.`;
+            }
+            throw error;
+          }
+        };
         for (let i = 0; i < wallets.length; i++) {
           if (isNozomi) {
             jipAcc = ctx.service.jito.getTipAcc(sendOptions);
           }
           const wallet = wallets[i];
+          const isJupiter = isJupiterWallet(wallet);
           const slippage = wallet.slippage ?? SLIPPAGE_BASIS_POINTS;
           const keypair = wallet.keypair;
           const user = keypair.publicKey;
@@ -464,19 +498,8 @@ class PumpAMM extends Service {
               });
               volumeIxs.push(jitoTipIx);
             }
-          } else if (
-            (wallet.isJup || useJupFallback) &&
-            !usesDedicatedPumpRoute(wallet)
-          ) {
-            const jupSwapData = await jupSwap.getBuyInstructions(ctx, {
-              user,
-              tokenMint,
-              buyAmount,
-              slippage: useJupFallback
-                ? wallet.slippage ?? 0.01
-                : slippage,
-              connection,
-            });
+          } else if (isJupiter) {
+            const jupSwapData = jupiterBuyData[i];
             volumeIxs = [...jupSwapData.instructions];
             walletLookupTables = mergeLookupTableAccounts(
               lookupTables,
@@ -718,6 +741,9 @@ class PumpAMM extends Service {
                   instructions: swapIxs,
                 }).compileToV0Message(walletLookupTables);
               } catch (splitError) {
+                if (isJupiter) {
+                  throw new Error(`Jupiter buy transaction is too large for ${user.toBase58()}; preserving required compute budget instructions`, { cause: splitError });
+                }
                 if (!/encoding overruns Uint8Array/.test(splitError.message)) {
                   throw splitError;
                 }
@@ -741,6 +767,9 @@ class PumpAMM extends Service {
               try {
                 assertTxSize(tx, "swap tx");
               } catch (sizeError) {
+                if (isJupiter) {
+                  throw new Error(`Jupiter buy transaction is too large for ${user.toBase58()}; preserving required compute budget instructions`, { cause: sizeError });
+                }
                 if (isAxiom) {
                   throw new Error(
                     "Axiom transaction is too large. Configure AXIOM_LOOKUP_TABLES with the Axiom address lookup table used by the source transaction.",
@@ -810,10 +839,25 @@ class PumpAMM extends Service {
             }
 
             let simulationResult = null;
-            if (isDevelopmentEnvironment(ctx) || wallet.isGmgn) {
+            if (isDevelopmentEnvironment(ctx) || wallet.isGmgn || isJupiter) {
               simulationResult = await connection.simulateTransaction(tx, {
                 commitment: "confirmed",
               });
+            }
+
+            if (isJupiter) {
+              const signature = bs58.encode(Buffer.from(tx.signatures[0]));
+              ctx.logger.info("Jupiter buy simulation", {
+                token: tokenMint.toBase58(),
+                user: user.toBase58(),
+                signature,
+                lastValidBlockHeight,
+                unitsConsumed: simulationResult?.value?.unitsConsumed,
+                err: simulationResult?.value?.err,
+              });
+              if (!simulationResult?.value || simulationResult.value.err) {
+                throw new Error(`Jupiter buy simulation failed for ${user.toBase58()} (${signature}): ${JSON.stringify(simulationResult?.value?.err || "empty result")} ${JSON.stringify(simulationResult?.value?.logs || [])}`);
+              }
             }
 
             if (simulationResult && wallet.isPadre && !isProxy) {
@@ -939,7 +983,7 @@ class PumpAMM extends Service {
             }
           } catch (error) {
             console.error(error);
-            if (buyTxns.length === 0 || isPadreBundle) {
+            if (buyTxns.length === 0 || isPadreBundle || hasJupiterWallet) {
               throw error;
             }
             break;
@@ -977,10 +1021,7 @@ class PumpAMM extends Service {
         if (buyTxns.length > 0) {
           const allTxns = buyTxns.map((item) => item.tx);
           if (isNozomi) {
-            const batchResult = await ctx.service.jito.sendBundle(
-              allTxns,
-              sendOptions,
-            );
+            const batchResult = await sendBuyBundle(allTxns);
             console.log("Pump AMM Nozomi batch result", batchResult);
             console.log(chalk.green("Buy transactions completed."));
             return;
@@ -994,24 +1035,18 @@ class PumpAMM extends Service {
               .map((item) => item.tx);
             const axiomBundleResults = await Promise.all(
               axiomTxns.map((axiomTxn) =>
-                ctx.service.jito.sendBundle([axiomTxn], sendOptions),
+                sendBuyBundle([axiomTxn]),
               ),
             );
             console.log("Axiom bundle results", axiomBundleResults);
             if (bundleTxns.length > 0) {
-              const bundleResult = await ctx.service.jito.sendBundle(
-                bundleTxns,
-                sendOptions,
-              );
+              const bundleResult = await sendBuyBundle(bundleTxns);
               console.log("Pump AMM bundle result", bundleResult);
             }
             console.log(chalk.green("Buy transactions completed."));
             return;
           }
-          const bundleResult = await ctx.service.jito.sendBundle(
-            allTxns,
-            sendOptions,
-          );
+          const bundleResult = await sendBuyBundle(allTxns);
           console.log("Pump AMM combined bundle result", bundleResult);
           console.log(chalk.green("Buy transactions completed."));
         }
@@ -1431,8 +1466,9 @@ class PumpAMM extends Service {
         }
         transactions.push(transaction);
       }
-      if (isDevelopmentEnvironment(ctx)) {
-        await Promise.all(transactions.map(async (transaction, i) => {
+      // Non-WSOL Jupiter routes also need production preflight diagnostics;
+      // a bundle provider may accept a transaction that cannot execute.
+      await Promise.all(transactions.map(async (transaction, i) => {
           const signature = bs58.encode(Buffer.from(transaction.signatures[0]));
           const user = prepared[i].user.toBase58();
           let simulation;
@@ -1457,8 +1493,7 @@ class PumpAMM extends Service {
           if (!simulation.value || simulation.value.err) {
             throw new Error(`Jupiter sell simulation failed for ${user} (${signature}): ${JSON.stringify(simulation.value?.err || "empty result")} ${JSON.stringify(simulation.value?.logs || [])}`);
           }
-        }));
-      }
+      }));
       if (transactions.length > 1) {
         await ctx.service.jito.sendBundle(transactions);
       } else {

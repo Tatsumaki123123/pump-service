@@ -403,7 +403,7 @@ class Jito extends Service {
   }
 
   isBundleNotLandedError(error) {
-    return /Bundle accepted but not landed within \d+ms/.test(
+    return /\bbundle accepted but not landed within \d+ms/i.test(
       error?.message || "",
     );
   }
@@ -908,10 +908,12 @@ class Jito extends Service {
 
       const deadline = Date.now() + JITO_WAIT_MS;
       let bundleId = null;
+      let acceptedUrl;
       let attempt = 0;
       while (Date.now() < deadline) {
         attempt += 1;
         const { url, data } = await this.submitBundleJito(body);
+        acceptedUrl = url;
         bundleId = data.result || bundleId;
         console.log(
           chalk.green(
@@ -939,9 +941,34 @@ class Jito extends Service {
         }
       }
 
-      throw new Error(
+      // Acceptance is not execution. Ask the accepting engine for its view so
+      // auction drops and execution failures are visible alongside RPC status.
+      const diagnostics = await Promise.allSettled(
+        ["getInflightBundleStatuses", "getBundleStatuses"].map(async (method) => {
+          const response = await this.ctx.curl(acceptedUrl, {
+            method: "POST",
+            contentType: "json",
+            dataType: "json",
+            timeout: 3000,
+            data: { jsonrpc: "2.0", id: 1, method, params: [[bundleId]] },
+          });
+          return { method, data: response.data };
+        }),
+      );
+      const bundleStatuses = diagnostics.map((result) =>
+        result.status === "fulfilled"
+          ? result.value
+          : { diagnosticError: result.reason?.message },
+      );
+      this.ctx.logger.warn("Jito bundle landing timeout", { bundleId, signatures, bundleStatuses });
+      const timeoutError = new Error(
         `Jito bundle accepted but not landed within ${JITO_WAIT_MS}ms: ${signatures.join(", ")}`,
       );
+      timeoutError.code = "BUNDLE_LANDING_UNKNOWN";
+      timeoutError.bundleId = bundleId;
+      timeoutError.signatures = signatures;
+      timeoutError.bundleStatuses = bundleStatuses;
+      throw timeoutError;
     } catch (error) {
       console.error(chalk.red("Error sending bundle via Jito:"), error.message);
       throw error;

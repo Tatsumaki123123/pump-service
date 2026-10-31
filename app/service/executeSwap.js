@@ -195,7 +195,7 @@ class ExecuteSwap extends Service {
     return sequence.value;
   }
 
-  async withBossGenerationLock(line, action) {
+  async withBossGenerationLock(line, action, { skipLock = false } = {}) {
     const lineId = Number(line);
     if (
       !["string", "number"].includes(typeof line) ||
@@ -203,15 +203,18 @@ class ExecuteSwap extends Service {
     ) {
       throw new Error("line must be a positive integer");
     }
+    if (skipLock) {
+      return action(async () => {});
+    }
     return this.withLineOperationLock(lineId, "boss-funds", action);
   }
 
-  async withBossFundsLock(line, action) {
+  async withBossFundsLock(line, action, options) {
     return this.withBossGenerationLock(line, async (assertLock) => {
       await this.ctx.service.bossLifecycle.assertNoPending(line);
       await assertLock();
       return action(assertLock);
-    });
+    }, options);
   }
 
   async withLineOperationLock(line, operation, action) {
@@ -645,7 +648,11 @@ class ExecuteSwap extends Service {
 
   // Boss回收sol
   async recycleSol(line, force = false) {
-    return this.withBossFundsLock(line, (assertLock) => this.recycleSolUnderLock(line, force, assertLock));
+    return this.withBossFundsLock(
+      line,
+      (assertLock) => this.recycleSolUnderLock(line, force, assertLock),
+      { skipLock: force === true },
+    );
   }
 
   async recycleSolUnderLock(line, force, assertLock) {
