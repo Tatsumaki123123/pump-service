@@ -87,6 +87,13 @@ class BossLifecycle extends Service {
     return status && (status.confirmationStatus === "finalized" || status.confirmations === null);
   }
 
+  pendingError(candidate, message) {
+    const error = new Error(message);
+    error.code = "BOSS_RECOVERY_PENDING";
+    error.bossAddress = candidate.bossAddress;
+    return error;
+  }
+
   async activate(candidate, previous, assertLock, minContextSlot) {
     const { ctx } = this;
     await assertLock();
@@ -95,7 +102,7 @@ class BossLifecycle extends Service {
       { commitment: "finalized", ...(minContextSlot == null ? {} : { minContextSlot }) },
     );
     if (balance.value < this.minimumBalance()) {
-      throw new Error(`Boss ${candidate.bossAddress} is awaiting funds: needs at least ${this.minimumBalance()} lamports, found ${balance.value}; active was not changed`);
+      throw this.pendingError(candidate, `Boss ${candidate.bossAddress} is awaiting finalized funds: needs at least ${this.minimumBalance()} lamports, found ${balance.value}; automatic reconciliation will retry`);
     }
 
     // Single-document conditional writes also work on MongoDB standalone.
@@ -109,6 +116,9 @@ class BossLifecycle extends Service {
     const active = await ctx.service.executeSwap.getExecuteData(candidate.line);
     if (active && String(active._id) !== String(previous?._id)) {
       throw new Error("Active boss changed before activation; reconcile before retrying");
+    }
+    if (active && candidate.previousExecuteDataId && String(active._id) !== String(candidate.previousExecuteDataId)) {
+      throw new Error("Pending boss does not belong to the active source; manual reconciliation required");
     }
     if (active) {
       await assertLock();
@@ -141,6 +151,7 @@ class BossLifecycle extends Service {
 
     await this.verifyActive(candidate, assertLock, balance.context.slot);
     this.writeKeypair(candidate);
+    ctx.logger.info(`Boss activated: line=${candidate.line}, address=${candidate.bossAddress}, balanceLamports=${balance.value}, slot=${balance.context.slot}`);
     return true;
   }
 
@@ -159,7 +170,7 @@ class BossLifecycle extends Service {
     }
   }
 
-  async recover(line, current, assertLock) {
+  async recover(line, current, assertLock, { allowFunding = true } = {}) {
     const pending = await this.findPending(line, current);
     if (!pending) return false;
     await assertLock();
@@ -173,16 +184,24 @@ class BossLifecycle extends Service {
     if (!pending.transferSignature) {
       // A crash before preparing a transfer must reuse the saved keypair.
       if (pending.bossStatus === "pending") {
+        if (!allowFunding) return false;
         if (!current) throw new Error(`Pending boss ${pending.bossAddress} has no source boss; manual reconciliation required`);
         return this.fund(pending, current, assertLock);
       }
       return this.activate(pending, current, assertLock);
     }
 
-    const { value } = await connection.getSignatureStatuses(
-      [pending.transferSignature], { searchTransactionHistory: true },
-    );
-    const status = value?.[0];
+    let status;
+    try {
+      const { value } = await connection.getSignatureStatuses(
+        [pending.transferSignature], { searchTransactionHistory: true },
+      );
+      status = value?.[0];
+    } catch (error) {
+      // Some RPC providers cannot serve history. The finalized balance can
+      // still establish that the saved destination is funded.
+      this.ctx.logger.warn(`Boss transfer history unavailable: line=${line}, address=${pending.bossAddress}, signature=${pending.transferSignature}`);
+    }
     if (this.isFinalized(status)) {
       if (!status.err) return this.activate(pending, current, assertLock, status.slot);
       await this.markFailed(pending, assertLock);
@@ -190,13 +209,19 @@ class BossLifecycle extends Service {
     }
     if (!status) {
       const head = await connection.getEpochInfo({ commitment: "finalized" });
+      const balance = await connection.getBalanceAndContext(
+        new PublicKey(pending.bossAddress),
+        { commitment: "finalized", minContextSlot: head.absoluteSlot },
+      );
+      // Activation requires a funded destination, even when history was pruned
+      // or legacy records lack an expiry height. Expiry is required only to
+      // abandon an empty destination and permit a newly signed transaction.
+      if (balance.value >= this.minimumBalance()) {
+        return this.activate(pending, current, assertLock, balance.context.slot);
+      }
       if (pending.transferLastValidBlockHeight != null && head.blockHeight > pending.transferLastValidBlockHeight) {
-        const balance = await connection.getBalanceAndContext(
-          new PublicKey(pending.bossAddress),
-          { commitment: "finalized", minContextSlot: head.absoluteSlot },
-        );
         if (balance.value > 0) {
-          throw new Error(`Boss ${pending.bossAddress} has funds but transaction history is unavailable; retaining pending record for reconciliation`);
+          throw this.pendingError(pending, `Boss ${pending.bossAddress} has finalized funds below the activation minimum; retaining pending record`);
         }
         // Expiry plus a zero balance at a finalized post-expiry slot permits a new attempt.
         await this.markFailed(pending, assertLock);
@@ -215,7 +240,35 @@ class BossLifecycle extends Service {
         }
       }
     }
-    throw new Error(`Boss transfer ${pending.transferSignature} is pending finalization; retry start to reconcile the same transaction`);
+    throw this.pendingError(pending, `Boss transfer ${pending.transferSignature} is pending finalization; automatic reconciliation will retry the saved destination`);
+  }
+
+  async reconcilePending() {
+    const { ctx } = this;
+    const lines = await ctx.model.ExecuteData.distinct("line", {
+      active: false,
+      $or: [
+        { bossPending: true },
+        { bossStatus: { $in: ["pending", "awaiting_funds"] } },
+        { bossStatus: { $exists: false }, transferSignature: { $exists: true } },
+      ],
+    });
+    for (const line of lines) {
+      if (!Number.isSafeInteger(line) || line < 1) continue;
+      try {
+        await ctx.service.executeSwap.withBossGenerationLock(line, async (assertLock) => {
+          await this.prepareStorage();
+          const current = await ctx.service.executeSwap.getExecuteData(line);
+          // Only recover saved work. Never create a boss or sign another transfer.
+          if (await this.recover(line, current, assertLock, { allowFunding: false })) {
+            ctx.logger.info(`Pending boss activated by reconciliation: line=${line}`);
+          }
+        });
+      } catch (error) {
+        if (["BOSS_RECOVERY_PENDING", "LINE_OPERATION_LOCKED"].includes(error.code)) continue;
+        ctx.logger.error(`Boss reconciliation failed: line=${line}`, error);
+      }
+    }
   }
 
   async markFailed(candidate, assertLock) {
@@ -236,27 +289,40 @@ class BossLifecycle extends Service {
     if (source.publicKey.toBase58() !== previous.bossAddress) {
       throw new Error("Source boss private key does not match its address");
     }
-    const transferred = await transferAllSol(
-      connection, source, new PublicKey(candidate.bossAddress), 0,
-      async (transfer) => {
-        await assertLock();
-        const saved = await this.ctx.model.ExecuteData.updateOne(
-          { _id: candidate._id, active: false, bossPending: true, transferSignature: { $exists: false } },
-          {
-            $set: {
-              transferSignature: transfer.signature,
-              transferBlockhash: transfer.blockhash,
-              transferLastValidBlockHeight: transfer.lastValidBlockHeight,
-              transferTransaction: transfer.transaction,
+    let transferred;
+    try {
+      transferred = await transferAllSol(
+        connection, source, new PublicKey(candidate.bossAddress), 0,
+        async (transfer) => {
+          await assertLock();
+          const saved = await this.ctx.model.ExecuteData.updateOne(
+            { _id: candidate._id, active: false, bossPending: true, transferSignature: { $exists: false } },
+            {
+              $set: {
+                transferSignature: transfer.signature,
+                transferBlockhash: transfer.blockhash,
+                transferLastValidBlockHeight: transfer.lastValidBlockHeight,
+                transferTransaction: transfer.transaction,
+              },
             },
-          },
-          DURABLE_WRITE,
-        );
-        if (saved.matchedCount !== 1) throw new Error("Could not persist boss transfer before broadcast");
-        await assertLock();
-      },
-      { commitment: "finalized", minimumTransferLamports: this.minimumBalance(), confirmationTimeoutMs: 20000 },
-    );
+            DURABLE_WRITE,
+          );
+          if (saved.matchedCount !== 1) throw new Error("Could not persist boss transfer before broadcast");
+          await assertLock();
+        },
+        { commitment: "finalized", minimumTransferLamports: this.minimumBalance(), confirmationTimeoutMs: 20000 },
+      );
+    } catch (error) {
+      // The transaction may have landed after the confirmation deadline.
+      // Reconcile now as well as in the scheduled recovery worker.
+      const saved = await this.ctx.model.ExecuteData.exists({
+        _id: candidate._id, active: false, bossPending: true,
+        transferSignature: { $exists: true },
+      });
+      if (!saved) throw error;
+      this.ctx.logger.warn(`Boss transfer needs reconciliation: line=${candidate.line}, address=${candidate.bossAddress}, reason=${error.code || error.name}`);
+      return this.recover(candidate.line, previous, assertLock, { allowFunding: false });
+    }
     if (!transferred) {
       // No transaction was prepared or submitted. Do not activate an empty destination.
       await this.markFailed(candidate, assertLock);

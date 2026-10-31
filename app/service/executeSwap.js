@@ -234,7 +234,9 @@ class ExecuteSwap extends Service {
         });
       } catch (error) {
         if (error.code === 11000) {
-          throw new Error(`${operation} is already running for line ${line}`);
+          const locked = new Error(`${operation} is already running for line ${line}`);
+          locked.code = "LINE_OPERATION_LOCKED";
+          throw locked;
         }
         throw error;
       }

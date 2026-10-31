@@ -90,7 +90,7 @@ controller.executeSwap.start
    - `active=false`、`bossStatus=awaiting_funds`、`createTime=当前时间`、`line=line`；
    - `walletsExist` 使用模型默认值 `false`。
 3. 密钥存入 MongoDB 并继续写出 `keypair.json`。接口返回待充值错误，包含新地址；可通过 `/v1/execute/getBoss` 查询 `active=false` 的待充值记录，响应不包含私钥。
-4. 向该地址充值后再次调用 `start`，确认 finalized 余额达到门槛后才激活。默认激活门槛为 10000 lamports（0.00001 SOL），可用 `BOSS_ACTIVATION_MIN_LAMPORTS` 配置为正整数；实际首次充值还须满足链上账户租金等要求。
+4. 向该地址充值后，后台对账任务确认 finalized 余额达到门槛后激活，也可再次调用 `start` 恢复。默认激活门槛为 10000 lamports（0.00001 SOL），可用 `BOSS_ACTIVATION_MIN_LAMPORTS` 配置为正整数；实际首次充值还须满足链上账户租金等要求。
 
 `eid` 是跨线路唯一的批次编号，不再由 `line` 计算。MongoDB 中以 BSON Int64（Extended JSON 显示为 `$numberLong`）保存，分配前会用现有最大 `eid` 对齐序列，之后通过 MongoDB 原子 `$inc` 递增，因此首次部署不需要手工回填序列值。Mongoose getter 保持业务对象和 JSON 接口中的 `eid` 为安全范围内的数字。
 
@@ -107,14 +107,18 @@ controller.executeSwap.start
 2. 若存在 pending/awaiting_funds boss，先恢复它；未确认时不新建目标地址，不重复签署另一笔转账。
 3. 旧 boss 余额必须足够支付转账手续费，并使目标余额达到激活门槛；否则报错，不激活空钱包。
 4. 保存新 boss：新 `eid`、`active=false`、`bossStatus=pending`。广播前持久化已签名交易、signature、blockhash、有效高度，进程中断后仍能重播同一笔交易。
-5. 转账等待 finalized，单次等待 20 秒。超时保留 pending，下一次请求继续查询/重播同一交易。
+5. 转账等待 finalized，单次等待 20 秒。转账异常后立即对账，仍未确认时保留 pending。`app/schedule/bossRecovery.js` 在进程启动后及每 10 秒调度恢复，下一次请求也可继续恢复。
 6. 交易 finalized 后，从不早于交易 slot 的 finalized 状态读取目标余额；低于门槛不激活。
 7. 使用单文档条件更新先退役旧 boss，再激活已到账的新 boss。新目标保留 `bossPending=true` 直到激活，唯一索引防止创建第二个待切换目标。每步检查资金锁；中间宕机允许暂时无活动记录，重试从 pending 恢复。
 8. 返回成功前，再确认活动记录是目标 boss，且 finalized 余额仍达到门槛。保存激活余额、slot 和时间供排查。
 
 同一线路的 boss 切换、钱包充值、回收、提现和换钱包共用 MongoDB 资金锁，锁会续期。存在 pending 时需先调用 `start` 对账。数据库分别限制每条线路最多一条 `active=true` 和一条 `bossPending=true`。关键记录使用 `w:1, j:true`，日志持久化后才继续。支持 MongoDB 4.4 standalone；存量重复活动记录或待切换标记会导致索引失败，应先人工核对处理。
 
-已 finalized 的失败交易或确认过期且目标 finalized 余额为 0 的交易可标为 `failed`，保留密钥和签名后重新尝试。交易历史不可用但目标已有余额时保持 pending，提示人工对账，不丢弃地址。`getBoss` 响应增加 `active`、`bossStatus`、`ready`、`minimumBalanceLamports` 和 `pending`（地址、eid、状态、签名），可观察当前活动记录和待恢复目标。
+已 finalized 的失败交易或确认过期且目标 finalized 余额为 0 的交易可标为 `failed`，保留密钥和签名后重新尝试。交易历史查不到或查询失败时，读取不早于本次 finalized 链头的目标余额：达到门槛即可激活保存的目标，兼容缺少过期高度的旧记录；余额大于 0 但不足门槛时保留 pending。不能因为历史缺失和余额为 0 就提前丢弃尚未过期的交易。
+
+后台任务使用相同线路资金锁，只恢复保存的目标和交易，可重播原始签名交易，不创建新 boss、不签署新转账。没有交易签名的 `pending` 创建记录仍需显式 `start` 执行首次转账；`awaiting_funds` 记录可在充值确认后自动激活。单次任务未结束时避免在同一进程重复扫描，某条线路恢复失败会记录 `Boss reconciliation failed: line=...` 并继续处理其他线路。激活日志 `Boss activated` 包含线路、地址、余额和 slot。10 秒是调度间隔，实际恢复时间还取决于链上 finalized、资金锁、RPC 和数据库可用性。
+
+`getBoss` 响应增加 `active`、`bossStatus`、`ready`、`minimumBalanceLamports` 和 `pending`（地址、eid、状态、签名），可观察当前活动记录和待恢复目标。
 
 部署期间先停止旧版本的资金任务再更新所有实例。上线前需在 MongoDB 4.4 standalone 和测试链环境验证：余额不足、首次充值、转账后和退役后宕机、RPC 超时、历史缺失、并发切换及同一签名重播。本次改动不执行真实转账或数据库迁移。
 
