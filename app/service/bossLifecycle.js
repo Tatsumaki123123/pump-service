@@ -190,12 +190,24 @@ class BossLifecycle extends Service {
 
   async repairActive(line) {
     const { ctx } = this;
-    return ctx.service.executeSwap.withBossGenerationLock(line, async (assertLock) => {
-      const lineId = Number(line);
+    const lineId = Number(line);
+    if (!["string", "number"].includes(typeof line) || !Number.isSafeInteger(lineId) || lineId < 1) {
+      throw new Error("line must be a positive integer");
+    }
+    // Repair only reconciles funded records. It must remain available even
+    // when a stalled funds task still owns the line lease.
+    const repair = async () => {
       await this.prepareStorage();
       const candidate = await ctx.model.ExecuteData.findOne({ line: lineId })
         .sort({ eid: -1, _id: -1 }).read("primary").lean();
       if (!candidate) throw new Error(`No ExecuteData exists for line ${lineId}`);
+      const assertRepairTarget = async () => {
+        const latest = await ctx.model.ExecuteData.findOne({ line: lineId })
+          .sort({ eid: -1, _id: -1 }).select("_id bossStatus").read("primary").lean();
+        if (String(latest?._id) !== String(candidate._id) || ["failed", "retired"].includes(latest?.bossStatus)) {
+          throw new Error("Latest boss changed during repair; retry repairBoss");
+        }
+      };
       const current = await ctx.service.executeSwap.getExecuteData(lineId);
       const result = (repaired, balance) => ({
         repaired,
@@ -231,9 +243,9 @@ class BossLifecycle extends Service {
       if (balance.value < this.minimumBalance()) {
         throw new Error(`Latest boss ${candidate.bossAddress} needs at least ${this.minimumBalance()} finalized lamports, found ${balance.value}; no active state was changed`);
       }
-      await assertLock();
+      await assertRepairTarget();
       if (candidate.active === true && candidate.bossStatus === "active" && candidate.bossPending === false) {
-        await this.verifyActive(candidate, assertLock, balance.context.slot);
+        await this.verifyActive(candidate, assertRepairTarget, balance.context.slot);
         return result(false, balance);
       }
       const otherPending = await ctx.model.ExecuteData.exists({
@@ -246,7 +258,7 @@ class BossLifecycle extends Service {
       if (String(latest?._id) !== String(candidate._id)) {
         throw new Error("Latest boss changed during repair; retry repairBoss");
       }
-      await assertLock();
+      await assertRepairTarget();
       if (candidate.active === true) {
         const updated = await ctx.model.ExecuteData.updateOne(
           { _id: candidate._id, line: lineId, active: true, bossStatus: { $nin: ["failed", "retired"] } },
@@ -254,7 +266,7 @@ class BossLifecycle extends Service {
           DURABLE_WRITE,
         );
         if (updated.matchedCount !== 1) throw new Error("Latest boss changed during repair");
-        await this.verifyActive(candidate, assertLock, balance.context.slot);
+        await this.verifyActive(candidate, assertRepairTarget, balance.context.slot);
       } else {
         if (current && candidate.previousExecuteDataId && String(current._id) !== String(candidate.previousExecuteDataId)) {
           throw new Error("Latest boss does not belong to the active source; repair refused");
@@ -267,11 +279,12 @@ class BossLifecycle extends Service {
         if (adopted.matchedCount !== 1) throw new Error("Latest boss changed during repair");
         // Uses conditional writes and the active unique index on standalone.
         // If activation fails after retirement, this pending record is retryable.
-        await this.activate(candidate, current, assertLock, balance.context.slot);
+        await this.activate(candidate, current, assertRepairTarget, balance.context.slot);
       }
       ctx.logger.info(`Boss state repaired: line=${lineId}, address=${candidate.bossAddress}, previousAddress=${current?.bossAddress || "none"}`);
       return result(true, balance);
-    });
+    };
+    return repair();
   }
 
   async recover(line, current, assertLock, { allowFunding = true } = {}) {

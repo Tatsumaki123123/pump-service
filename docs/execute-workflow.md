@@ -148,7 +148,7 @@ Boss 生命周期的余额、状态、链头查询及其转账 RPC 调用增加�
 { "line": 1 }
 ```
 
-`line` 为正整数，可传数字或数字字符串。接口获取线路资金锁，按 `eid` 倒序（`_id` 倒序兜底）选择该线路最新的 `ExecuteData`，不会选择更早的有余额记录。校验已保存私钥与地址匹配，目标 finalized SOL 余额达到 `BOSS_ACTIVATION_MIN_LAMPORTS`（默认 10000 lamports，即 0.00001 SOL）后，修复 `pending`、`awaiting_funds`、缺失状态或 `active=false/bossStatus=active` 的不一致记录。
+`line` 为正整数，可传数字或数字字符串。修复接口不获取、不等待 `boss-funds` 资金锁，即使旧资金任务仍占锁也可调用；不删除资金锁，不中止正在执行的转账。按 `eid` 倒序（`_id` 倒序兜底）选择该线路最新的 `ExecuteData`，不会选择更早的有余额记录。校验已保存私钥与地址匹配，目标 finalized SOL 余额达到 `BOSS_ACTIVATION_MIN_LAMPORTS`（默认 10000 lamports，即 0.00001 SOL）后，修复 `pending`、`awaiting_funds`、缺失状态或 `active=false/bossStatus=active` 的不一致记录。写入前及完成校验时重新检查最新地址与状态；最新记录发生变化或进入 failed/retired 时停止修复。
 
 修复关闭原活动记录（`active=false,bossStatus=retired`），将最新记录设为 `active=true,bossStatus=active,bossPending=false`，并核对余额与活动记录。无需查询原转账签名，不创建钱包、不广播或重播交易。已正确激活且余额达标时返回 `repaired=false`，重复调用不会轮换 Boss。
 
@@ -173,7 +173,7 @@ Boss 生命周期的余额、状态、链头查询及其转账 RPC 调用增加�
 }
 ```
 
-记录不存在、目标余额不足、状态为 `failed/retired`、密钥不匹配、源记录不匹配、其他 pending 记录冲突、唯一索引冲突或资金锁被占用时拒绝修复。目标无余额时保留原 active 状态；RPC 查询失败不会跳过余额校验。MongoDB 4.4 standalone 使用带日志持久化的单文档条件更新，旧记录退役和新记录激活不是一个原子事务，中间宕机后可再次调用本接口恢复。响应不返回私钥。
+记录不存在、目标余额不足、状态为 `failed/retired`、密钥不匹配、源记录不匹配、其他 pending 记录冲突或唯一索引冲突时拒绝修复。修复接口不会因为资金锁被占用返回 `boss-funds is already running`，其他资金接口仍使用资金锁。目标无余额时保留原 active 状态；RPC 查询失败不会跳过余额校验。MongoDB 4.4 standalone 使用带日志持久化的单文档条件更新和 active 唯一索引，旧记录退役和新记录激活不是一个原子事务，中间宕机后可再次调用本接口恢复。并发修改可能返回状态变化错误，需要重新查询或重试修复；本接口不能保证与正在执行的资金任务完全互斥。响应不返回私钥。
 
 ### 3.3 生成或补充 `ExecuteWallet`
 
