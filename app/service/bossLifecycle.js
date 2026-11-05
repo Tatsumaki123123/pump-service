@@ -10,6 +10,9 @@ const { transferAllSol } = require("../utils/solana");
 const ACTIVE_BOSS_INDEX = "one_active_boss_per_line";
 const PENDING_BOSS_INDEX = "one_pending_boss_per_line";
 const DURABLE_WRITE = { writeConcern: { w: 1, j: true } };
+// Load-balanced RPC endpoints need a moment to agree on the slot we observed;
+// three short retries cover a few hundred milliseconds of node skew.
+const BALANCE_SLOT_RETRY_DELAYS_MS = [120, 300, 600];
 
 class BossLifecycle extends Service {
   async rpcWithTimeout(method, ...args) {
@@ -28,6 +31,56 @@ class BossLifecycle extends Service {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  isMinContextSlotError(error) {
+    return /Minimum context slot has not been reached/i.test(error?.message || "");
+  }
+
+  /**
+   * Finalized balance read guarded by minContextSlot.
+   *
+   * minContextSlot is sent to the RPC node, but a load-balanced endpoint
+   * (QuickNode) may serve two consecutive calls from nodes with different slot
+   * views: the slot observed a moment ago can be ahead of the node answering
+   * the next request, and the node then rejects the call with
+   * "Minimum context slot has not been reached". That is endpoint routing, not
+   * evidence of stale data, so the guarded read is retried and finally replaced
+   * by an unguarded read whose context slot is compared locally. Callers keep
+   * the same freshness guarantee without a hard failure while starting a boss.
+   *
+   * strict=false is used for post-activation verification, where reporting a
+   * completed activation as failed is worse than accepting a slightly older
+   * finalized read.
+   */
+  async readBalance(address, minContextSlot, { strict = true } = {}) {
+    const owner = new PublicKey(address);
+    const request = (slot) => this.rpcWithTimeout("getBalanceAndContext", owner, {
+      commitment: "finalized",
+      ...(slot == null ? {} : { minContextSlot: slot }),
+    });
+    if (minContextSlot == null) return request(null);
+    for (const [index, delay] of BALANCE_SLOT_RETRY_DELAYS_MS.entries()) {
+      try {
+        return await request(minContextSlot);
+      } catch (error) {
+        if (!this.isMinContextSlotError(error)) throw error;
+        // Warn once per read so the 10s reconciliation loop stays readable.
+        if (index === 0) {
+          this.ctx.logger.warn(`Boss balance read waits for slot ${minContextSlot}: ${address}`);
+        }
+        await this.sleep(delay);
+      }
+    }
+    const fallback = await request(null);
+    if (!strict || fallback.context.slot >= minContextSlot) return fallback;
+    const error = new Error(`Boss balance for ${address} is ${minContextSlot - fallback.context.slot} slot(s) behind required slot ${minContextSlot}; state is retained, retry shortly`);
+    error.code = "BOSS_RPC_SLOT_LAG";
+    throw error;
   }
 
   writeKeypair(candidate) {
@@ -115,10 +168,7 @@ class BossLifecycle extends Service {
   async activate(candidate, previous, assertLock, minContextSlot) {
     const { ctx } = this;
     await assertLock();
-    const balance = await this.rpcWithTimeout("getBalanceAndContext",
-      new PublicKey(candidate.bossAddress),
-      { commitment: "finalized", ...(minContextSlot == null ? {} : { minContextSlot }) },
-    );
+    const balance = await this.readBalance(candidate.bossAddress, minContextSlot);
     if (balance.value < this.minimumBalance()) {
       throw this.pendingError(candidate, `Boss ${candidate.bossAddress} is awaiting finalized funds: needs at least ${this.minimumBalance()} lamports, found ${balance.value}; automatic reconciliation will retry`);
     }
@@ -179,10 +229,7 @@ class BossLifecycle extends Service {
     if (!active || String(active._id) !== String(candidate._id)) {
       throw new Error("Boss activation could not be verified");
     }
-    const { value } = await this.rpcWithTimeout("getBalanceAndContext",
-      new PublicKey(candidate.bossAddress),
-      { commitment: "finalized", ...(minContextSlot == null ? {} : { minContextSlot }) },
-    );
+    const { value } = await this.readBalance(candidate.bossAddress, minContextSlot, { strict: false });
     if (value < this.minimumBalance()) {
       throw new Error(`Active boss balance is below ${this.minimumBalance()} lamports; new boss did not complete successfully`);
     }
@@ -237,9 +284,7 @@ class BossLifecycle extends Service {
       if (keypair.publicKey.toBase58() !== candidate.bossAddress) {
         throw new Error("Latest boss private key does not match its address; repair refused");
       }
-      const balance = await this.rpcWithTimeout("getBalanceAndContext",
-        new PublicKey(candidate.bossAddress), { commitment: "finalized" },
-      );
+      const balance = await this.readBalance(candidate.bossAddress);
       if (balance.value < this.minimumBalance()) {
         throw new Error(`Latest boss ${candidate.bossAddress} needs at least ${this.minimumBalance()} finalized lamports, found ${balance.value}; no active state was changed`);
       }
@@ -301,9 +346,7 @@ class BossLifecycle extends Service {
     if (!pending.transferSignature) {
       // A crash before preparing a transfer must reuse the saved keypair.
       if (pending.bossStatus === "pending") {
-        const balance = await this.rpcWithTimeout("getBalanceAndContext",
-          new PublicKey(pending.bossAddress), { commitment: "finalized" },
-        );
+        const balance = await this.readBalance(pending.bossAddress);
         if (balance.value >= this.minimumBalance()) {
           return this.activate(pending, current, assertLock, balance.context.slot);
         }
@@ -332,10 +375,7 @@ class BossLifecycle extends Service {
     }
     if (!status) {
       const head = await this.rpcWithTimeout("getEpochInfo", { commitment: "finalized" });
-      const balance = await this.rpcWithTimeout("getBalanceAndContext",
-        new PublicKey(pending.bossAddress),
-        { commitment: "finalized", minContextSlot: head.absoluteSlot },
-      );
+      const balance = await this.readBalance(pending.bossAddress, head.absoluteSlot);
       // Activation requires a funded destination, even when history was pruned
       // or legacy records lack an expiry height. Expiry is required only to
       // abandon an empty destination and permit a newly signed transaction.
@@ -384,9 +424,7 @@ class BossLifecycle extends Service {
         const current = await ctx.service.executeSwap.getExecuteData(line);
         const pending = await this.findPending(line, current);
         if (!pending) continue;
-        const balance = await this.rpcWithTimeout("getBalanceAndContext",
-          new PublicKey(pending.bossAddress), { commitment: "finalized" },
-        );
+        const balance = await this.readBalance(pending.bossAddress);
         if (balance.value < this.minimumBalance()) continue;
         await ctx.service.executeSwap.withBossGenerationLock(line, async (assertLock) => {
           await this.prepareStorage();
@@ -404,7 +442,7 @@ class BossLifecycle extends Service {
           ctx.logger.info(`Pending boss activated by reconciliation: line=${line}`);
         }, { waitMs: 0, owner: "bossRecovery" });
       } catch (error) {
-        if (["BOSS_RECOVERY_PENDING", "LINE_OPERATION_LOCKED"].includes(error.code)) continue;
+        if (["BOSS_RECOVERY_PENDING", "LINE_OPERATION_LOCKED", "BOSS_RPC_SLOT_LAG"].includes(error.code)) continue;
         ctx.logger.error(`Boss reconciliation failed: line=${line}`, error);
       }
     }

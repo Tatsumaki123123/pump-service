@@ -132,6 +132,8 @@ Boss 生命周期的余额、状态、链头查询及其转账 RPC 调用增加�
 
 `getBoss` 响应增加 `active`、`bossStatus`、`ready`、`minimumBalanceLamports` 和 `pending`（地址、eid、状态、签名），可观察当前活动记录和待恢复目标。
 
+余额读取的 `minContextSlot` 容错：激活、恢复、修复和后台对账读取 finalized 余额时仍传入不早于交易 slot 或链头的 `minContextSlot`。QuickNode 等负载均衡端点会把相邻两次请求分发到 slot 视角不同的节点，节点用 `Minimum context slot has not been reached` 拒绝请求（web3.js 包装为 `failed to get balance for <地址>: ...`），这是路由抖动而非账户数据过期。`bossLifecycle.readBalance` 收到该错误时按 120/300/600ms 重试同一受约束查询；仍失败则改为不带 `minContextSlot` 的读取，并在本地比较 `context.slot` 是否达到要求，达到即等价（激活、恢复、修复均照常决策）。本地比较未达到、且必须保证新鲜度时抛出可重试的 `BOSS_RPC_SLOT_LAG`（保留 pending 状态，提示稍后重试）；`verifyActive` 按非严格模式接受略旧的 finalized 读取，避免已提交的激活被报成失败。后台对账遇到 `BOSS_RPC_SLOT_LAG` 静默跳过，等下一轮处理。超时、限流等其他 RPC 错误不重试，直接抛出。
+
 部署期间先停止旧版本的资金任务再更新所有实例。上线前需在 MongoDB 4.4 standalone 和测试链环境验证：余额不足、首次充值、转账后和退役后宕机、RPC 超时、历史缺失、并发切换及同一签名重播。本次改动不执行真实转账或数据库迁移。
 
 这个流程保证成功响应前完成资金和活动记录检查；后续业务充值/提现或外部持钥人的操作仍可能消耗余额。已确认链上转账与 MongoDB 不能组成分布式原子事务，中间故障通过保存的状态恢复。
