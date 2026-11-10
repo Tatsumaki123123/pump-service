@@ -7,6 +7,7 @@ module.exports = (app) => {
       tid: { type: Number },
       token: { type: String },
       symbol: { type: String },
+      icon: { type: String },
       dev: { type: String },
       pool: { type: String },
       amm: { type: String },

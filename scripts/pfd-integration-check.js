@@ -79,6 +79,15 @@ function makeModel(docs) {
       return api;
     },
     countDocuments: async (query = {}) => docs.filter((d) => matchDoc(d, query)).length,
+    updateMany: async (query, update) => {
+      let n = 0;
+      for (const doc of docs) {
+        if (!matchDoc(doc, query)) continue;
+        Object.assign(doc, (update && update.$set) || {});
+        n += 1;
+      }
+      return { modifiedCount: n };
+    },
   };
 }
 

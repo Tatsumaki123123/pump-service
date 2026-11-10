@@ -51,6 +51,7 @@
     "pfd:check": "node scripts/pfd-live-check.js",
     "pfd:selftest": "node scripts/pfd-selftest.js",
     "pfd:integration": "node scripts/pfd-integration-check.js",
+    "pfd:icon": "node scripts/pfd-icon-check.js",
     "cov": "egg-bin cov",
     "ci": "npm run lint && npm run cov"
   },

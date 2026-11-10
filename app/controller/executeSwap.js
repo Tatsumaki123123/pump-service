@@ -287,11 +287,22 @@ class ExecuteSwap extends BaseController {
         const res = await ctx.model.ExecuteToken.findOne({
           tid,
         }).lean();
-        const reserveData = await ctx.model.ReserveToken.findOne({
-          token: res.token,
-          line: res.line,
-        }).lean();
-        this.success({ ...res, reserveType: reserveData?.type || "" });
+        if (!res) {
+          throw new Error("Token not found");
+        }
+        const [reserveData, iconMap] = await Promise.all([
+          ctx.model.ReserveToken.findOne({
+            token: res.token,
+            line: res.line,
+          }).lean(),
+          ctx.service.pumpData.getIconMap([res.token]),
+        ]);
+        this.success({
+          ...res,
+          // 老数据里没有 icon，这里从 pumpfundata 的索引补上
+          icon: res.icon || iconMap.get(res.token) || "",
+          reserveType: reserveData?.type || "",
+        });
       } else {
         const count = await ctx.model.ExecuteToken.count({ eid: eid });
         const res = await ctx.model.ExecuteToken.find({
@@ -300,7 +311,20 @@ class ExecuteSwap extends BaseController {
         }).sort({
           createTime: -1,
         });
-        this.success({ list: res, total: count });
+
+        const docs = res.map((item) =>
+          typeof item.toObject === "function" ? item.toObject() : item,
+        );
+        const missing = docs
+          .filter((item) => !item.icon)
+          .map((item) => item.token);
+        const iconMap = await ctx.service.pumpData.getIconMap(missing);
+        const list = docs.map((item) => ({
+          ...item,
+          icon: item.icon || iconMap.get(item.token) || "",
+        }));
+
+        this.success({ list, total: count });
       }
     } else {
       throw new Error("Params error");

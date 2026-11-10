@@ -17,6 +17,7 @@ const path = require("path");
 const { PfdStore } = require("./store");
 const { readRows } = require("./parquet");
 const { SolPrice } = require("./solPrice");
+const { IconResolver } = require("./icon");
 const {
   HourAggregator,
   upsertAggregates,
@@ -160,6 +161,13 @@ class PfdManager {
       persistPath: path.join(app.baseDir, "run", "pfd-cache", "sol-price.json"),
       logger: this.logger,
       fallbackPrice: Number(config.solUsdFallback) || 0,
+    });
+
+    // 图标后台解析：请求 uri 拿 metadata 里的 image，结果写回 Mongo
+    this.icons = new IconResolver(app, {
+      enabled: config.resolveIcon !== false,
+      concurrency: config.iconConcurrency,
+      perCall: config.iconPerCall,
     });
 
     this.maxFilesPerRun = Number(config.maxFilesPerRun) || 48;
@@ -700,6 +708,9 @@ class PfdManager {
     const mintFilter = new Set(rows.map((row) => row.token));
     const statsMap = buildTailStats(this._tail, Date.now(), mintFilter);
 
+    // 把本次返回里还没有图标的 token 丢到后台异步解析，下轮请求就能带上
+    this.icons.enqueue(rows);
+
     const ammName = params.amm || (params.mode === "in" ? "pump" : "pumpfunamm");
 
     const list = rows.map((row) =>
@@ -814,6 +825,7 @@ class PfdManager {
         dailyBudget: this.dailyCreditBudget,
       },
       tailTrades: this._tail.length,
+      icons: { ...this.icons.stats, queued: this.icons.queue.length },
       downloadStats: this.store.stats,
       lastIngest: this.lastIngest,
       lastWarm: this.lastWarmSummary,

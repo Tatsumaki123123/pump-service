@@ -6,9 +6,20 @@
  * 否则前端要改。
  */
 
-const { WSOL } = require("./indexer");
+const { WSOL, USDC, USDT } = require("./indexer");
 
 const TAIL_RETENTION_MS = 2 * 60 * 60 * 1000;
+const LOGO_BASE = process.env.AVE_LOGO_URL || "https://www.iconaves.com/";
+
+/**
+ * 计价代币的图标。iconaves 的地址可以直接拼，实测 WSOL 可用。
+ * 非 SOL/USDC/USDT 的计价单位不使用（这类 token 本来也不返回）。
+ */
+function quoteLogoUrl(quoteMint) {
+  if (!quoteMint) return "";
+  if (quoteMint !== WSOL && quoteMint !== USDC && quoteMint !== USDT) return "";
+  return `${LOGO_BASE}token_icon/solana/${quoteMint}.png`;
+}
 
 /**
  * 从最近两小时的逐笔缓冲里算 5m/15m/1h 指标。
@@ -104,7 +115,7 @@ function toAveToken(row, context = {}) {
     icon: row.icon || "",
     token1_address: row.quoteMint || WSOL,
     token1_symbol: isUsdQuote ? "USDC" : isSolQuote ? "SOL" : "",
-    token1_logo_url: "",
+    token1_logo_url: quoteLogoUrl(row.quoteMint || WSOL),
     mkt_cap: priceUsd * supply,
     create_time: row.createAt || 0,
     amm: context.amm || "pump",

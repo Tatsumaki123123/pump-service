@@ -28,6 +28,11 @@ module.exports = (app) => {
       mcapUsd: { type: Number, default: 0 },
       // 从 metadata uri 懒解析出来的图片，仅用于前端展示
       icon: { type: String },
+      // 上次尝试解析图标的时间，避免对没有图标的 token 反复请求
+      iconCheckedAt: { type: Date },
+      // 上次解析是「网络/HTTP 失败」还是「metadata 里确实没有图」
+      // 前者只等 1 小时就重试，后者才等 7 天
+      iconError: { type: Boolean, default: false },
       updatedAt: { type: Date },
     },
     { versionKey: false },

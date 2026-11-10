@@ -75,6 +75,13 @@ module.exports = (appInfo) => {
     // 逐笔缓冲保留多少小时（用于 5m/15m/1h 指标）
     tailHours: 2,
 
+    // ---- 图标 ----
+    // 后台请求 metadata uri 解析 icon 并写回 Mongo。关掉则 icon 恒为空
+    resolveIcon: process.env.PFD_RESOLVE_ICON !== "false",
+    iconConcurrency: Number(process.env.PFD_ICON_CONCURRENCY) || 4,
+    // 每次 tokenList 最多新排多少个图标任务（防止高频轮询把队列撑爆）
+    iconPerCall: Number(process.env.PFD_ICON_PER_CALL) || 40,
+
     // ---- 市值换算 ----
     // SOL/USD 兜底价：实时行情源全部不可用时用这个价格换算市值，默认 100。
     // 设为 0 表示不做静态兜底（此时拿不到实时价就不出数据）。

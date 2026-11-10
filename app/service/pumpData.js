@@ -171,6 +171,30 @@ class PumpData extends Service {
   async status() {
     return this.manager.status();
   }
+
+  /**
+   * 批量取 token 图标，给 checkToken / getBuyTokes 补图用。
+   * 只读 Mongo，取不到就返回空 Map，不影响主流程。
+   * @param {string[]} mints
+   * @returns {Promise<Map<string, string>>}
+   */
+  async getIconMap(mints) {
+    const list = (mints || []).filter(Boolean);
+    if (!list.length) return new Map();
+    try {
+      const rows = await this.app.model.PfdToken.find(
+        { token: { $in: list } },
+        { token: 1, icon: 1 },
+      ).lean();
+      const map = new Map();
+      for (const row of rows) {
+        if (row.icon) map.set(row.token, row.icon);
+      }
+      return map;
+    } catch (error) {
+      return new Map();
+    }
+  }
 }
 
 module.exports = PumpData;

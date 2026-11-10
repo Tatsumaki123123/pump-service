@@ -1807,11 +1807,25 @@ class ExecuteSwap extends Service {
       token: token,
       status: { $in: ["pending", "buy"] },
     });
+
+    // 图标：优先用调用方传进来的（来源列表里已经带），其次查已入库的，
+    // 最后从 pumpfundata 的 token 索引里补，保证 getBuyTokes 能显示图片
+    let icon = tokenData.icon || tokenDb?.icon || "";
+    if (!icon) {
+      try {
+        const iconMap = await ctx.service.pumpData.getIconMap([token]);
+        icon = iconMap.get(token) || "";
+      } catch (error) {
+        icon = "";
+      }
+    }
+
     let tid = new Date().getTime();
     const tokenInfo = {
       tid: tid,
       symbol: symbol,
       token,
+      icon,
       dev,
       pool,
       amm,
@@ -1872,10 +1886,9 @@ class ExecuteSwap extends Service {
       await ctx.model.ExecuteToken.create(tokenInfo);
     } else {
       tid = tokenDb.tid;
-      await ctx.model.ExecuteToken.updateOne(
-        { tid },
-        { $set: { symbol, pool, amm, routeInfo } },
-      );
+      const updateSet = { symbol, pool, amm, routeInfo };
+      if (icon) updateSet.icon = icon;
+      await ctx.model.ExecuteToken.updateOne({ tid }, { $set: updateSet });
     }
     const buyTimes = await ctx.model.ExecuteToken.count({
       token: token,
