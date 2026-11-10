@@ -115,4 +115,8 @@ module.exports = (app) => {
   router.post("/v1/pumpmonitor/buyToken", controller.pumpMonitor.buyToken);
   router.post("/v1/pumpmonitor/sellToken", controller.pumpMonitor.sellToken);
   router.post("/v1/pumpmonitor/webhook", controller.pumpMonitor.webhook);
+
+  router.post("/v1/pumpdata/status", controller.pumpData.status);
+  router.post("/v1/pumpdata/warm", controller.pumpData.warm);
+  router.post("/v1/pumpdata/tokenList", controller.pumpData.tokenList);
 };

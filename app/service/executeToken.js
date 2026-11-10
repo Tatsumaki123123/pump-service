@@ -18,6 +18,9 @@ class ExecuteToken extends Service {
       } else if (sourceWeb === "ave") {
         //ave
         allList = await ctx.service.ave.getList(lineData.groupSort);
+      } else if (sourceWeb === "data") {
+        // pumpfundata 原始链上事件（返回结构与 ave 一致）
+        allList = await ctx.service.pumpData.getList(lineData.groupSort);
       } else {
         throw new Error("Not source web");
       }
