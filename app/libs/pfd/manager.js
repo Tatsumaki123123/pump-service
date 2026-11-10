@@ -687,7 +687,14 @@ class PfdManager {
     }
 
     if (!rows.length) {
-      return { list: [], solUsd, scanned: 0, mcapFilterSkipped };
+      // 空结果时补一条诊断，直接从日志区分「库里没数据」还是「被市值区间筛掉」
+      const explain = await this._explainEmpty(params, { solUsd });
+      this.logger.info(
+        `[pfd] 空结果诊断 category=${params.mode} ` +
+          `窗口内=${explain.totalInWindow} 其中市值区间内=${explain.withBand} ` +
+          `缺小时=${explain.missingHours} solUsd=${solUsd}`,
+      );
+      return { list: [], solUsd, scanned: 0, mcapFilterSkipped, explain };
     }
 
     const mintFilter = new Set(rows.map((row) => row.token));
@@ -704,6 +711,49 @@ class PfdManager {
     );
 
     return { list, solUsd, scanned: rows.length, mcapFilterSkipped };
+  }
+
+  /**
+   * 空结果诊断：窗口内有多少 token、其中落在市值区间内多少、还缺多少小时没入库。
+   * 只在结果为空时执行，常态请求不会多一次 count。
+   */
+  async _explainEmpty(params, context) {
+    const Token = this.app.model.PfdToken;
+    const createFrom = Date.now() - params.createDay * DAY_MS;
+    const createTo = Date.now() - params.createDayEnd * DAY_MS;
+
+    const base = {
+      exchange: "pump_fun",
+      quoteKind: "sol",
+      createAt: { $gte: createFrom, $lte: createTo },
+    };
+    if (params.mode === "in") base.graduatedAt = null;
+    else base.graduatedAt = { $ne: null };
+
+    const [totalInWindow, withBand] = await Promise.all([
+      Token.countDocuments(base).catch(() => -1),
+      context.solUsd > 0
+        ? Token.countDocuments({
+            ...base,
+            mcapQuote: {
+              $gte: params.mcpMin / context.solUsd,
+              $lte: params.mcpMax / context.solUsd,
+            },
+          }).catch(() => -1)
+        : Promise.resolve(-1),
+    ]);
+
+    const slots = slotsBetween(createFrom, createTo);
+    const missingHours = slots.filter(
+      (slot) => !this._isIngested("pump_fun", slotKey(slot.date, slot.hour)),
+    ).length;
+
+    return {
+      totalInWindow,
+      withBand,
+      missingHours,
+      windowHours: slots.length,
+    };
   }
 
   async status() {
