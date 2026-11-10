@@ -172,12 +172,18 @@ class PfdManager {
 
     this.maxFilesPerRun = Number(config.maxFilesPerRun) || 48;
     this.refreshLatestMinutes = Number(config.refreshLatestMinutes) || 10;
-    this.dailyCreditBudget = Number(config.dailyCreditBudget) || 600;
     this.tailHours = Math.max(2, Number(config.tailHours) || 2);
+    // 入库后保留多少小时的 parquet 文件，其余删掉省磁盘（0 = 不清理）
+    this.cacheKeepHours = Math.max(0, Number(config.cacheKeepHours ?? 72));
     // 定时任务覆盖最近多少天；每天只补「库里没有的小时」，稳态成本约 24 credit/天
-    this.warmDays = Math.max(1, Number(config.warmDays) || 11);
-    // 单次定时任务最多下载多少个小时文件（首次回补用得上）
-    this.dailyMaxFiles = Math.max(1, Number(config.dailyMaxFiles) || 320);
+    this.warmDays = Math.max(1, Number(config.warmDays) || 30);
+    // 下面两个上限跟着 warmDays 走，避免改了窗口却忘记放大上限、回补被截断
+    this.dailyMaxFiles = Math.max(
+      1,
+      Number(config.dailyMaxFiles) || this.warmDays * 24 + 60,
+    );
+    this.dailyCreditBudget =
+      Number(config.dailyCreditBudget) || this.warmDays * 48 + 200;
     // 是否同时采集 pump_amm（外盘）。关掉可以省一半 credit，但 pump_out_* 会没数据
     this.ingestAmm = config.ingestAmm !== false;
     // 拿不到 SOL/USD 时的行为：empty=返回空列表（安全，默认），skip=不筛市值照常返回
@@ -228,10 +234,11 @@ class PfdManager {
     if (!this._coverage.has("pump_amm")) this._coverage.set("pump_amm", new Set());
 
     // 已入库的 token 集合：决定后续小时里「没有 create 事件的旧 token」还要不要更新
-    const since = Date.now() - 30 * DAY_MS;
+    // 30 天窗口大约 80 万个 token，这里只取两个字段并排除 _id，避免启动时内存占用过高
+    const since = Date.now() - (this.warmDays + 2) * DAY_MS;
     const tokens = await Token.find(
       { exchange: "pump_fun", createAt: { $gte: since } },
-      { token: 1, graduatedAt: 1 },
+      { _id: 0, token: 1, graduatedAt: 1 },
     ).lean();
     for (const row of tokens) {
       this._tracked.pump_fun.add(row.token);
@@ -455,13 +462,31 @@ class PfdManager {
     }
 
     const done = [];
+    let pending = [];
     const solUsd = persistIndex ? await this._solUsd() : 0;
     for (const slot of missing.slice(0, allow)) {
       try {
         await this._ingestSlot(exchange, slot, { persistIndex, solUsd });
-        done.push(slotKey(slot.date, slot.hour));
+        const key = slotKey(slot.date, slot.hour);
+        done.push(key);
+        pending.push(key);
         plan.downloaded += 1;
         this._spendCredit(1);
+
+        // 每 20 个小时落一次水位：30 天回补要跑几十分钟，
+        // 中途崩溃可以从断点继续，不用把已下载的几百个文件重下一遍
+        if (persistIndex && pending.length >= 20) {
+          await this._markIngested(exchange, pending);
+          pending = [];
+        }
+
+        // 入库完就把 parquet 文件删掉（数据已经在 Mongo）
+        if (
+          this.cacheKeepHours > 0 &&
+          Date.now() - slot.ts > this.cacheKeepHours * HOUR_MS
+        ) {
+          await this.store.dropHour(exchange, slot.date, slot.hour);
+        }
       } catch (error) {
         plan.errors.push({ key: slotKey(slot.date, slot.hour), code: error.code, message: error.message });
         await this._markError(exchange, error);
@@ -472,8 +497,8 @@ class PfdManager {
       }
     }
 
-    if (persistIndex) {
-      await this._markIngested(exchange, done);
+    if (persistIndex && pending.length) {
+      await this._markIngested(exchange, pending);
     }
     plan.keys = done;
 
@@ -700,7 +725,7 @@ class PfdManager {
       this.logger.info(
         `[pfd] 空结果诊断 category=${params.mode} ` +
           `窗口内=${explain.totalInWindow} 其中市值区间内=${explain.withBand} ` +
-          `缺小时=${explain.missingHours} solUsd=${solUsd}`,
+          `缺小时=${explain.missingHours} solUsd=${solUsd} 库里最老=${explain.dbFrom || "空库"}`,
       );
       return { list: [], solUsd, scanned: 0, mcapFilterSkipped, explain };
     }
@@ -741,7 +766,7 @@ class PfdManager {
     if (params.mode === "in") base.graduatedAt = null;
     else base.graduatedAt = { $ne: null };
 
-    const [totalInWindow, withBand] = await Promise.all([
+    const [totalInWindow, withBand, oldest] = await Promise.all([
       Token.countDocuments(base).catch(() => -1),
       context.solUsd > 0
         ? Token.countDocuments({
@@ -752,6 +777,10 @@ class PfdManager {
             },
           }).catch(() => -1)
         : Promise.resolve(-1),
+      Token.findOne({ exchange: "pump_fun" }, { createAt: 1 })
+        .sort({ createAt: 1 })
+        .lean()
+        .catch(() => null),
     ]);
 
     const slots = slotsBetween(createFrom, createTo);
@@ -764,18 +793,45 @@ class PfdManager {
       withBand,
       missingHours,
       windowHours: slots.length,
+      // 库里最老的 token 时间，直接回答「为什么更早的没有」
+      dbFrom: oldest && oldest.createAt ? new Date(oldest.createAt).toISOString() : null,
     };
   }
 
   async status() {
     await this.ready();
     const Token = this.app.model.PfdToken;
-    const [pumpFunCount, pumpAmmCount, graduatedCount, solRecord] = await Promise.all([
+    const [
+      pumpFunCount,
+      pumpAmmCount,
+      graduatedCount,
+      solRecord,
+      oldestToken,
+      newestToken,
+    ] = await Promise.all([
       Token.countDocuments({ exchange: "pump_fun" }),
       Token.countDocuments({ exchange: "pump_amm" }),
       Token.countDocuments({ exchange: "pump_fun", graduatedAt: { $ne: null } }),
       this.solPrice.snapshot(),
+      Token.findOne({ exchange: "pump_fun" }, { createAt: 1 })
+        .sort({ createAt: 1 })
+        .lean(),
+      Token.findOne({ exchange: "pump_fun" }, { createAt: 1 })
+        .sort({ createAt: -1 })
+        .lean(),
     ]);
+
+    // 库里实际能查到的时间范围：排查「为什么更早的币没有」时直接看这个
+    const dataRange =
+      oldestToken && newestToken && newestToken.createAt
+        ? {
+            from: new Date(oldestToken.createAt || 0).toISOString(),
+            to: new Date(newestToken.createAt).toISOString(),
+            days: Math.round(
+              (newestToken.createAt - (oldestToken.createAt || 0)) / DAY_MS,
+            ),
+          }
+        : null;
 
     let range = null;
     if (this.enabled) {
@@ -813,6 +869,7 @@ class PfdManager {
           pump_amm: countMissing("pump_amm"),
         },
       },
+      dataRange,
       config: {
         warmDays: this.warmDays,
         ingestAmm: this.ingestAmm,

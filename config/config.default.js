@@ -45,6 +45,11 @@ module.exports = (appInfo) => {
 
   // pumpfundata.com 数据源（sourceWeb = "data"）
   // 官方只提供逐小时 parquet，1 credit / 小时文件，30 req/min。
+  //
+  // warmDays 是唯一需要调的旋钮：它同时决定「往库里采多久」「库保留多久」
+  // （清理按 warmDays+2 天），下面两个上限按它自动推导，不用单独配。
+  const warmDays = Number(process.env.PFD_WARM_DAYS) || 10;
+
   config.pumpFunData = {
     apiKey: process.env.PFD_API_KEY || "pfd_aabbc0fc2ddc43f1a0a495a1f5cbd8c6",
     baseUrl: process.env.PFD_BASE_URL || "https://api.pumpfundata.com",
@@ -60,20 +65,24 @@ module.exports = (appInfo) => {
     autoIngest: process.env.PFD_AUTO_INGEST !== "false",
     // 六段式 cron：秒 分 时 日 月 周。改成 "0 5 * * * *" 即每小时一次（成本不变）
     ingestCron: process.env.PFD_INGEST_CRON || "0 10 3 * * *",
-    // 采集最近多少天。create_day 最大 10 的话这里设 11
-    warmDays: Number(process.env.PFD_WARM_DAYS) || 6,
-    // 单次采集最多下载多少个小时文件（首次回补用）
-    dailyMaxFiles: Number(process.env.PFD_DAILY_MAX_FILES) || 320,
+    warmDays,
+    // 单次采集最多下载多少个小时文件：留出一天余量，保证一次能把窗口补齐
+    dailyMaxFiles:
+      Number(process.env.PFD_DAILY_MAX_FILES) || warmDays * 24 + 60,
+    // 每天最多消耗多少 credit：覆盖一次全量回补（按 2 个交易所算）+ 余量
+    dailyCreditBudget:
+      Number(process.env.PFD_DAILY_BUDGET) || warmDays * 48 + 200,
     // 是否同时采集 pump_amm（外盘）。关掉省一半 credit，但 pump_out_* 会没数据
     ingestAmm: process.env.PFD_INGEST_AMM !== "false",
     // 手动补数据接口 /v1/pumpdata/warm 的单次上限
     maxFilesPerRun: Number(process.env.PFD_MAX_FILES) || 48,
     // 当前小时（未结束）的刷新间隔
     refreshLatestMinutes: Number(process.env.PFD_REFRESH_MINUTES) || 10,
-    // 每天最多消耗多少 credit，防止失控
-    dailyCreditBudget: Number(process.env.PFD_DAILY_BUDGET) || 600,
     // 逐笔缓冲保留多少小时（用于 5m/15m/1h 指标）
     tailHours: 2,
+    // 本地 parquet 缓存保留多少小时。数据入库后即可删，只有回补尾窗要用最近几个小时。
+    // 30 天窗口全部保留会占 20GB+，所以默认只留 72 小时；设 0 表示不自动清理
+    cacheKeepHours: Number(process.env.PFD_CACHE_KEEP_HOURS ?? 72),
 
     // ---- 图标 ----
     // 后台请求 metadata uri 解析 icon 并写回 Mongo。关掉则 icon 恒为空

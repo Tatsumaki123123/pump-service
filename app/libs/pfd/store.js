@@ -202,6 +202,19 @@ class PfdStore {
   }
 
   /**
+   * 删掉已入库的小时文件。数据已经在 MongoDB 里，本地文件只是省 credit 的缓存；
+   * 30 天窗口下全留会占 20GB+，所以入库完成后就清掉。
+   */
+  async dropHour(exchange, date, hour) {
+    try {
+      await fsp.unlink(this.hourPath(exchange, date, hour));
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
    * 取某个小时的文件内容，优先命中磁盘缓存。
    * @param {boolean} options.force 强制重新下载（会再扣 1 credit）
    */
