@@ -114,6 +114,106 @@ function createService(rpc) {
   return service;
 }
 
+describe('bossLifecycle placeholder recovery', () => {
+  const originalGrace = process.env.BOSS_PLACEHOLDER_GRACE_MS;
+
+  afterEach(() => {
+    if (originalGrace == null) delete process.env.BOSS_PLACEHOLDER_GRACE_MS;
+    else process.env.BOSS_PLACEHOLDER_GRACE_MS = originalGrace;
+  });
+
+  it('treats a never-funded record older than the grace window as abandonable', () => {
+    process.env.BOSS_PLACEHOLDER_GRACE_MS = '600000';
+    const service = createService();
+    const pending = placeholder({ createdMinutesAgo: 30 });
+
+    assert.equal(service.isAbandonablePlaceholder(pending, ACTIVE_BOSS), true);
+  });
+
+  it('keeps an unfunded placeholder inside the grace window', () => {
+    process.env.BOSS_PLACEHOLDER_GRACE_MS = '600000';
+    const service = createService();
+    const pending = placeholder({ createdMinutesAgo: 1 });
+
+    assert.equal(service.isAbandonablePlaceholder(pending, ACTIVE_BOSS), false);
+  });
+
+  it('never abandons a placeholder when the line has no active boss', () => {
+    process.env.BOSS_PLACEHOLDER_GRACE_MS = '0';
+    const service = createService();
+
+    assert.equal(service.isAbandonablePlaceholder(placeholder({ createdMinutesAgo: 30 }), null), false);
+  });
+
+  it('never abandons a record that already saved a transfer', () => {
+    process.env.BOSS_PLACEHOLDER_GRACE_MS = '0';
+    const service = createService();
+    const pending = placeholder({ createdMinutesAgo: 30, transferSignature: 'sig' });
+
+    assert.equal(service.isAbandonablePlaceholder(pending, ACTIVE_BOSS), false);
+  });
+
+  it('reports the deposit requirement while no active boss can fund a placeholder', async () => {
+    process.env.BOSS_PLACEHOLDER_GRACE_MS = '0';
+    const service = createService(async () => balance(0, 900));
+    const pending = placeholder({ createdMinutesAgo: 30 });
+    stubRecovery(service, pending);
+
+    await assert.rejects(
+      () => service.recover(10003, null, async () => {}),
+      (error) => {
+        assert.equal(error.code, 'BOSS_RECOVERY_PENDING');
+        assert.match(error.message, /send at least 10000 lamports/);
+        assert.match(error.message, /no funded active boss/);
+        return true;
+      },
+    );
+  });
+
+  it('abandons the placeholder so a funded active boss can seed a new one', async () => {
+    process.env.BOSS_PLACEHOLDER_GRACE_MS = '0';
+    const service = createService(async () => balance(0, 900));
+    const pending = placeholder({ createdMinutesAgo: 30 });
+    const updates = [];
+    stubRecovery(service, pending, updates);
+
+    const recovered = await service.recover(10003, ACTIVE_BOSS, async () => {});
+
+    assert.equal(recovered, false);
+    const failed = updates.filter((update) => update.$set.bossStatus === 'failed');
+    assert.equal(failed.length, 1);
+    assert.deepEqual(failed[0].$set, { bossStatus: 'failed', bossPending: false });
+    assert.match(service.warnings.join('\n'), /placeholder boss abandoned/);
+  });
+});
+
+const ACTIVE_BOSS = { _id: 'active-id', line: 10003, bossAddress: '5hm72Yg27zw2sERwgKNBy9qfHQ3h2BoUc2HWAKBQzxuD' };
+
+function placeholder({ createdMinutesAgo, transferSignature } = {}) {
+  return {
+    _id: 'pending-id',
+    line: 10003,
+    eid: 100020010834,
+    bossAddress: '436ixKQgrTevcydh2rPFLMh1YoD4rWw1jkLuwAXgqP2P',
+    bossStatus: 'awaiting_funds',
+    bossPending: true,
+    createTime: new Date(Date.now() - createdMinutesAgo * 60 * 1000),
+    ...(transferSignature ? { transferSignature } : {}),
+  };
+}
+
+function stubRecovery(service, pending, updates = []) {
+  service.findPending = async () => pending;
+  service.ctx.model = {
+    ExecuteData: {
+      updateOne: async (filter, update) => {
+        updates.push({ filter, ...update });
+        return { matchedCount: 1 };
+      },
+    },
+  };
+}
+
 function balance(value, slot) {
   return { context: { slot }, value };
 }

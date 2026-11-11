@@ -103,6 +103,48 @@ class BossLifecycle extends Service {
     return amount;
   }
 
+  solAmount(lamports) {
+    return `${lamports / 1e9} SOL`;
+  }
+
+  placeholderGraceMs() {
+    const amount = Number(process.env.BOSS_PLACEHOLDER_GRACE_MS || 10 * 60 * 1000);
+    if (!Number.isSafeInteger(amount) || amount < 0) {
+      throw new Error("BOSS_PLACEHOLDER_GRACE_MS must be a non-negative integer");
+    }
+    return amount;
+  }
+
+  /**
+   * A placeholder boss is written with bossStatus "awaiting_funds" when a line
+   * is created, or when a boss is created without a source. It has never held
+   * funds, so reconciliation can never activate it: retrying the same record
+   * only repeats the "awaiting finalized funds" error. Once the line already
+   * owns a funded active boss, such a record must not block rotating a new one,
+   * otherwise every funds operation on the line stays locked forever.
+   *
+   * The guards keep funded keys safe: the record never saved a transfer, the
+   * finalized balance is zero (checked by the caller), a grace window has
+   * passed, and an active boss exists as the funding source.
+   */
+  isAbandonablePlaceholder(pending, current) {
+    if (!current || pending.transferSignature) return false;
+    if (pending.bossStatus !== "awaiting_funds") return false;
+    const createdAt = pending.createTime ? new Date(pending.createTime).getTime() : NaN;
+    if (!Number.isFinite(createdAt)) return false;
+    return Date.now() - createdAt >= this.placeholderGraceMs();
+  }
+
+  async abandonPlaceholder(pending, assertLock) {
+    const changed = await this.markFailed(pending, assertLock);
+    // Failed records keep their keypair, so funds sent to the address later
+    // remain recoverable instead of being deleted with the record.
+    if (changed) {
+      this.ctx.logger.warn(`Unfunded placeholder boss abandoned: line=${pending.line}, address=${pending.bossAddress}, eid=${pending.eid}, created=${new Date(pending.createTime).toISOString()}; a new boss can be created from the active one`);
+    }
+    return changed;
+  }
+
   async prepareStorage() {
     const model = this.ctx.model.ExecuteData;
     // Fail before sending funds if existing duplicate active records prevent the index.
@@ -170,7 +212,7 @@ class BossLifecycle extends Service {
     await assertLock();
     const balance = await this.readBalance(candidate.bossAddress, minContextSlot);
     if (balance.value < this.minimumBalance()) {
-      throw this.pendingError(candidate, `Boss ${candidate.bossAddress} is awaiting finalized funds: needs at least ${this.minimumBalance()} lamports, found ${balance.value}; automatic reconciliation will retry`);
+      throw this.pendingError(candidate, `Boss ${candidate.bossAddress} is awaiting finalized funds: needs at least ${this.minimumBalance()} lamports (${this.solAmount(this.minimumBalance())}), found ${balance.value}; send SOL to ${candidate.bossAddress} and start again`);
     }
 
     // Single-document conditional writes also work on MongoDB standalone.
@@ -354,7 +396,23 @@ class BossLifecycle extends Service {
         if (!current) throw new Error(`Pending boss ${pending.bossAddress} has no source boss; manual reconciliation required`);
         return this.fund(pending, current, assertLock);
       }
-      return this.activate(pending, current, assertLock);
+      // Never funded: no transfer exists to reconcile, so repeating the read can
+      // never succeed. Abandon the placeholder once the line has an active boss
+      // to fund a fresh one; otherwise report the exact deposit requirement.
+      const balance = await this.readBalance(pending.bossAddress);
+      if (balance.value >= this.minimumBalance()) {
+        return this.activate(pending, current, assertLock, balance.context.slot);
+      }
+      if (this.isAbandonablePlaceholder(pending, current)) {
+        if (!await this.abandonPlaceholder(pending, assertLock)) {
+          throw new Error("Placeholder boss changed; reconcile before retrying");
+        }
+        return false;
+      }
+      const hint = current
+        ? ""
+        : "; this line has no funded active boss, so it must be funded externally";
+      throw this.pendingError(pending, `Boss ${pending.bossAddress} is awaiting funds: send at least ${this.minimumBalance()} lamports (${this.solAmount(this.minimumBalance())}, 0.01 SOL recommended so it can pay swap fees) to this address, then wait for the reconciliation worker or call start again${hint}`);
     }
 
     let status;
@@ -425,7 +483,29 @@ class BossLifecycle extends Service {
         const pending = await this.findPending(line, current);
         if (!pending) continue;
         const balance = await this.readBalance(pending.bossAddress);
-        if (balance.value < this.minimumBalance()) continue;
+        if (balance.value < this.minimumBalance()) {
+          // Unfunded placeholders are never recoverable by waiting; clear them
+          // under the line lock so the line stops being blocked by a record
+          // that can never activate.
+          if (!this.isAbandonablePlaceholder(pending, current)) continue;
+          await ctx.service.executeSwap.withBossGenerationLock(line, async (assertLock) => {
+            const active = await ctx.service.executeSwap.getExecuteData(line);
+            const target = await this.findPending(line, active);
+            if (!target || String(target._id) !== String(pending._id)) return;
+            if (!this.isAbandonablePlaceholder(target, active)) return;
+            await assertLock();
+            // Legacy placeholder records predate bossPending, so adopt first:
+            // markFailed only releases a record that still owns the marker.
+            const adopted = await ctx.model.ExecuteData.updateOne(
+              { _id: target._id, active: false, bossStatus: { $nin: ["failed", "retired", "active"] } },
+              { $set: { bossPending: true } },
+              DURABLE_WRITE,
+            );
+            if (adopted.matchedCount !== 1) return;
+            await this.abandonPlaceholder(target, assertLock);
+          }, { waitMs: 0, owner: "bossRecovery" });
+          continue;
+        }
         await ctx.service.executeSwap.withBossGenerationLock(line, async (assertLock) => {
           await this.prepareStorage();
           const active = await ctx.service.executeSwap.getExecuteData(line);
@@ -450,12 +530,13 @@ class BossLifecycle extends Service {
 
   async markFailed(candidate, assertLock) {
     await assertLock();
-    await this.ctx.model.ExecuteData.updateOne(
+    const result = await this.ctx.model.ExecuteData.updateOne(
       { _id: candidate._id, active: false, bossPending: true },
       { $set: { bossStatus: "failed", bossPending: false } },
       DURABLE_WRITE,
     );
     // Keep the address/key/signature for reconciliation; never delete a funded keypair.
+    return result.matchedCount === 1;
   }
 
   async fund(candidate, previous, assertLock) {
@@ -542,7 +623,7 @@ class BossLifecycle extends Service {
     const [candidate] = await this.ctx.model.ExecuteData.create([payload], DURABLE_WRITE);
     this.writeKeypair(candidate);
     if (!previous) {
-      throw new Error(`Boss ${candidate.bossAddress} created awaiting funds; deposit at least ${this.minimumBalance()} lamports then call start again`);
+      throw new Error(`Boss ${candidate.bossAddress} created awaiting funds; send at least ${this.minimumBalance()} lamports (${this.solAmount(this.minimumBalance())}) to this address then call start again`);
     }
     return this.fund(candidate, previous, assertLock);
   }
