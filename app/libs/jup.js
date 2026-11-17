@@ -38,6 +38,17 @@ function toTransactionInstruction(instruction) {
   });
 }
 
+/** 从 quote 里取出路由经过的 DEX 标签，出问题时报错信息才有定位价值 */
+function routeLabelsOf(quoteResponse) {
+  return [
+    ...new Set(
+      (quoteResponse?.routePlan || [])
+        .map((step) => step?.swapInfo?.label)
+        .filter(Boolean),
+    ),
+  ];
+}
+
 class JupSDK {
   httpError(operation, status, attempts, cause) {
     const error = new Error(`Jupiter ${operation} failed with HTTP ${status} after ${attempts} attempt(s)`,
@@ -99,6 +110,7 @@ class JupSDK {
       slippage,
       connection,
       useSharedAccounts = false,
+      excludeDexes,
     } = params;
     const amount = Math.trunc(Number(buyAmount) * LAMPORTS_PER_SOL);
     const quoteResponse = await this.getQuote(
@@ -107,10 +119,17 @@ class JupSDK {
       tokenMint.toBase58(),
       amount,
       slippage,
+      { excludeDexes },
     );
-    return this.getSwapInstructions(ctx, user, quoteResponse, connection, {
-      useSharedAccounts,
-    });
+    const result = await this.getSwapInstructions(
+      ctx,
+      user,
+      quoteResponse,
+      connection,
+      { useSharedAccounts },
+    );
+    // 路由标签打出来，出问题时能直接看出命中哪个 DEX
+    return { ...result, routeLabels: routeLabelsOf(quoteResponse) };
   }
 
   async getSellInstructions(ctx, params) {
@@ -123,6 +142,7 @@ class JupSDK {
       useSharedAccounts = false,
       outputMint = NATIVE_MINT,
       prioritizationFeeLamports,
+      excludeDexes,
     } = params;
     const quoteResponse = await this.getQuote(
       ctx,
@@ -130,11 +150,16 @@ class JupSDK {
       outputMint.toBase58 ? outputMint.toBase58() : String(outputMint),
       tokenAmount,
       slippage,
+      { excludeDexes },
     );
-    return this.getSwapInstructions(ctx, user, quoteResponse, connection, {
-      useSharedAccounts,
-      prioritizationFeeLamports,
-    });
+    const result = await this.getSwapInstructions(
+      ctx,
+      user,
+      quoteResponse,
+      connection,
+      { useSharedAccounts, prioritizationFeeLamports },
+    );
+    return { ...result, routeLabels: routeLabelsOf(quoteResponse) };
   }
 
   async getSellTransaction(ctx, params) {
@@ -274,11 +299,18 @@ class JupSDK {
     return lookupTables;
   }
 
-  async getQuote(ctx, input, output, amount, slippage) {
+  async getQuote(ctx, input, output, amount, slippage, options = {}) {
     const slippageBps = Math.floor(Number(slippage) * 10000);
     if (!Number.isFinite(slippageBps) || slippageBps < 0) {
       throw new Error("Invalid Jupiter slippage");
     }
+
+    // 单次调用可以覆盖默认的排除列表：内盘走的是多跳路由，需要排掉带
+    // 反 bundle 标记（vote 账户）的暗池，否则交易进不了 Jito bundle
+    const excludeDexes =
+      options.excludeDexes === undefined
+        ? EXCLUDED_DEXES
+        : String(options.excludeDexes || "").trim();
 
     const query = new URLSearchParams({
       inputMint: input,
@@ -287,7 +319,7 @@ class JupSDK {
       slippageBps: String(slippageBps),
       restrictIntermediateTokens: "true",
       instructionVersion: "V2",
-      ...(EXCLUDED_DEXES ? { excludeDexes: EXCLUDED_DEXES } : {}),
+      ...(excludeDexes ? { excludeDexes } : {}),
     });
     const uri = `${BASE_URL}/swap/v1/quote?${query.toString()}`;
     const quote = await this.requestJson(ctx, uri, {

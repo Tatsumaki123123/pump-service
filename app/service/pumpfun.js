@@ -61,6 +61,11 @@ const pfSwap = new PumpFunSDK(provider);
 const okxSwap = new OKXSwapSDK();
 const jupSwap = new JupSDK();
 
+// token -> { at, excludeDexes }：记录「这个币的 jup 路由要不要排除暗池」。
+// 探测本身要多一次 RPC + 可能多轮报价，内盘买入对延迟敏感，短期复用结论。
+const jupRouteMarkerCache = new Map();
+const JUP_ROUTE_MARKER_TTL_MS = 2 * 60 * 1000;
+
 const TIP_ACCOUNT = new PublicKey(
   "6rYLG55Q9RpsPGvqdPNJs4z5WTxJVatMB8zV3WJhs5EK"
 );
@@ -389,6 +394,90 @@ class PumpFun extends Service {
     }
   }
 
+  /**
+   * jup 路由里带上 vote 账户时（暗池拿它当反 bundle 标记，例如
+   * J1to1yufRnoWn81KYg1XkTWzmKjnYSnmE2VY8DGUJ9Qv），Jito 一律拒收 bundle。
+   *
+   * 这里先探一次：命中就把「除 Pump.fun 以外的 DEX」全部排除后重建一次。
+   * 排除后拿不到路由、或者重建后仍带标记，就保留原样，
+   * 交给发送阶段的降级逻辑（逐笔发送）。
+   */
+  async rebuildJupWithoutVoteMarkers(ctx, token, wallets, prefetched, buildOne) {
+    if (!prefetched.length) return prefetched;
+    const labels = [
+      ...new Set(prefetched.flatMap((item) => item.routeLabels || [])),
+    ];
+
+    const probe = this.buildProbeTx(wallets[0], prefetched[0]);
+    if (!probe) return prefetched;
+
+    const marked = await findVoteAccounts(connection, [probe]).catch(() => []);
+    if (!marked.length) {
+      jupRouteMarkerCache.set(token, { at: Date.now(), excludeDexes: "" });
+      return prefetched;
+    }
+
+    const exclude = labels.filter((label) => !/^pump/i.test(label)).join(",");
+    console.log(
+      chalk.red(
+        `[bundle] ${token} 路由 ${labels.join(" > ") || "unknown"} 带 vote 账户 ${marked[0]}，` +
+          `尝试排除 ${exclude || "(无可排除项)"} 后重建`,
+      ),
+    );
+    if (!exclude) return prefetched;
+
+    try {
+      const rebuilt = await Promise.all(
+        wallets.map((wallet) => buildOne(wallet, exclude)),
+      );
+      const rebuiltProbe = this.buildProbeTx(wallets[0], rebuilt[0]);
+      const stillMarked = rebuiltProbe
+        ? await findVoteAccounts(connection, [rebuiltProbe]).catch(() => [])
+        : [];
+      if (stillMarked.length) {
+        console.log(
+          chalk.red(`[bundle] 排除 ${exclude} 后仍带 vote 账户，回退原路由`),
+        );
+        return prefetched;
+      }
+      console.log(
+        chalk.green(
+          `[bundle] 排除 ${exclude} 后路由干净：${
+            (rebuilt[0].routeLabels || []).join(" > ") || "unknown"
+          }`,
+        ),
+      );
+      jupRouteMarkerCache.set(token, { at: Date.now(), excludeDexes: exclude });
+      return rebuilt;
+    } catch (error) {
+      console.log(
+        chalk.yellow(
+          `[bundle] 排除 ${exclude} 后无可用路由（${error.message}），回退原路由`,
+        ),
+      );
+      return prefetched;
+    }
+  }
+
+  /** 只用来检查账户构成，不签名也不发送 */
+  buildProbeTx(wallet, jupData) {
+    if (!jupData || !wallet?.keypair) return null;
+    try {
+      const tables = jupData.lookupTableAccounts?.length
+        ? jupData.lookupTableAccounts
+        : undefined;
+      return new VersionedTransaction(
+        new TransactionMessage({
+          payerKey: wallet.keypair.publicKey,
+          recentBlockhash: "11111111111111111111111111111111",
+          instructions: jupData.instructions,
+        }).compileToV0Message(tables),
+      );
+    } catch (error) {
+      return null;
+    }
+  }
+
   async batchBuyToken(token, wallets, type = "", sendOptions = {}) {
     const { ctx } = this;
     console.log(chalk.green("\nPump fun batchBuyToken----", wallets.length));
@@ -441,19 +530,45 @@ class PumpFun extends Service {
         sequentialAxiomBuyPrices = batchAxiomCurveAccount.getBuyPrices(quoteAmounts);
       }
       // 在 blockhash 有效期开始前把 Jupiter 报价一次取全，避免逐个钱包串行等 HTTP
-      const jupBuyData = jupRoute.useJup
+      const buildJupBuy = (wallet, excludeDexes) =>
+        jupSwap.getBuyInstructions(ctx, {
+          user: wallet.keypair.publicKey,
+          tokenMint,
+          buyAmount: wallet.buyAmount,
+          slippage: getWalletSlippageFraction(wallet),
+          connection,
+          excludeDexes,
+        });
+      // 2 分钟内确认过这个币要排除暗池的话，直接按结论取价
+      const markedRoute = jupRoute.useJup ? jupRouteMarkerCache.get(token) : null;
+      const cachedExclude =
+        markedRoute && Date.now() - markedRoute.at < JUP_ROUTE_MARKER_TTL_MS
+          ? markedRoute.excludeDexes
+          : undefined;
+
+      let jupBuyData = jupRoute.useJup
         ? await Promise.all(
-            wallets.map((wallet) =>
-              jupSwap.getBuyInstructions(ctx, {
-                user: wallet.keypair.publicKey,
-                tokenMint,
-                buyAmount: wallet.buyAmount,
-                slippage: getWalletSlippageFraction(wallet),
-                connection,
-              }),
-            ),
+            wallets.map((wallet) => buildJupBuy(wallet, cachedExclude || undefined)),
           )
         : [];
+      if (jupRoute.useJup) {
+        if (jupBuyData[0]?.routeLabels?.length) {
+          console.log(
+            chalk.gray(`[jup] route ${jupBuyData[0].routeLabels.join(" > ")}`),
+          );
+        }
+        if (cachedExclude === undefined) {
+          // 路由命中带 vote 账户标记的暗池时，bundle 会被 Jito 拒收，
+          // 先尝试排除这些 DEX 重建，让交易还能进 bundle
+          jupBuyData = await this.rebuildJupWithoutVoteMarkers(
+            ctx,
+            token,
+            wallets,
+            jupBuyData,
+            buildJupBuy,
+          );
+        }
+      }
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;

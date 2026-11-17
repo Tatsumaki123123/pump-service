@@ -471,6 +471,36 @@ check("bundle 因 vote 账户被拒时会降级逐笔发送", () => {
   assert.ok(/vote account/i.test(src.slice(src.indexOf("async batchSellToken"))));
 });
 
+// ---------------------------------------------------------------- 排除标记池后重建
+
+check("jup 支持按调用覆盖 excludeDexes 并回传路由标签", () => {
+  const src = read("app/libs/jup.js");
+  assert.ok(/excludeDexes:\s*excludeDexes/.test(src) || /const excludeDexes =/.test(src));
+  assert.ok(/async getQuote\(ctx, input, output, amount, slippage, options = \{\}\)/.test(src));
+  assert.ok(/return \{ \.\.\.result, routeLabels: routeLabelsOf\(quoteResponse\) \}/.test(src));
+});
+
+check("命中 vote 标记时先尝试排除暗池重建", () => {
+  const src = read("app/service/pumpfun.js");
+  assert.ok(
+    /async rebuildJupWithoutVoteMarkers\(/.test(src),
+    "没有排除重建逻辑",
+  );
+  assert.ok(
+    /labels\.filter\(\(label\) => !\/\^pump\/i\.test\(label\)\)/.test(src),
+    "排除时应保留 Pump.fun 这一跳",
+  );
+  const buyBlock = src.slice(
+    src.indexOf("async batchBuyToken"),
+    src.indexOf("async batchSellToken"),
+  );
+  assert.ok(
+    buyBlock.includes("rebuildJupWithoutVoteMarkers"),
+    "买入没有调用排除重建",
+  );
+  assert.ok(buyBlock.includes("[jup] route"), "没有打印路由标签");
+});
+
 
 
 
