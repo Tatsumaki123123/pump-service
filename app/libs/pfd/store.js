@@ -287,6 +287,102 @@ class PfdStore {
       this._inflight.delete(file);
     }
   }
+  /**
+   * 全量扫描并清理磁盘缓存。
+   *
+   * `ensureRange` 里是「下完就删」，覆盖不到这几种情况：
+   *  - 改配置之前下载的旧文件（例如 cacheKeepHours 曾经是 0）
+   *  - 进程崩溃留在磁盘上的 .part 半成品
+   *  - 入库失败、没走完 dropHour 的 slot
+   * 所以需要一条按「数据时间」而不是「下载时间」的兜底扫描。
+   *
+   * 删掉不会丢数据（Mongo 里已经有），代价是下次补同一小时会再扣 1 credit。
+   *
+   * @param {object} [options]
+   * @param {number} options.keepHours 保留最近多少小时；<=0 表示不清理
+   * @param {boolean} [options.dryRun] 只统计不删
+   * @param {boolean} [options.all] 无视 keepHours 全清（运维手段，慎用）
+   */
+  async pruneCache(options = {}) {
+    const keepHours = Number(options.keepHours);
+    const dryRun = options.dryRun === true;
+    const purgeAll = options.all === true;
+    const result = { scanned: 0, removed: 0, bytes: 0, dirs: 0, parts: 0 };
+    if (!purgeAll && (!Number.isFinite(keepHours) || keepHours <= 0)) {
+      return { ...result, skipped: "keepHours<=0" };
+    }
+    if (!this.cacheDir) {
+      return { ...result, skipped: "no-cache-dir" };
+    }
+
+    const HOUR = 60 * 60 * 1000;
+    const cutoff = purgeAll ? Number.POSITIVE_INFINITY : Date.now() - keepHours * HOUR;
+    // 半成品没有可靠的时间语义，按 mtime 留 1 小时余量
+    const partCutoff = purgeAll ? Number.POSITIVE_INFINITY : Date.now() - HOUR;
+    const exchanges = await fsp.readdir(this.cacheDir).catch(() => []);
+
+    for (const exchange of exchanges) {
+      const exchangeDir = path.join(this.cacheDir, exchange);
+      const dateEntries = await fsp
+        .readdir(exchangeDir, { withFileTypes: true })
+        .catch(() => []);
+      for (const dateEntry of dateEntries) {
+        if (!dateEntry.isDirectory()) continue;
+        const dateDir = path.join(exchangeDir, dateEntry.name);
+        const files = await fsp.readdir(dateDir).catch(() => []);
+
+        for (const name of files) {
+          const filePath = path.join(dateDir, name);
+          result.scanned += 1;
+
+          let expired = false;
+          if (name.endsWith(".part")) {
+            const stat = await fsp.stat(filePath).catch(() => null);
+            if (stat && stat.mtimeMs < partCutoff) {
+              expired = true;
+              result.parts += 1;
+            }
+          } else if (name.endsWith(".parquet")) {
+            const hour = Number(name.slice(0, -".parquet".length));
+            const dayStart = Date.parse(`${dateEntry.name}T00:00:00Z`);
+            if (
+              Number.isInteger(hour) &&
+              hour >= 0 &&
+              hour <= 23 &&
+              Number.isFinite(dayStart)
+            ) {
+              expired = dayStart + hour * HOUR < cutoff;
+            }
+          }
+
+          if (!expired) continue;
+          const stat = await fsp.stat(filePath).catch(() => null);
+          if (!dryRun) {
+            const ok = await fsp
+              .unlink(filePath)
+              .then(() => true)
+              .catch(() => false);
+            if (!ok) continue;
+          }
+          result.removed += 1;
+          result.bytes += stat ? stat.size : 0;
+        }
+
+        if (dryRun) continue;
+        const rest = await fsp.readdir(dateDir).catch(() => null);
+        if (rest && rest.length === 0) {
+          // 只删空目录：rmdir 遇到非空会报错，正好当保护
+          const ok = await fsp
+            .rmdir(dateDir)
+            .then(() => true)
+            .catch(() => false);
+          if (ok) result.dirs += 1;
+        }
+      }
+    }
+
+    return result;
+  }
 }
 
 module.exports = { PfdStore, PfdError, RateLimiter, isParquet };

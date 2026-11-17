@@ -51,7 +51,29 @@ function matchDoc(doc, query) {
 }
 
 function makeModel(docs) {
+  const settle = (state) => {
+    let out = docs.filter((doc) => matchDoc(doc, state.query));
+    if (state.sort) {
+      const [field, dir] = Object.entries(state.sort)[0];
+      out = out.slice().sort((a, b) => ((a[field] || 0) - (b[field] || 0)) * dir);
+    }
+    return out.slice(state.skip, state.skip + state.limit);
+  };
   return {
+    findOne(query = {}) {
+      // _explainEmpty 需要 findOne(...).sort(...).lean()，这里给个最小实现
+      const state = { query, sort: null, skip: 0, limit: 1 };
+      const api = {
+        sort(spec) {
+          state.sort = spec;
+          return api;
+        },
+        lean() {
+          return Promise.resolve(settle(state)[0] || null);
+        },
+      };
+      return api;
+    },
     find(query = {}) {
       const state = { query, sort: null, skip: 0, limit: Number.MAX_SAFE_INTEGER };
       const api = {
@@ -118,6 +140,15 @@ async function main() {
     process.exit(0);
   }
   console.log(`使用真实数据：${cached.date} ${cached.hour} 时`);
+
+  // 缓存文件可能是几天前下的。窗口必须跟着数据时间走，否则写死 createDay
+  // 会让旧文件落在窗口外，导致「命中 0 个」的假失败。
+  const slotTs = Date.parse(
+    `${cached.date}T${String(cached.hour).padStart(2, "0")}:00:00Z`,
+  );
+  const createDay = Number.isFinite(slotTs)
+    ? Math.max(1, Math.ceil((Date.now() - slotTs) / (24 * 3600 * 1000)) + 1)
+    : 5;
 
   const t0 = Date.now();
   const aggregator = new HourAggregator("pump_fun");
@@ -188,7 +219,7 @@ async function main() {
     mode: "in",
     mcpMin: 2000,
     mcpMax: 50000,
-    createDay: 5,
+    createDay,
     createDayEnd: 0,
     pageNo: 1,
     pageSize: 500,
@@ -220,7 +251,7 @@ async function main() {
     mode: "in",
     mcpMin: 2000,
     mcpMax: 5000,
-    createDay: 5,
+    createDay,
     createDayEnd: 0,
     pageNo: 1,
     pageSize: 500,
@@ -239,7 +270,7 @@ async function main() {
     mode: "out",
     mcpMin: 0,
     mcpMax: 1e9,
-    createDay: 5,
+    createDay,
     createDayEnd: 0,
     pageNo: 1,
     pageSize: 500,

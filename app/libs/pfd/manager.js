@@ -51,6 +51,14 @@ function pickedDeletedCount(result) {
   return 0;
 }
 
+function formatMb(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024 * 1024) {
+    return `${(value / 1024 / 1024 / 1024).toFixed(2)}GB`;
+  }
+  return `${(value / 1024 / 1024).toFixed(1)}MB`;
+}
+
 function slotFromTs(ts) {
   const at = Math.floor(ts / HOUR_MS) * HOUR_MS;
   const date = new Date(at);
@@ -556,17 +564,23 @@ class PfdManager {
       }
 
       const pruned = await this.prune();
+      // 采集循环里是「下完就删」，历史残留/半成品靠这一遍全量扫描兜底
+      const cachePruned = await this.pruneDiskCache();
       this.lastIngest = {
         at: new Date(startedAt).toISOString(),
         ms: Date.now() - startedAt,
         summary,
         pruned,
+        cachePruned,
       };
       this.logger.info(
         `[pfd] 采集完成，用时 ${this.lastIngest.ms}ms，` +
           `pump_fun 新增 ${summary.pump_fun?.downloaded || 0} 个文件` +
           (summary.pump_amm ? `，pump_amm 新增 ${summary.pump_amm.downloaded || 0} 个` : "") +
-          `，清理 token ${pruned.pumpFun} + ${pruned.pumpAmm}`,
+          `，清理 token ${pruned.pumpFun} + ${pruned.pumpAmm}` +
+          (cachePruned.removed
+            ? `，清理本地缓存 ${cachePruned.removed} 个（${formatMb(cachePruned.bytes)}）`
+            : ""),
       );
       return this.lastIngest;
     } catch (error) {
@@ -607,6 +621,36 @@ class PfdManager {
       pumpFun: pickedDeletedCount(pumpFun),
       pumpAmm: pickedDeletedCount(pumpAmm),
     };
+  }
+
+  /**
+   * 清理本地 parquet 缓存。
+   *
+   * 采集循环里每下完一个文件就 dropHour 一次，但那只覆盖「本次真正下到的 slot」。
+   * 改配置前下的旧文件、崩溃留下的 .part、入库失败的 slot 都不会走到，
+   * 所以每次采集结束再按数据时间全量扫一遍。
+   *
+   * @param {object} [options]
+   * @param {number} [options.keepHours] 覆盖默认的 cacheKeepHours
+   * @param {boolean} [options.dryRun] 只统计不删
+   */
+  async pruneDiskCache(options = {}) {
+    const keepHours =
+      options.keepHours === undefined ? this.cacheKeepHours : Number(options.keepHours);
+    if (!(keepHours > 0)) {
+      return { scanned: 0, removed: 0, bytes: 0, dirs: 0, parts: 0, skipped: "keepHours<=0" };
+    }
+    try {
+      const result = await this.store.pruneCache({
+        keepHours,
+        dryRun: options.dryRun === true,
+      });
+      this.lastCachePrune = { at: new Date().toISOString(), ...result };
+      return result;
+    } catch (error) {
+      this.logger.warn(`[pfd] 清理本地缓存失败: ${error.message}`);
+      return { scanned: 0, removed: 0, bytes: 0, dirs: 0, parts: 0, error: error.message };
+    }
   }
 
   // ---------------------------------------------------------------- 查询
