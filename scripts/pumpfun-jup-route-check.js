@@ -244,6 +244,81 @@ check("pumpfun 兜底：DB 没有标记时读曲线再判一次", () => {
   );
 });
 
+// ---------------------------------------------------------------- 重复指令去重
+
+const {
+  TransactionInstruction,
+  ComputeBudgetProgram,
+} = require("@solana/web3.js");
+const { dedupeIdempotentInstructions } = require("../app/libs/txInstructions");
+
+const ATA_PROGRAM = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+function makeIx(programId, data, writable = true) {
+  return new TransactionInstruction({
+    programId,
+    keys: [{ pubkey: NATIVE_MINT, isSigner: false, isWritable: writable }],
+    data,
+  });
+}
+
+check("去重：重复的 setComputeUnitLimit 被去掉", () => {
+  const limit = makeIx(ComputeBudgetProgram.programId, Buffer.from([2, 0, 64, 66, 15, 0]));
+  const swap = makeIx(new PublicKey(JUP_PROGRAM), Buffer.from([1, 2, 3]));
+  const result = dedupeIdempotentInstructions([limit, limit, swap]);
+  assert.strictEqual(result.removed, 1);
+  assert.strictEqual(result.instructions.length, 2);
+  assert.strictEqual(result.instructions[1], swap);
+});
+
+check("去重：重复的幂等 ATA 创建被去掉（Jupiter 多跳的典型场景）", () => {
+  const createAta = makeIx(ATA_PROGRAM, Buffer.from([1]));
+  const swap = makeIx(new PublicKey(JUP_PROGRAM), Buffer.from([1, 2, 3]));
+  const result = dedupeIdempotentInstructions([createAta, swap, createAta]);
+  assert.strictEqual(result.removed, 1);
+  assert.deepStrictEqual(
+    result.instructions.map((ix) => ix.programId.toBase58()),
+    [ATA_PROGRAM.toBase58(), JUP_PROGRAM],
+  );
+});
+
+check("去重：数值不同的 compute budget 指令都保留", () => {
+  const a = makeIx(ComputeBudgetProgram.programId, Buffer.from([2, 0, 64, 66, 15, 0]));
+  const b = makeIx(ComputeBudgetProgram.programId, Buffer.from([2, 0, 200, 0, 0, 0]));
+  const result = dedupeIdempotentInstructions([a, b]);
+  assert.strictEqual(result.removed, 0);
+  assert.strictEqual(result.instructions.length, 2);
+});
+
+check("去重：重复的非幂等指令同样去掉（运行时本来就不允许）", () => {
+  const transfer = makeIx(
+    new PublicKey("11111111111111111111111111111111"),
+    Buffer.from([2, 0, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0]),
+  );
+  const result = dedupeIdempotentInstructions([transfer, transfer]);
+  assert.strictEqual(result.removed, 1);
+  assert.strictEqual(result.unexpected, 1);
+  assert.strictEqual(result.instructions.length, 1);
+});
+
+check("jup 分支不再自己追加 ComputeUnitLimit，且编译前统一去重", () => {
+  const src = read("app/service/pumpfun.js");
+  const buyBlock = src.slice(
+    src.indexOf("async batchBuyToken"),
+    src.indexOf("async batchSellToken"),
+  );
+  assert.ok(
+    !/jupData\.instructions[\s\S]{0,40}setComputeUnitLimit/.test(buyBlock),
+    "jup 买入仍在追加 SetComputeUnitLimit",
+  );
+  assert.ok(/dedupeIxs\(volumeIxs, `buy \$\{token\}`\)/.test(buyBlock), "买入没有去重");
+  assert.ok(
+    /dedupeIxs\(volumeIxs, `sell \$\{token\}`\)/.test(src),
+    "卖出没有去重",
+  );
+});
+
+
 
 // ---------------------------------------------------------------- 执行
 

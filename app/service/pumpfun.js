@@ -23,6 +23,7 @@ const {
 const { PumpFunSDK, GlobalAccount } = require("../libs/pumpfun");
 const JupSDK = require("../libs/jup");
 const { getCurveQuote } = require("../libs/pumpCurve");
+const { dedupeIdempotentInstructions } = require("../libs/txInstructions");
 const {
   createAxiomPumpfunBuyInstructions,
 } = require("../libs/axiom");
@@ -126,6 +127,15 @@ function getWalletSlippageBasisPoints(wallet) {
 // Jupiter 的接口要的是 0~1 的小数滑点，这里把内盘统一用的 bps 转回去
 function getWalletSlippageFraction(wallet) {
   return Number(getWalletSlippageBasisPoints(wallet)) / 10000;
+}
+
+/** 包一层日志，调用处就不用每次传 chalk */
+function dedupeIxs(instructions, label) {
+  return dedupeIdempotentInstructions(
+    instructions,
+    (message) => console.log(chalk.yellow(message)),
+    label,
+  ).instructions;
 }
 
 async function simulatePumpFunTransaction(transaction, user, ctx) {
@@ -457,10 +467,10 @@ class PumpFun extends Service {
           if (jupData.lookupTableAccounts?.length) {
             walletLookupTables = jupData.lookupTableAccounts;
           }
+          // Jupiter 在 dynamicComputeUnitLimit 下自带 setComputeUnitLimit，
+          // 再塞一条自己的只会被它的覆盖，还可能撞上运行时「重复指令」检查。
+          // 优先级费仍然用钱包配置的那条。
           volumeIxs = [
-            ...(limit
-              ? [ComputeBudgetProgram.setComputeUnitLimit({ units: limit })]
-              : []),
             ...(price
               ? [ComputeBudgetProgram.setComputeUnitPrice({ microLamports: price })]
               : []),
@@ -688,7 +698,11 @@ class PumpFun extends Service {
           const messageV0 = new TransactionMessage({
             payerKey: user,
             recentBlockhash: blockhash,
-            instructions: volumeIxs,
+            // jup 拼出来的指令要先去掉重复，运行时不允许同一笔交易出现两条
+            // 完全相同的指令，否则模拟阶段就直接报 duplicate instruction
+            instructions: jupRoute.useJup
+              ? dedupeIxs(volumeIxs, `buy ${token}`)
+              : volumeIxs,
           }).compileToV0Message(walletLookupTables);
 
           const tx = new VersionedTransaction(messageV0);
@@ -836,9 +850,8 @@ class PumpFun extends Service {
               walletLookupTables = jupSell.lookupTableAccounts;
             }
             volumeIxs = [
-              ...(limit
-                ? [ComputeBudgetProgram.setComputeUnitLimit({ units: limit })]
-                : []),
+              // ComputeUnitLimit 由 Jupiter 自己的 dynamicComputeUnitLimit 给，
+              // 这里只保留优先级费
               ...(price
                 ? [ComputeBudgetProgram.setComputeUnitPrice({ microLamports: price })]
                 : []),
@@ -864,7 +877,9 @@ class PumpFun extends Service {
             const messageV0 = new TransactionMessage({
               payerKey: keypair.publicKey,
               recentBlockhash: blockhash,
-              instructions: volumeIxs,
+              instructions: jupRoute.useJup
+                ? dedupeIxs(volumeIxs, `sell ${token}`)
+                : volumeIxs,
             }).compileToV0Message(walletLookupTables);
 
             const tx = new VersionedTransaction(messageV0);
