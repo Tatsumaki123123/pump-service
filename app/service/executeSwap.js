@@ -33,6 +33,7 @@ const {
   getPumpPoolsWithBaseMint,
   getPumpPoolsWithQuoteInfo,
 } = require("../libs/pool");
+const { getCurveQuote } = require("../libs/pumpCurve");
 const {
   NATIVE_MINT,
   TOKEN_PROGRAM_ID,
@@ -58,6 +59,24 @@ function cachePumpQuotePools(token, quotePools) {
       pumpQuoteCache.delete(key);
       if (--drop <= 0) break;
     }
+  }
+}
+
+/** 带缓存地列出某个 token 的 Pump AMM 池；失败返回空数组（失败即按 WSOL 处理） */
+async function loadPumpQuotePools(token) {
+  const cached = pumpQuoteCache.get(token);
+  if (cached && Date.now() - cached.at < PUMP_QUOTE_CACHE_TTL_MS) {
+    return cached.pools;
+  }
+  try {
+    const pools = await getPumpPoolsWithQuoteInfo(new PublicKey(token));
+    cachePumpQuotePools(token, pools);
+    return pools;
+  } catch (error) {
+    console.log(
+      `Cannot list Pump pools for ${token} while checking route: ${error.message}`,
+    );
+    return [];
   }
 }
 
@@ -1824,35 +1843,32 @@ class ExecuteSwap extends Service {
         );
       }
     } else if (amm === PUMP_FUN_NAME) {
-      // 内盘曲线本身只有 SOL 计价，但同一个 token 可能已经存在非 WSOL 的
-      // Pump AMM 池（USDC 或其它 SPL 计价）。这种情况下曲线指令根本发不出去，
-      // 和外盘一样：把池子/计价信息落到 routeInfo，买卖默认改走 Jupiter。
-      let quotePools = null;
-      const cachedQuotePools = pumpQuoteCache.get(token);
-      if (
-        cachedQuotePools &&
-        Date.now() - cachedQuotePools.at < PUMP_QUOTE_CACHE_TTL_MS
-      ) {
-        quotePools = cachedQuotePools.pools;
-      } else {
-        try {
-          quotePools = await getPumpPoolsWithQuoteInfo(new PublicKey(token));
-          cachePumpQuotePools(token, quotePools);
-        } catch (error) {
-          // 查不到就按 WSOL 处理，不能因为一次 RPC 失败把内盘下单堵住
-          quotePools = null;
-          console.log(
-            `Cannot list Pump pools for ${token} while checking route: ${error.message}`,
-          );
+      // 内盘的权威判据是曲线账户里的 quote_mint。
+      // 新版 pump.fun 允许用别的币（另一个 pump 币 / 稳定币）当计价单位，
+      // 这种曲线用普通 buy 发出去必然报 6063 UnsupportedQuoteMint —— 旧 SDK
+      // 把 virtual_quote_reserves 当 SOL 在用，压根看不出区别。
+      // 曲线账户读不到（已毕业 / 查不到）时，再退回扫 Pump AMM 池子。
+      const curveQuote = await getCurveQuote(connection, token).catch(() => null);
+
+      let quoteMint = "";
+      let routeSource = "";
+      let nonWsolPool = null;
+
+      if (curveQuote && !curveQuote.isSolQuote) {
+        quoteMint = curveQuote.quoteMint;
+        routeSource = "curve";
+      } else if (!curveQuote || curveQuote.complete) {
+        const quotePools = await loadPumpQuotePools(token);
+        const hasNativePool = quotePools.some((item) => item.isNativeQuote);
+        nonWsolPool =
+          !hasNativePool && quotePools.length ? quotePools[0] : null;
+        if (nonWsolPool) {
+          quoteMint = nonWsolPool.quoteMint;
+          routeSource = "pool";
         }
       }
-      const hasNativePool =
-        Array.isArray(quotePools) && quotePools.some((item) => item.isNativeQuote);
-      const nonWsolPool =
-        Array.isArray(quotePools) && !hasNativePool && quotePools.length
-          ? quotePools[0]
-          : null;
-      if (nonWsolPool) {
+
+      if (quoteMint) {
         if (!aveTokenInfo) {
           try {
             aveTokenInfo = await ctx.service.ave.getTokenInfo(token);
@@ -1864,38 +1880,52 @@ class ExecuteSwap extends Service {
         }
         let quoteTokenInfo = null;
         try {
-          quoteTokenInfo = await ctx.service.ave.getTokenInfo(
-            nonWsolPool.quoteMint,
-          );
+          quoteTokenInfo = await ctx.service.ave.getTokenInfo(quoteMint);
         } catch (error) {
           console.log(
-            `Cannot get AVE token info for quote mint ${nonWsolPool.quoteMint}: ${error.message}`,
+            `Cannot get AVE token info for quote mint ${quoteMint}: ${error.message}`,
           );
         }
         routeInfo = {
           useJup: true,
           isNativeQuote: false,
           amm: PUMP_FUN_NAME,
-          pumpPool: nonWsolPool.address,
-          quoteMint: nonWsolPool.quoteMint,
+          routeSource,
+          curve: curveQuote
+            ? {
+                layout: curveQuote.layout,
+                size: curveQuote.size,
+                complete: curveQuote.complete,
+                creator: curveQuote.creator,
+                isMayhemMode: curveQuote.isMayhemMode,
+                isCashbackCoin: curveQuote.isCashbackCoin,
+              }
+            : null,
+          pumpPool: nonWsolPool ? nonWsolPool.address : "",
+          quoteMint,
           quotePool: quoteTokenInfo?.pool || null,
           quoteAmm: quoteTokenInfo?.amm || null,
           token: aveTokenInfo?.tokenDetail || null,
-          pumpPair:
-            (aveTokenInfo?.pairs || []).find(
-              (item) => item.pair === nonWsolPool.address,
-            ) || null,
+          pumpPair: nonWsolPool
+            ? (aveTokenInfo?.pairs || []).find(
+                (item) => item.pair === nonWsolPool.address,
+              ) || null
+            : null,
           quoteToken: quoteTokenInfo?.tokenDetail || null,
           quotePair: quoteTokenInfo?.mainPair || null,
         };
         await ctx.model.PoolStore.updateOne(
           { token },
-          { $set: { pool: nonWsolPool.address, routeInfo } },
+          {
+            $set: nonWsolPool
+              ? { pool: nonWsolPool.address, routeInfo }
+              : { routeInfo },
+          },
           { upsert: true },
         );
         console.log(
           chalk.yellow(
-            `[route] ${token} 内盘池子非 WSOL 计价 (${nonWsolPool.quoteMint})，买卖走 Jupiter`,
+            `[route] ${token} 内盘计价非 WSOL（${quoteMint}，来源=${routeSource}），买卖走 Jupiter`,
           ),
         );
       }

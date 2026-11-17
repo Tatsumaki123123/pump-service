@@ -174,6 +174,77 @@ check("非 WSOL 时不加载曲线账户，避免无曲线 token 直接抛错", 
   );
 });
 
+// ---------------------------------------------------------------- 曲线 quote 解码
+
+const {
+  decodeCurve,
+  ZERO_PUBKEY,
+  WSOL: WSOL_MINT,
+  QUOTE_MINT_OFFSET,
+  QUOTE_MINT_END,
+} = require("../app/libs/pumpCurve");
+
+const EXOTIC_QUOTE = "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb";
+const SAMPLE_MINT = "DrJPPRpJJopB8zG4fM7wUWYFmUJxjV4hdKHTzDQNpump";
+
+function makeCurveBuffer(quoteMint, size = 166) {
+  const buf = Buffer.alloc(size);
+  buf.writeBigUInt64LE(1039945747935021n, 8); // virtualTokenReserves
+  buf.writeBigUInt64LE(24460093n, 16); // virtualQuoteReserves
+  buf.writeBigUInt64LE(760045747935021n, 24); // realTokenReserves
+  buf.writeBigUInt64LE(754794n, 32); // realQuoteReserves
+  buf.writeBigUInt64LE(1000000000000000n, 40); // tokenTotalSupply
+  buf[48] = 0; // complete
+  if (size >= 81) new PublicKey(SAMPLE_MINT).toBuffer().copy(buf, 49);
+  if (size >= QUOTE_MINT_END) new PublicKey(quoteMint).toBuffer().copy(buf, QUOTE_MINT_OFFSET);
+  return buf;
+}
+
+check("曲线 quote_mint 解码：非 SOL 计价（6063 那种币）", () => {
+  const q = decodeCurve(makeCurveBuffer(EXOTIC_QUOTE));
+  assert.strictEqual(q.layout, "v2");
+  assert.strictEqual(q.isSolQuote, false);
+  assert.strictEqual(q.quoteMint, EXOTIC_QUOTE);
+  assert.strictEqual(q.virtualQuoteReserves, 24460093n);
+  assert.strictEqual(q.creator, SAMPLE_MINT);
+});
+
+check("曲线 quote_mint 解码：全零与 WSOL 都算 SOL 曲线", () => {
+  assert.strictEqual(decodeCurve(makeCurveBuffer(ZERO_PUBKEY)).isSolQuote, true);
+  assert.strictEqual(decodeCurve(makeCurveBuffer(WSOL_MINT)).isSolQuote, true);
+});
+
+check("老布局（81 字节）曲线不越界且视为 SOL", () => {
+  const q = decodeCurve(makeCurveBuffer(ZERO_PUBKEY, 81));
+  assert.strictEqual(q.layout, "legacy");
+  assert.strictEqual(q.size, 81);
+  assert.strictEqual(q.isSolQuote, true);
+  assert.strictEqual(q.quoteMint, "");
+});
+
+check("checkToken 内盘以曲线 quote_mint 为权威判据", () => {
+  const src = read("app/service/executeSwap.js");
+  assert.ok(
+    /getCurveQuote\(connection, token\)/.test(src),
+    "checkToken 内盘没有读曲线 quote_mint",
+  );
+  assert.ok(/curveQuote && !curveQuote\.isSolQuote/.test(src));
+});
+
+check("pumpfun 兜底：DB 没有标记时读曲线再判一次", () => {
+  const src = read("app/service/pumpfun.js");
+  const block = src.slice(
+    src.indexOf("async getJupRouteInfo"),
+    src.indexOf("async batchBuyToken"),
+  );
+  assert.ok(block.includes("getCurveQuote"), "getJupRouteInfo 没有兜底读曲线");
+  assert.ok(
+    block.includes("useJup: true"),
+    "兜底命中后没有回填 useJup",
+  );
+});
+
+
 // ---------------------------------------------------------------- 执行
 
 (async () => {

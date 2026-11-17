@@ -22,6 +22,7 @@ const {
 
 const { PumpFunSDK, GlobalAccount } = require("../libs/pumpfun");
 const JupSDK = require("../libs/jup");
+const { getCurveQuote } = require("../libs/pumpCurve");
 const {
   createAxiomPumpfunBuyInstructions,
 } = require("../libs/axiom");
@@ -326,10 +327,12 @@ class PumpFun extends Service {
   /**
    * 读取 checkToken 落库的路由标记。
    *
-   * 曲线本身只有 SOL 这个计价单位，所以「内盘非 WSOL 池子」指的是：
-   * 这个 token 已经有 USDC / 其它 SPL 计价的 Pump AMM 池，曲线指令发不出去。
-   * checkToken 会把这种池子的信息写进 ExecuteToken.routeInfo 并置 useJup，
-   * 买卖两边都据此改走 Jupiter。
+   * 曲线本身可以用非 SOL 的计价单位（另一个 pump 币 / 稳定币），
+   * 这种曲线用普通 buy/sell 发出去必然报 6063 UnsupportedQuoteMint ——
+   * 旧 SDK 把 virtual_quote_reserves 当 SOL 在用，看不出区别。
+   *
+   * 所以 DB 里没有标记时，再读一次链上曲线的 quote_mint 兜底：
+   * 非 SOL 就改走 Jupiter，并把标记回填到库里。
    */
   async getJupRouteInfo(token) {
     const { ctx } = this;
@@ -339,11 +342,29 @@ class PumpFun extends Service {
         { useJup: 1, quoteMint: 1, routeInfo: 1 },
       ).lean();
       const routeInfo = row?.routeInfo || {};
-      return {
+      const result = {
         useJup: row?.useJup === true || routeInfo.useJup === true,
         quoteMint: row?.quoteMint || routeInfo.quoteMint || "",
         routeInfo,
       };
+      if (result.useJup) return result;
+
+      const curveQuote = await getCurveQuote(connection, token).catch(() => null);
+      if (!curveQuote || curveQuote.isSolQuote) return result;
+
+      result.useJup = true;
+      result.quoteMint = curveQuote.quoteMint;
+      console.log(
+        chalk.yellow(
+          `Pump.fun 曲线 ${token} 的 quote_mint 非 SOL（${curveQuote.quoteMint}），改用 Jupiter 并回填标记`,
+        ),
+      );
+      // 回填，下一轮不用再查链。失败不影响本次交易
+      ctx.model.ExecuteToken.updateOne(
+        { token },
+        { $set: { useJup: true, quoteMint: curveQuote.quoteMint } },
+      ).catch(() => undefined);
+      return result;
     } catch (error) {
       console.log(
         chalk.yellow(
