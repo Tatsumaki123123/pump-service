@@ -403,6 +403,75 @@ check("编译兜底：怎么都装不下就抛错并带上体积明细", () => {
   );
 });
 
+// ---------------------------------------------------------------- vote 账户定位
+
+const { findVoteAccounts, VOTE_PROGRAM_ID } = require("../app/libs/txInstructions");
+const { TransactionMessage, VersionedTransaction } = require("@solana/web3.js");
+
+check("vote 账户定位：认出交易里被带上的 vote 账户", async () => {
+  // 暗池拿 vote 账户当反 bundle 标记，路由命中就会进到我们的交易里
+  const voteAccount = new PublicKey(
+    "J1to1yufRnoWn81KYg1XkTWzmKjnYSnmE2VY8DGUJ9Qv",
+  );
+  const swapIx = new TransactionInstruction({
+    programId: new PublicKey(JUP_PROGRAM),
+    keys: [{ pubkey: voteAccount, isSigner: false, isWritable: true }],
+    data: Buffer.from([1, 2, 3]),
+  });
+  const tx = new VersionedTransaction(
+    new TransactionMessage({
+      payerKey: NATIVE_MINT,
+      recentBlockhash: BLOCKHASH,
+      instructions: [swapIx],
+    }).compileToV0Message(),
+  );
+
+  const fakeConnection = {
+    getMultipleAccountsInfo: async (keys) =>
+      keys.map((key) => ({
+        owner:
+          key.toBase58() === voteAccount.toBase58()
+            ? new PublicKey(VOTE_PROGRAM_ID)
+            : SystemProgram.programId,
+      })),
+    getAddressLookupTable: async () => ({ value: null }),
+  };
+
+  const found = await findVoteAccounts(fakeConnection, [tx]);
+  assert.deepStrictEqual(found, [voteAccount.toBase58()]);
+});
+
+check("vote 账户定位：没有 vote 账户时返回空数组", async () => {
+  const swap = makeIx(new PublicKey(JUP_PROGRAM), Buffer.from([9, 9, 9]));
+  const tx = new VersionedTransaction(
+    new TransactionMessage({
+      payerKey: NATIVE_MINT,
+      recentBlockhash: BLOCKHASH,
+      instructions: [swap],
+    }).compileToV0Message(),
+  );
+  const fakeConnection = {
+    getMultipleAccountsInfo: async (keys) =>
+      keys.map(() => ({ owner: SystemProgram.programId })),
+    getAddressLookupTable: async () => ({ value: null }),
+  };
+  const found = await findVoteAccounts(fakeConnection, [tx]);
+  assert.deepStrictEqual(found, []);
+});
+
+check("bundle 因 vote 账户被拒时会降级逐笔发送", () => {
+  const src = read("app/service/pumpfun.js");
+  const buyBlock = src.slice(
+    src.indexOf("async batchBuyToken"),
+    src.indexOf("async batchSellToken"),
+  );
+  assert.ok(/vote account/i.test(buyBlock), "买入没有识别 vote 账户报错");
+  assert.ok(buyBlock.includes("findVoteAccounts"), "买入没有定位 vote 账户");
+  assert.ok(buyBlock.includes("no bundle"), "买入没有降级发送");
+  assert.ok(/vote account/i.test(src.slice(src.indexOf("async batchSellToken"))));
+});
+
+
 
 
 

@@ -14,9 +14,11 @@ const {
   ComputeBudgetProgram,
   TransactionMessage,
   VersionedTransaction,
+  PublicKey,
 } = require("@solana/web3.js");
 
 const ATA_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const VOTE_PROGRAM_ID = "Vote111111111111111111111111111111111111111";
 
 // 只对「重复执行没有副作用」的程序去重。
 // compute budget 是覆盖式的，ATA createIdempotent 本身幂等，删重复不会改语义。
@@ -189,11 +191,75 @@ function compileWithSizeFallback(params) {
   );
 }
 
+/**
+ * 找出交易里出现的 vote 账户。
+ *
+ * Jito / QuickNode 的 bundle 接口会拒绝「锁了 vote 账户」的 bundle：
+ *   bundles cannot lock any vote accounts
+ * 起因有两类：
+ *  1. 某些池子（例如 humidifi 系的暗池）会在账户里塞一个 vote 账户当反 bundle 标记；
+ *  2. Jupiter 路由命中这类池子时，标记就跟着进了我们的交易。
+ * 定位不到具体账户就永远只能猜，所以这里把地址捞出来打印。
+ *
+ * @param {import("@solana/web3.js").Connection} connection
+ * @param {import("@solana/web3.js").VersionedTransaction[]} transactions
+ * @returns {Promise<string[]>}
+ */
+async function findVoteAccounts(connection, transactions) {
+  const addresses = new Set();
+  const tableCache = new Map();
+
+  for (const transaction of transactions) {
+    const message = transaction.message;
+    for (const key of message.staticAccountKeys || []) {
+      addresses.add(key.toBase58());
+    }
+    for (const lookup of message.addressTableLookups || []) {
+      const tableKey = lookup.accountKey.toBase58();
+      let table = tableCache.get(tableKey);
+      if (table === undefined) {
+        const result = await connection
+          .getAddressLookupTable(lookup.accountKey)
+          .catch(() => null);
+        table = result?.value?.state?.addresses || [];
+        tableCache.set(tableKey, table);
+      }
+      for (const index of [
+        ...(lookup.writableIndexes || []),
+        ...(lookup.readonlyIndexes || []),
+      ]) {
+        const address = table[index];
+        if (address) addresses.add(address.toBase58());
+      }
+    }
+  }
+
+  const list = [...addresses];
+  const voteProgram = new PublicKey(VOTE_PROGRAM_ID);
+  const found = [];
+  const CHUNK = 100;
+  for (let start = 0; start < list.length; start += CHUNK) {
+    const slice = list.slice(start, start + CHUNK);
+    const infos = await connection
+      .getMultipleAccountsInfo(
+        slice.map((address) => new PublicKey(address)),
+        "confirmed",
+      )
+      .catch(() => []);
+    infos.forEach((info, index) => {
+      if (info && info.owner.equals(voteProgram)) found.push(slice[index]);
+    });
+  }
+  return found;
+}
+
 module.exports = {
   ATA_PROGRAM_ID,
   DEDUPE_SAFE_PROGRAM_IDS,
   MAX_TRANSACTION_BYTES,
+  VOTE_PROGRAM_ID,
   instructionKey,
   dedupeIdempotentInstructions,
   compileWithSizeFallback,
+  findVoteAccounts,
 };

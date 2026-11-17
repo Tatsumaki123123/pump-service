@@ -26,6 +26,7 @@ const { getCurveQuote } = require("../libs/pumpCurve");
 const {
   dedupeIdempotentInstructions,
   compileWithSizeFallback: compileTxWithSizeFallback,
+  findVoteAccounts,
 } = require("../libs/txInstructions");
 const {
   createAxiomPumpfunBuyInstructions,
@@ -769,13 +770,37 @@ class PumpFun extends Service {
           await connection.confirmTransaction(signature, "processed");
           return true;
         }
-        const bundleResult = await ctx.service.jito.sendBundle(
-          buyTxns,
-          sendOptions,
-        );
-        console.log(bundleResult);
-        console.log(chalk.green("Buy transactions completed."));
-        return true;
+        try {
+          const bundleResult = await ctx.service.jito.sendBundle(
+            buyTxns,
+            sendOptions,
+          );
+          console.log(bundleResult);
+          console.log(chalk.green("Buy transactions completed."));
+          return true;
+        } catch (error) {
+          // bundle 被拒是因为交易里锁了 vote 账户时，定位一下再降级逐笔发送：
+          // 某些池子拿 vote 账户当反 bundle 标记，路由命中就会带上，
+          // 这种交易永远进不了 bundle，但单独发是合法的。
+          if (!/vote account/i.test(error.message)) throw error;
+          const voteAccounts = await findVoteAccounts(connection, buyTxns).catch(
+            () => [],
+          );
+          console.error(
+            chalk.red(
+              `[bundle] ${token} 交易里含 vote 账户 ${voteAccounts.join(", ") || "(未定位到，可能是 ALT 内账户)"}；` +
+                "Jito 不允许打包，降级为逐笔发送。可在 JUPITER_EXCLUDE_DEXES 里排除对应 DEX 避免",
+            ),
+          );
+          for (const transaction of buyTxns) {
+            const signature = await connection.sendTransaction(transaction, {
+              skipPreflight: !isDevelopmentEnvironment(ctx),
+            });
+            await connection.confirmTransaction(signature, "processed");
+            console.log(chalk.yellow(`  sent ${signature} (no bundle)`));
+          }
+          return true;
+        }
       }
     } else {
       throw new Error("batchBuyToken: param error");
@@ -945,10 +970,30 @@ class PumpFun extends Service {
             await connection.confirmTransaction(signature, "processed");
             return true;
           }
-          const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
-          console.log(bundleResult);
-
-          console.log(chalk.green("Sell transactions completed."));
+          try {
+            const bundleResult = await ctx.service.jito.sendBundle(sellTxns);
+            console.log(bundleResult);
+            console.log(chalk.green("Sell transactions completed."));
+          } catch (error) {
+            if (!/vote account/i.test(error.message)) throw error;
+            const voteAccounts = await findVoteAccounts(
+              connection,
+              sellTxns,
+            ).catch(() => []);
+            console.error(
+              chalk.red(
+                `[bundle] ${token} 卖出的交易里含 vote 账户 ${voteAccounts.join(", ") || "(未定位到)"}；` +
+                  "Jito 不允许打包，降级为逐笔发送",
+              ),
+            );
+            for (const transaction of sellTxns) {
+              const signature = await connection.sendTransaction(transaction, {
+                skipPreflight: !isDevelopmentEnvironment(ctx),
+              });
+              await connection.confirmTransaction(signature, "processed");
+              console.log(chalk.yellow(`  sent ${signature} (no bundle)`));
+            }
+          }
         }
         return true;
       };
