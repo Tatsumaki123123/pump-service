@@ -23,7 +23,10 @@ const {
 const { PumpFunSDK, GlobalAccount } = require("../libs/pumpfun");
 const JupSDK = require("../libs/jup");
 const { getCurveQuote } = require("../libs/pumpCurve");
-const { dedupeIdempotentInstructions } = require("../libs/txInstructions");
+const {
+  dedupeIdempotentInstructions,
+  compileWithSizeFallback: compileTxWithSizeFallback,
+} = require("../libs/txInstructions");
 const {
   createAxiomPumpfunBuyInstructions,
 } = require("../libs/axiom");
@@ -665,19 +668,20 @@ class PumpFun extends Service {
           }
         }
 
+        // 记下 tip 指令的引用，交易超限时可能要把它拆到单独一笔
+        let bundleTipIx = null;
         if (shouldIncludePadreBundleTip && !isNozomi && i === 0) {
           const configuredTipLamports = Number(fee) * LAMPORTS_PER_SOL;
-          volumeIxs.push(
-            SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports:
-                Number.isFinite(configuredTipLamports) &&
-                configuredTipLamports > 0
-                  ? configuredTipLamports
-                  : tipAmount,
-            }),
-          );
+          bundleTipIx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: jipAcc,
+            lamports:
+              Number.isFinite(configuredTipLamports) &&
+              configuredTipLamports > 0
+                ? configuredTipLamports
+                : tipAmount,
+          });
+          volumeIxs.push(bundleTipIx);
         }
 
         if (
@@ -685,27 +689,30 @@ class PumpFun extends Service {
           !wallet.isAxiom &&
           !wallet.isGmgn
         ) {
-          volumeIxs.push(
-            SystemProgram.transfer({
-              fromPubkey: user,
-              toPubkey: jipAcc,
-              lamports: tipAmount,
-            }),
-          );
+          bundleTipIx = SystemProgram.transfer({
+            fromPubkey: user,
+            toPubkey: jipAcc,
+            lamports: tipAmount,
+          });
+          volumeIxs.push(bundleTipIx);
         }
 
         try {
-          const messageV0 = new TransactionMessage({
+          // jup 拼出来的指令要先去掉重复，运行时不允许同一笔交易出现两条
+          // 完全相同的指令，否则模拟阶段就直接报 duplicate instruction
+          const preparedIxs = jupRoute.useJup
+            ? dedupeIxs(volumeIxs, `buy ${token}`)
+            : volumeIxs;
+          // 多跳路由容易顶到 1232 字节上限，这里按体积逐级瘦身
+          const { transaction: tx, tipDropped } = compileTxWithSizeFallback({
             payerKey: user,
             recentBlockhash: blockhash,
-            // jup 拼出来的指令要先去掉重复，运行时不允许同一笔交易出现两条
-            // 完全相同的指令，否则模拟阶段就直接报 duplicate instruction
-            instructions: jupRoute.useJup
-              ? dedupeIxs(volumeIxs, `buy ${token}`)
-              : volumeIxs,
-          }).compileToV0Message(walletLookupTables);
-
-          const tx = new VersionedTransaction(messageV0);
+            instructions: preparedIxs,
+            lookupTables: walletLookupTables,
+            tipInstruction: bundleTipIx,
+            label: `buy ${token}`,
+            log: (message) => console.log(chalk.yellow(message)),
+          });
           tx.sign([keypair]);
           await simulatePumpFunTransaction(tx, user, ctx);
           if (jupRoute.useJup && !isDevelopmentEnvironment(ctx)) {
@@ -722,6 +729,22 @@ class PumpFun extends Service {
             }
           }
           buyTxns.push(tx);
+          if (tipDropped && bundleTipIx) {
+            // 交易太大时 tip 被摘出来了，补一笔单独的 tip 交易，
+            // 否则 jito bundle 没有小费会被拒
+            const tipTx = new VersionedTransaction(
+              new TransactionMessage({
+                payerKey: user,
+                recentBlockhash: blockhash,
+                instructions: [bundleTipIx],
+              }).compileToV0Message(),
+            );
+            tipTx.sign([keypair]);
+            buyTxns.push(tipTx);
+            console.log(
+              chalk.yellow(`[size] buy ${token} tip 已拆成独立交易`),
+            );
+          }
         } catch (error) {
           console.error(error.message);
           break;
@@ -874,18 +897,33 @@ class PumpFun extends Service {
           }
 
           try {
-            const messageV0 = new TransactionMessage({
+            const preparedIxs = jupRoute.useJup
+              ? dedupeIxs(volumeIxs, `sell ${token}`)
+              : volumeIxs;
+            const { transaction: tx, tipDropped } = compileTxWithSizeFallback({
               payerKey: keypair.publicKey,
               recentBlockhash: blockhash,
-              instructions: jupRoute.useJup
-                ? dedupeIxs(volumeIxs, `sell ${token}`)
-                : volumeIxs,
-            }).compileToV0Message(walletLookupTables);
-
-            const tx = new VersionedTransaction(messageV0);
+              instructions: preparedIxs,
+              lookupTables: walletLookupTables,
+              tipInstruction: jitoTipIx,
+              label: `sell ${token}`,
+              log: (message) => console.log(chalk.yellow(message)),
+            });
             tx.sign([keypair]);
             await simulatePumpFunTransaction(tx, user, ctx);
             sellTxns.push(tx);
+            if (tipDropped) {
+              const tipTx = new VersionedTransaction(
+                new TransactionMessage({
+                  payerKey: user,
+                  recentBlockhash: blockhash,
+                  instructions: [jitoTipIx],
+                }).compileToV0Message(),
+              );
+              tipTx.sign([keypair]);
+              sellTxns.push(tipTx);
+              console.log(chalk.yellow(`[size] sell ${token} tip 已拆成独立交易`));
+            }
           } catch (error) {
             console.error(
               chalk.red(

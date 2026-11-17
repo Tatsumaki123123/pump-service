@@ -69,13 +69,16 @@ check("pumpfun 买卖两侧都读取 useJup 并接 Jupiter", () => {
   assert.ok(sellBlock.includes("jupSwap.getSellInstructions"), "卖出没有走 Jupiter");
   // Jupiter 返回的 lookup table 必须真的用上，否则大路由编译会超限
   assert.ok(
-    /compileToV0Message\(walletLookupTables\)/.test(buyBlock),
+    /lookupTables: walletLookupTables/.test(buyBlock),
     "买入编译交易时没有带 lookup table",
   );
   assert.ok(
-    /compileToV0Message\(walletLookupTables\)/.test(sellBlock),
+    /lookupTables: walletLookupTables/.test(sellBlock),
     "卖出编译交易时没有带 lookup table",
   );
+  // 体积兜底必须挂在两侧
+  assert.ok(/compileTxWithSizeFallback/.test(buyBlock), "买入没有体积兜底");
+  assert.ok(/compileTxWithSizeFallback/.test(sellBlock), "卖出没有体积兜底");
 });
 
 // ---------------------------------------------------------------- 行为校验
@@ -317,6 +320,89 @@ check("jup 分支不再自己追加 ComputeUnitLimit，且编译前统一去重"
     "卖出没有去重",
   );
 });
+
+// ---------------------------------------------------------------- 交易体积兜底
+
+const {
+  compileWithSizeFallback,
+  MAX_TRANSACTION_BYTES,
+} = require("../app/libs/txInstructions");
+const { SystemProgram } = require("@solana/web3.js");
+const BLOCKHASH = ZERO_PUBKEY;
+
+function sizeOf(instructions, maxBytes = 100000) {
+  return compileWithSizeFallback({
+    payerKey: NATIVE_MINT,
+    recentBlockhash: BLOCKHASH,
+    instructions,
+    maxBytes,
+  }).size;
+}
+
+check("编译兜底：小交易原样通过，不动指令", () => {
+  const instructions = [
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }),
+    makeIx(new PublicKey(JUP_PROGRAM), Buffer.from([9, 9, 9])),
+  ];
+  const result = compileWithSizeFallback({
+    payerKey: NATIVE_MINT,
+    recentBlockhash: BLOCKHASH,
+    instructions,
+  });
+  assert.strictEqual(result.dropped.length, 0);
+  assert.strictEqual(result.tipDropped, false);
+  assert.ok(result.size <= MAX_TRANSACTION_BYTES);
+});
+
+check("编译兜底：超限先去掉自己加的 compute budget", () => {
+  const cb = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 });
+  const tip = makeIx(SystemProgram.programId, Buffer.from([2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]));
+  const swap = makeIx(new PublicKey(JUP_PROGRAM), Buffer.from([9, 9, 9]));
+  const base = sizeOf([cb, tip, swap]);
+
+  const result = compileWithSizeFallback({
+    payerKey: NATIVE_MINT,
+    recentBlockhash: BLOCKHASH,
+    instructions: [cb, tip, swap],
+    tipInstruction: tip,
+    maxBytes: base - 1,
+  });
+  assert.ok(result.size <= base - 1, `仍然超限: ${result.size}`);
+  assert.ok(result.dropped.includes("computeBudget"), "没有优先砍 compute budget");
+  assert.strictEqual(result.tipDropped, false);
+});
+
+check("编译兜底：还超就把 tip 摘出来交给调用方单独发", () => {
+  const cb = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 });
+  const tip = makeIx(SystemProgram.programId, Buffer.from([2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]));
+  const swap = makeIx(new PublicKey(JUP_PROGRAM), Buffer.from([9, 9, 9]));
+  const base = sizeOf([cb, tip, swap]);
+
+  const result = compileWithSizeFallback({
+    payerKey: NATIVE_MINT,
+    recentBlockhash: BLOCKHASH,
+    instructions: [cb, tip, swap],
+    tipInstruction: tip,
+    maxBytes: base - 60,
+  });
+  assert.ok(result.tipDropped, "没有把 tip 摘出来");
+  assert.ok(result.size <= base - 60);
+});
+
+check("编译兜底：怎么都装不下就抛错并带上体积明细", () => {
+  const swap = makeIx(new PublicKey(JUP_PROGRAM), Buffer.from([9, 9, 9]));
+  assert.throws(
+    () =>
+      compileWithSizeFallback({
+        payerKey: NATIVE_MINT,
+        recentBlockhash: BLOCKHASH,
+        instructions: [swap],
+        maxBytes: 40,
+      }),
+    /Transaction too large/,
+  );
+});
+
 
 
 

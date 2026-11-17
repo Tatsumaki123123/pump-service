@@ -10,7 +10,11 @@
  * 而且这个错误在 simulateTransaction 阶段就出现，交易根本发不出去。
  */
 
-const { ComputeBudgetProgram } = require("@solana/web3.js");
+const {
+  ComputeBudgetProgram,
+  TransactionMessage,
+  VersionedTransaction,
+} = require("@solana/web3.js");
 
 const ATA_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 
@@ -89,9 +93,107 @@ function dedupeIdempotentInstructions(instructions, log, label = "") {
   return { instructions: out, removed, unexpected };
 }
 
+// Solana 单笔交易的硬上限（签名 + message）
+const MAX_TRANSACTION_BYTES = 1232;
+
+/**
+ * 编译 v0 交易，超限时逐级瘦身。
+ *
+ * 触发场景：Jupiter 的多跳路由（例如 SOL -> USDC -> 中间币 -> 曲线）账户很多，
+ * 若它没返回 address lookup table，很容易顶到 1232 字节上限，报
+ *   VersionedTransaction too large: 1656 bytes (max: encoded/raw 1644/1232)
+ * 常见只超十几字节，删掉自己加的 compute budget 和 jito tip 就够了。
+ *
+ * 依次尝试：
+ *   1. 原样编译
+ *   2. 去掉本进程加的 ComputeBudget 指令（Jupiter 自己带 CU limit）
+ *   3. 再去掉 tip 指令（调用方需要单独补一笔 tip 交易）
+ * 都不行就抛错，并把各方案的体积带上，方便判断是不是路由本身太大。
+ *
+ * @param {object} params
+ * @param {import("@solana/web3.js").PublicKey} params.payerKey
+ * @param {string} params.recentBlockhash
+ * @param {import("@solana/web3.js").TransactionInstruction[]} params.instructions
+ * @param {import("@solana/web3.js").AddressLookupTableAccount[]} [params.lookupTables]
+ * @param {import("@solana/web3.js").TransactionInstruction|null} [params.tipInstruction]
+ * @param {(message: string) => void} [params.log]
+ * @param {string} [params.label]
+ * @param {number} [params.maxBytes]
+ * @returns {{transaction: import("@solana/web3.js").VersionedTransaction, tipDropped: boolean, size: number, dropped: string[]}}
+ */
+function compileWithSizeFallback(params) {
+  const {
+    payerKey,
+    recentBlockhash,
+    instructions,
+    lookupTables,
+    tipInstruction = null,
+    log,
+    label = "",
+    maxBytes = MAX_TRANSACTION_BYTES,
+  } = params;
+
+  const build = (list) =>
+    new VersionedTransaction(
+      new TransactionMessage({
+        payerKey,
+        recentBlockhash,
+        instructions: list,
+      }).compileToV0Message(lookupTables),
+    );
+
+  const withoutComputeBudget = (list) =>
+    list.filter((ix) => !ix.programId.equals(ComputeBudgetProgram.programId));
+  const withoutTip = (list) =>
+    tipInstruction ? list.filter((ix) => ix !== tipInstruction) : list;
+
+  const attempts = [
+    { dropped: [], list: instructions },
+    { dropped: ["computeBudget"], list: withoutComputeBudget(instructions) },
+    {
+      dropped: ["computeBudget", "tip"],
+      list: withoutTip(withoutComputeBudget(instructions)),
+    },
+    { dropped: ["tip"], list: withoutTip(instructions) },
+  ];
+
+  const sizes = [];
+  for (const attempt of attempts) {
+    let tx;
+    try {
+      tx = build(attempt.list);
+    } catch (error) {
+      // 账户索引溢出之类的问题换方案也没用，直接往上抛
+      sizes.push(`${attempt.dropped.join("+") || "original"}:compile-error`);
+      continue;
+    }
+    const size = tx.serialize().length;
+    sizes.push(`${attempt.dropped.join("+") || "original"}:${size}`);
+    if (size <= maxBytes) {
+      if (attempt.dropped.length && log) {
+        log(
+          `[size] ${label} 交易 ${size}B 接近上限，已去掉 ${attempt.dropped.join("+")}`,
+        );
+      }
+      return {
+        transaction: tx,
+        tipDropped: attempt.dropped.includes("tip"),
+        size,
+        dropped: attempt.dropped,
+      };
+    }
+  }
+
+  throw new Error(
+    `Transaction too large for ${label || payerKey.toBase58()} (max ${maxBytes}B); tried ${sizes.join(", ")}`,
+  );
+}
+
 module.exports = {
   ATA_PROGRAM_ID,
   DEDUPE_SAFE_PROGRAM_IDS,
+  MAX_TRANSACTION_BYTES,
   instructionKey,
   dedupeIdempotentInstructions,
+  compileWithSizeFallback,
 };
