@@ -397,6 +397,47 @@ class PumpFun extends Service {
   }
 
   /**
+   * 取一批 jup 指令（买 / 卖通用），并保证路由不带 vote 账户标记。
+   *
+   * 顺序：用缓存里的排除项先取价（省一轮报价）→ 探测 → 命中就走排除重建。
+   * 缓存里的排除项把路由排没了会自动退回默认路由，避免过期缓存把单子弄死。
+   *
+   * @param {object} params
+   * @param {(wallet: object, excludeDexes?: string) => Promise<object>} params.buildOne
+   */
+  async prepareJupInstructions(ctx, { token, wallets, buildOne, label = "buy" }) {
+    const markedRoute = jupRouteMarkerCache.get(token);
+    const fresh =
+      markedRoute && Date.now() - markedRoute.at < JUP_ROUTE_MARKER_TTL_MS;
+    const cachedExclude = fresh ? markedRoute.excludeDexes || undefined : undefined;
+
+    let data;
+    try {
+      data = await Promise.all(
+        wallets.map((wallet) => buildOne(wallet, cachedExclude)),
+      );
+    } catch (error) {
+      if (!cachedExclude) throw error;
+      console.log(
+        chalk.yellow(
+          `[bundle] 用缓存排除 ${cachedExclude} 取价失败（${error.message}），改为默认路由`,
+        ),
+      );
+      jupRouteMarkerCache.delete(token);
+      data = await Promise.all(wallets.map((wallet) => buildOne(wallet)));
+    }
+
+    if (data[0]?.routeLabels?.length) {
+      console.log(
+        chalk.gray(`[jup] ${label} route ${data[0].routeLabels.join(" > ")}`),
+      );
+    }
+
+    // 每笔都要探测：Jupiter 几秒内就会换路由，上一笔干净不代表这一笔干净
+    return this.rebuildJupWithoutVoteMarkers(ctx, token, wallets, data, buildOne);
+  }
+
+  /**
    * jup 路由里带上 vote 账户时（暗池拿它当反 bundle 标记，例如
    * J1to1yufRnoWn81KYg1XkTWzmKjnYSnmE2VY8DGUJ9Qv），Jito 一律拒收 bundle。
    *
@@ -567,48 +608,14 @@ class PumpFun extends Service {
           connection,
           excludeDexes,
         });
-      // 已知要排除哪些 DEX 时先用结论取价，省掉重建的一轮报价
-      const markedRoute = jupRoute.useJup ? jupRouteMarkerCache.get(token) : null;
-      const cachedExclude =
-        markedRoute && Date.now() - markedRoute.at < JUP_ROUTE_MARKER_TTL_MS
-          ? markedRoute.excludeDexes || undefined
-          : undefined;
-
-      let jupBuyData = [];
-      if (jupRoute.useJup) {
-        try {
-          jupBuyData = await Promise.all(
-            wallets.map((wallet) => buildJupBuy(wallet, cachedExclude)),
-          );
-        } catch (error) {
-          // 缓存里的排除项可能把路由排没了，退回默认路由再取一次
-          if (!cachedExclude) throw error;
-          console.log(
-            chalk.yellow(
-              `[bundle] 用缓存排除 ${cachedExclude} 取价失败（${error.message}），改为默认路由`,
-            ),
-          );
-          jupRouteMarkerCache.delete(token);
-          jupBuyData = await Promise.all(
-            wallets.map((wallet) => buildJupBuy(wallet)),
-          );
-        }
-      }
-      if (jupRoute.useJup) {
-        if (jupBuyData[0]?.routeLabels?.length) {
-          console.log(
-            chalk.gray(`[jup] route ${jupBuyData[0].routeLabels.join(" > ")}`),
-          );
-        }
-        // 每笔都要探测：Jupiter 几秒内就会换路由，上一笔干净不代表这一笔干净
-        jupBuyData = await this.rebuildJupWithoutVoteMarkers(
-          ctx,
-          token,
-          wallets,
-          jupBuyData,
-          buildJupBuy,
-        );
-      }
+      let jupBuyData = jupRoute.useJup
+        ? await this.prepareJupInstructions(ctx, {
+            token,
+            wallets,
+            buildOne: buildJupBuy,
+            label: "buy",
+          })
+        : [];
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
@@ -1031,6 +1038,26 @@ class PumpFun extends Service {
         const { blockhash } = await connection.getLatestBlockhash();
         const jipAcc = ctx.service.jito.getTipAcc();
         const sellTxns = [];
+
+        // 卖出同样要保证路由不带 vote 账户标记，否则 bundle 一样被拒
+        const buildJupSell = (wallet, excludeDexes) =>
+          jupSwap.getSellInstructions(ctx, {
+            user: wallet.keypair.publicKey,
+            tokenMint,
+            tokenAmount: Math.trunc(wallet.tokenAmount * Math.pow(10, 6)),
+            slippage: getWalletSlippageFraction(wallet),
+            connection,
+            excludeDexes,
+          });
+        const jupSellData = jupRoute.useJup
+          ? await this.prepareJupInstructions(ctx, {
+              token,
+              wallets: bundleWallets,
+              buildOne: buildJupSell,
+              label: "sell",
+            })
+          : [];
+
         for (let i = 0; i < bundleWallets.length; i++) {
           const wallet = bundleWallets[i];
           const keypair = wallet.keypair;
@@ -1049,13 +1076,10 @@ class PumpFun extends Service {
           });
           if (jupRoute.useJup) {
             // 非 WSOL 池子用 Jupiter 卖出，结算币种仍回到 SOL
-            const jupSell = await jupSwap.getSellInstructions(ctx, {
-              user,
-              tokenMint,
-              tokenAmount: Math.trunc(tokenAmount * Math.pow(10, 6)),
-              slippage: Number(slippageBasisPoints) / 10000,
-              connection,
-            });
+            const jupSell = jupSellData[i];
+            if (!jupSell) {
+              throw new Error(`Jupiter sell route unavailable for ${token}`);
+            }
             if (jupSell.lookupTableAccounts?.length) {
               walletLookupTables = jupSell.lookupTableAccounts;
             }

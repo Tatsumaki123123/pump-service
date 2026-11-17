@@ -164,7 +164,15 @@ check("pumpfun 滑点 bps -> 小数转换", () => {
       src,
     ),
   );
-  assert.ok(/Number\(slippageBasisPoints\) \/ 10000/.test(src), "卖出没有换算滑点");
+  // 买卖两侧都必须用这个转换，不能把 bps 直接丢给 Jupiter
+  const jupCalls = src.match(/slippage: getWalletSlippageFraction\(wallet\)/g) || [];
+  assert.ok(jupCalls.length >= 2, `买卖两侧应各有一处换算，实际 ${jupCalls.length}`);
+  assert.ok(
+    !/slippage: Number\(slippageBasisPoints\) \/ 10000,\s*connection,\s*excludeDexes/.test(
+      src,
+    ),
+    "有一侧还在手工换算，容易漏",
+  );
 });
 
 check("非 WSOL 时不加载曲线账户，避免无曲线 token 直接抛错", () => {
@@ -495,15 +503,18 @@ check("命中 vote 标记时先尝试排除暗池重建", () => {
     "重建没有收敛上限，可能反复报价",
   );
   assert.ok(src.includes("已无可排除的 DEX"), "排不出结果时没有明确结论");
-  const buyBlock = src.slice(
-    src.indexOf("async batchBuyToken"),
-    src.indexOf("async batchSellToken"),
+  // 买卖都通过 prepareJupInstructions 走同一套探测 + 重建
+  const prepareBlock = src.slice(
+    src.indexOf("async prepareJupInstructions"),
+    src.indexOf("async rebuildJupWithoutVoteMarkers"),
   );
   assert.ok(
-    buyBlock.includes("rebuildJupWithoutVoteMarkers"),
-    "买入没有调用排除重建",
+    prepareBlock.includes("this.rebuildJupWithoutVoteMarkers"),
+    "prepareJupInstructions 没有接排除重建",
   );
-  assert.ok(buyBlock.includes("[jup] route"), "没有打印路由标签");
+  assert.ok(prepareBlock.includes("[jup] ${label} route"), "没有打印路由标签");
+  const callSites = src.match(/prepareJupInstructions\(ctx, \{/g) || [];
+  assert.ok(callSites.length >= 2, `买卖两侧应都调用，实际 ${callSites.length}`);
 });
 
 check("PUMP_REQUIRE_BUNDLE 可禁止降级逐笔发送", () => {
