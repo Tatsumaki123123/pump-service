@@ -12,6 +12,10 @@ module.exports = (app) => {
       pool: { type: String },
       amm: { type: String },
       routeInfo: { type: Schema.Types.Mixed },
+      // 计价单位不是 WSOL（USDC / 其它 SPL）时由 checkToken 置为 true，
+      // 内盘和外盘的买卖都会改用 Jupiter 聚合器
+      useJup: { type: Boolean, default: false },
+      quoteMint: { type: String },
       createTime: { type: Date },
       income: { type: Number, default: 0 },
       eid: {

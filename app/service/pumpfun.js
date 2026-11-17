@@ -21,6 +21,7 @@ const {
 } = require("../constants");
 
 const { PumpFunSDK, GlobalAccount } = require("../libs/pumpfun");
+const JupSDK = require("../libs/jup");
 const {
   createAxiomPumpfunBuyInstructions,
 } = require("../libs/axiom");
@@ -52,6 +53,7 @@ const provider = new AnchorProvider(connection, provider_wallet, {
 
 const pfSwap = new PumpFunSDK(provider);
 const okxSwap = new OKXSwapSDK();
+const jupSwap = new JupSDK();
 
 const TIP_ACCOUNT = new PublicKey(
   "6rYLG55Q9RpsPGvqdPNJs4z5WTxJVatMB8zV3WJhs5EK"
@@ -118,6 +120,11 @@ function getWalletSlippageBasisPoints(wallet) {
     throw new Error("slippage must be between 0 and 1");
   }
   return BigInt(Math.floor(slippage * 10000));
+}
+
+// Jupiter 的接口要的是 0~1 的小数滑点，这里把内盘统一用的 bps 转回去
+function getWalletSlippageFraction(wallet) {
+  return Number(getWalletSlippageBasisPoints(wallet)) / 10000;
 }
 
 async function simulatePumpFunTransaction(transaction, user, ctx) {
@@ -316,16 +323,58 @@ class PumpFun extends Service {
     }
   }
 
+  /**
+   * 读取 checkToken 落库的路由标记。
+   *
+   * 曲线本身只有 SOL 这个计价单位，所以「内盘非 WSOL 池子」指的是：
+   * 这个 token 已经有 USDC / 其它 SPL 计价的 Pump AMM 池，曲线指令发不出去。
+   * checkToken 会把这种池子的信息写进 ExecuteToken.routeInfo 并置 useJup，
+   * 买卖两边都据此改走 Jupiter。
+   */
+  async getJupRouteInfo(token) {
+    const { ctx } = this;
+    try {
+      const row = await ctx.model.ExecuteToken.findOne(
+        { token },
+        { useJup: 1, quoteMint: 1, routeInfo: 1 },
+      ).lean();
+      const routeInfo = row?.routeInfo || {};
+      return {
+        useJup: row?.useJup === true || routeInfo.useJup === true,
+        quoteMint: row?.quoteMint || routeInfo.quoteMint || "",
+        routeInfo,
+      };
+    } catch (error) {
+      console.log(
+        chalk.yellow(
+          `Cannot read route info for ${token}: ${error.message}; keeping Pump curve route`,
+        ),
+      );
+      return { useJup: false, quoteMint: "", routeInfo: {} };
+    }
+  }
+
   async batchBuyToken(token, wallets, type = "", sendOptions = {}) {
     const { ctx } = this;
     console.log(chalk.green("\nPump fun batchBuyToken----", wallets.length));
     if (token && wallets) {
       const tokenMint = new PublicKey(token);
+      // 非 WSOL 计价的池子：内盘曲线指令无法成交，全部钱包改走 Jupiter
+      const jupRoute = await this.getJupRouteInfo(token);
+      if (jupRoute.useJup) {
+        console.log(
+          chalk.yellow(
+            `Pump.fun 内盘 ${token} 计价单位非 WSOL (${jupRoute.quoteMint || "unknown"})，本批全部改走 Jupiter 买入`,
+          ),
+        );
+      }
       const isNozomi =
         String(sendOptions.batchPlatform || "").toLowerCase() === "nozomi";
       const { blockhash } = await connection.getLatestBlockhash();
       const buyTxns = [];
-      const allAxiomWallets = wallets.every((wallet) => wallet.isAxiom);
+      // 走 Jupiter 时不再需要曲线账户，专用路由的曲线预计算也一并跳过
+      const allAxiomWallets =
+        !jupRoute.useJup && wallets.every((wallet) => wallet.isAxiom);
       let batchAxiomCurveAccount = null;
       let sequentialAxiomBuyPrices = null;
       if (allAxiomWallets) {
@@ -356,6 +405,20 @@ class PumpFun extends Service {
         // Calculate each quote from the state left by the previous buy.
         sequentialAxiomBuyPrices = batchAxiomCurveAccount.getBuyPrices(quoteAmounts);
       }
+      // 在 blockhash 有效期开始前把 Jupiter 报价一次取全，避免逐个钱包串行等 HTTP
+      const jupBuyData = jupRoute.useJup
+        ? await Promise.all(
+            wallets.map((wallet) =>
+              jupSwap.getBuyInstructions(ctx, {
+                user: wallet.keypair.publicKey,
+                tokenMint,
+                buyAmount: wallet.buyAmount,
+                slippage: getWalletSlippageFraction(wallet),
+                connection,
+              }),
+            ),
+          )
+        : [];
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
         const keypair = wallet.keypair;
@@ -363,8 +426,26 @@ class PumpFun extends Service {
         const { buyAmount, limit, price, fee } = wallet;
         const slippageBasisPoints = getWalletSlippageBasisPoints(wallet);
         let volumeIxs = [];
+        let walletLookupTables;
         console.log(`${user.toBase58()} buy ${buyAmount} ${token}`);
-        if (wallet.isGmgn) {
+        if (jupRoute.useJup) {
+          const jupData = jupBuyData[i];
+          if (!jupData) {
+            throw new Error(`Jupiter buy route unavailable for ${token}`);
+          }
+          if (jupData.lookupTableAccounts?.length) {
+            walletLookupTables = jupData.lookupTableAccounts;
+          }
+          volumeIxs = [
+            ...(limit
+              ? [ComputeBudgetProgram.setComputeUnitLimit({ units: limit })]
+              : []),
+            ...(price
+              ? [ComputeBudgetProgram.setComputeUnitPrice({ microLamports: price })]
+              : []),
+            ...jupData.instructions,
+          ];
+        } else if (wallet.isGmgn) {
           const solAmountLamports = BigInt(
             Math.trunc(buyAmount * LAMPORTS_PER_SOL),
           );
@@ -587,11 +668,24 @@ class PumpFun extends Service {
             payerKey: user,
             recentBlockhash: blockhash,
             instructions: volumeIxs,
-          }).compileToV0Message();
+          }).compileToV0Message(walletLookupTables);
 
           const tx = new VersionedTransaction(messageV0);
           tx.sign([keypair]);
           await simulatePumpFunTransaction(tx, user, ctx);
+          if (jupRoute.useJup && !isDevelopmentEnvironment(ctx)) {
+            // Jupiter 是外部报价，发之前自己再模拟一次，别把注定失败的交易塞进 bundle
+            const simulated = await connection.simulateTransaction(tx, {
+              commitment: "confirmed",
+            });
+            if (!simulated.value || simulated.value.err) {
+              throw new Error(
+                `Jupiter buy simulation failed for ${user.toBase58()}: ${JSON.stringify(
+                  simulated.value?.err || "empty result",
+                )}`,
+              );
+            }
+          }
           buyTxns.push(tx);
         } catch (error) {
           console.error(error.message);
@@ -657,6 +751,15 @@ class PumpFun extends Service {
       };
 
       const tokenMint = new PublicKey(token);
+      // 非 WSOL 计价的池子：卖出同样走 Jupiter（token -> SOL）
+      const jupRoute = await this.getJupRouteInfo(token);
+      if (jupRoute.useJup) {
+        console.log(
+          chalk.yellow(
+            `Pump.fun 内盘 ${token} 计价单位非 WSOL (${jupRoute.quoteMint || "unknown"})，卖出改走 Jupiter`,
+          ),
+        );
+      }
       const newWallets = [];
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
@@ -693,30 +796,55 @@ class PumpFun extends Service {
           const slippageBasisPoints = getWalletSlippageBasisPoints(wallet);
 
           let volumeIxs = [];
-          const sellTx = await pfSwap.sell(
-            user,
-            tokenMint,
-            BigInt(Math.trunc(tokenAmount * Math.pow(10, 6))),
-            slippageBasisPoints,
-            {
-              unitLimit: limit,
-              unitPrice: price,
-            },
-            "processed",
-          );
+          let walletLookupTables;
           const jitoTipIx = SystemProgram.transfer({
             fromPubkey: keypair.publicKey,
             toPubkey: jipAcc,
             lamports: fee * LAMPORTS_PER_SOL,
           });
-          volumeIxs = [...sellTx.instructions, jitoTipIx];
+          if (jupRoute.useJup) {
+            // 非 WSOL 池子用 Jupiter 卖出，结算币种仍回到 SOL
+            const jupSell = await jupSwap.getSellInstructions(ctx, {
+              user,
+              tokenMint,
+              tokenAmount: Math.trunc(tokenAmount * Math.pow(10, 6)),
+              slippage: Number(slippageBasisPoints) / 10000,
+              connection,
+            });
+            if (jupSell.lookupTableAccounts?.length) {
+              walletLookupTables = jupSell.lookupTableAccounts;
+            }
+            volumeIxs = [
+              ...(limit
+                ? [ComputeBudgetProgram.setComputeUnitLimit({ units: limit })]
+                : []),
+              ...(price
+                ? [ComputeBudgetProgram.setComputeUnitPrice({ microLamports: price })]
+                : []),
+              ...jupSell.instructions,
+              jitoTipIx,
+            ];
+          } else {
+            const sellTx = await pfSwap.sell(
+              user,
+              tokenMint,
+              BigInt(Math.trunc(tokenAmount * Math.pow(10, 6))),
+              slippageBasisPoints,
+              {
+                unitLimit: limit,
+                unitPrice: price,
+              },
+              "processed",
+            );
+            volumeIxs = [...sellTx.instructions, jitoTipIx];
+          }
 
           try {
             const messageV0 = new TransactionMessage({
               payerKey: keypair.publicKey,
               recentBlockhash: blockhash,
               instructions: volumeIxs,
-            }).compileToV0Message();
+            }).compileToV0Message(walletLookupTables);
 
             const tx = new VersionedTransaction(messageV0);
             tx.sign([keypair]);

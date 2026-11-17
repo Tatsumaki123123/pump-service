@@ -169,6 +169,28 @@ const getPoolsWithBaseMint = async (mintAddress, ctx) => {
   throw error;
 };
 
+/**
+ * 不抛错地列出某个 token 的全部 Pump AMM 池，并标出计价单位。
+ *
+ * getPoolsWithPrices 在「没有 WSOL 池」时会抛 NO_WSOL_PUMP_POOL，
+ * 调用方只能据此判断「非 WSOL」，拿不到具体是哪种计价货币。
+ * 这里直接返回明细，给 checkToken 判路由用：查不到池子返回空数组。
+ *
+ * @param {import("@solana/web3.js").PublicKey} mintAddress
+ * @returns {Promise<Array<{address: string, quoteMint: string, isNativeQuote: boolean}>>}
+ */
+const getPumpPoolsWithQuoteInfo = async (mintAddress) => {
+  const pools = await getPumpPoolsWithBaseMint(mintAddress);
+  return pools.map((item) => {
+    const quoteMint = item.poolData.quoteMint;
+    return {
+      address: item.address.toBase58(),
+      quoteMint: quoteMint.toBase58(),
+      isNativeQuote: quoteMint.equals(NATIVE_MINT),
+    };
+  });
+};
+
 const getPoolsWithQuoteMint = async (mintAddress) => {
   const response = await connection.getProgramAccounts(PUMP_AMM_PROGRAM_ID, {
     filters: [
@@ -477,6 +499,7 @@ function getUserVolumeAccumulatorPda(user) {
 
 module.exports = {
   getPumpPoolsWithBaseMint,
+  getPumpPoolsWithQuoteInfo,
   getPoolsWithPrices,
   getCoinCreatorVaultAuthorityPda,
   getCoinCreatorVaultAtaPda,
