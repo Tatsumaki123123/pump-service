@@ -487,9 +487,14 @@ check("命中 vote 标记时先尝试排除暗池重建", () => {
     "没有排除重建逻辑",
   );
   assert.ok(
-    /labels\.filter\(\(label\) => !\/\^pump\/i\.test\(label\)\)/.test(src),
+    /!\/\^pump\/i\.test\(label\)/.test(src),
     "排除时应保留 Pump.fun 这一跳",
   );
+  assert.ok(
+    /attempt < 3; attempt \+= 1/.test(src),
+    "重建没有收敛上限，可能反复报价",
+  );
+  assert.ok(src.includes("已无可排除的 DEX"), "排不出结果时没有明确结论");
   const buyBlock = src.slice(
     src.indexOf("async batchBuyToken"),
     src.indexOf("async batchSellToken"),
@@ -499,6 +504,37 @@ check("命中 vote 标记时先尝试排除暗池重建", () => {
     "买入没有调用排除重建",
   );
   assert.ok(buyBlock.includes("[jup] route"), "没有打印路由标签");
+});
+
+check("PUMP_REQUIRE_BUNDLE 可禁止降级逐笔发送", () => {
+  const src = read("app/service/pumpfun.js");
+  assert.ok(/PUMP_REQUIRE_BUNDLE/.test(src), "没有 REQUIRED_BUNDLE 开关");
+  assert.ok(
+    /PUMP_REQUIRE_BUNDLE=true 时不允许降级逐笔发送/.test(src),
+    "开关没有拦截降级",
+  );
+});
+
+check("缓存只复用排除项，不能跳过探测", () => {
+  const src = read("app/service/pumpfun.js");
+  const buyBlock = src.slice(
+    src.indexOf("async batchBuyToken"),
+    src.indexOf("async batchSellToken"),
+  );
+  // 曾经的 bug：缓存命中就跳过探针，结果拿到一条带标记的新路由直接发出去
+  assert.ok(
+    !/if \(cachedExclude === undefined\)/.test(buyBlock),
+    "缓存命中时又跳过了探测",
+  );
+  assert.ok(
+    /每笔都要探测/.test(src),
+    "没有说明为什么每笔都要探测",
+  );
+  // 缓存里的排除项把路由排没了要能退回默认路由
+  assert.ok(
+    /用缓存排除 \$\{cachedExclude\} 取价失败/.test(src),
+    "缓存排除导致无路由时没有回退",
+  );
 });
 
 

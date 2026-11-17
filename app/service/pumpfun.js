@@ -61,10 +61,12 @@ const pfSwap = new PumpFunSDK(provider);
 const okxSwap = new OKXSwapSDK();
 const jupSwap = new JupSDK();
 
-// token -> { at, excludeDexes }：记录「这个币的 jup 路由要不要排除暗池」。
-// 探测本身要多一次 RPC + 可能多轮报价，内盘买入对延迟敏感，短期复用结论。
+// token -> { at, excludeDexes }：记录「这个币的 jup 路由要排除哪些 DEX」。
+// 只复用排除项，探测本身每笔都做（Jupiter 的路由几秒就会变）。
 const jupRouteMarkerCache = new Map();
 const JUP_ROUTE_MARKER_TTL_MS = 2 * 60 * 1000;
+// true = 宁可不下单也不降级逐笔发送（bundle 被 vote 标记拒收时直接报错）
+const REQUIRE_BUNDLE = process.env.PUMP_REQUIRE_BUNDLE === "true";
 
 const TIP_ACCOUNT = new PublicKey(
   "6rYLG55Q9RpsPGvqdPNJs4z5WTxJVatMB8zV3WJhs5EK"
@@ -398,65 +400,91 @@ class PumpFun extends Service {
    * jup 路由里带上 vote 账户时（暗池拿它当反 bundle 标记，例如
    * J1to1yufRnoWn81KYg1XkTWzmKjnYSnmE2VY8DGUJ9Qv），Jito 一律拒收 bundle。
    *
-   * 这里先探一次：命中就把「除 Pump.fun 以外的 DEX」全部排除后重建一次。
-   * 排除后拿不到路由、或者重建后仍带标记，就保留原样，
-   * 交给发送阶段的降级逻辑（逐笔发送）。
+   * 处理方式：边排边试，最多 3 轮——每轮把当前路由里「除 Pump.fun 以外」的
+   * DEX 全部加进排除列表重建，然后重新探测。
+   * 排到无可排（说明标记来自 Pump 跳本身，或者这币只有这一条路）就回退原路由，
+   * 交给发送阶段的逐笔降级，并把结论写进日志。
    */
   async rebuildJupWithoutVoteMarkers(ctx, token, wallets, prefetched, buildOne) {
     if (!prefetched.length) return prefetched;
-    const labels = [
-      ...new Set(prefetched.flatMap((item) => item.routeLabels || [])),
-    ];
-
-    const probe = this.buildProbeTx(wallets[0], prefetched[0]);
-    if (!probe) return prefetched;
-
-    const marked = await findVoteAccounts(connection, [probe]).catch(() => []);
-    if (!marked.length) {
-      jupRouteMarkerCache.set(token, { at: Date.now(), excludeDexes: "" });
-      return prefetched;
-    }
-
-    const exclude = labels.filter((label) => !/^pump/i.test(label)).join(",");
-    console.log(
-      chalk.red(
-        `[bundle] ${token} 路由 ${labels.join(" > ") || "unknown"} 带 vote 账户 ${marked[0]}，` +
-          `尝试排除 ${exclude || "(无可排除项)"} 后重建`,
-      ),
+    // 缓存只复用「已经排除了哪些 DEX」，绝不跳过探测 ——
+    // Jupiter 几秒内就会换路由（Whirlpool > Pump.fun 可能变成 BisonFi > Byreal > Pump.fun），
+    // 上一笔干净不代表这一笔干净。
+    const cached = jupRouteMarkerCache.get(token);
+    const fresh = cached && Date.now() - cached.at < JUP_ROUTE_MARKER_TTL_MS;
+    const excluded = new Set(
+      fresh && cached.excludeDexes
+        ? cached.excludeDexes.split(",").filter(Boolean)
+        : [],
     );
-    if (!exclude) return prefetched;
+    let current = prefetched;
 
-    try {
-      const rebuilt = await Promise.all(
-        wallets.map((wallet) => buildOne(wallet, exclude)),
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const labels = [
+        ...new Set(current.flatMap((item) => item.routeLabels || [])),
+      ];
+      const probe = this.buildProbeTx(wallets[0], current[0]);
+      if (!probe) return prefetched;
+
+      const marked = await findVoteAccounts(connection, [probe]).catch(() => []);
+      if (!marked.length) {
+        if (excluded.size) {
+          console.log(
+            chalk.green(
+              `[bundle] 排除 ${[...excluded].join(",")} 后路由干净：${labels.join(" > ")}`,
+            ),
+          );
+        }
+        jupRouteMarkerCache.set(token, {
+          at: Date.now(),
+          excludeDexes: [...excluded].join(","),
+        });
+        return current;
+      }
+
+      const candidates = labels.filter(
+        (label) => !/^pump/i.test(label) && !excluded.has(label),
       );
-      const rebuiltProbe = this.buildProbeTx(wallets[0], rebuilt[0]);
-      const stillMarked = rebuiltProbe
-        ? await findVoteAccounts(connection, [rebuiltProbe]).catch(() => [])
-        : [];
-      if (stillMarked.length) {
+      if (!candidates.length) {
         console.log(
-          chalk.red(`[bundle] 排除 ${exclude} 后仍带 vote 账户，回退原路由`),
+          chalk.red(
+            `[bundle] ${token} 路由 ${labels.join(" > ") || "unknown"} 带 vote 账户 ${marked[0]}，` +
+              "已无可排除的 DEX —— 标记来自 Pump 跳本身或这是唯一可用路由，bundle 走不了",
+          ),
+        );
+        jupRouteMarkerCache.set(token, {
+          at: Date.now(),
+          excludeDexes: [...excluded].join(","),
+        });
+        return prefetched;
+      }
+
+      candidates.forEach((label) => excluded.add(label));
+      try {
+        current = await Promise.all(
+          wallets.map((wallet) => buildOne(wallet, [...excluded].join(","))),
+        );
+        console.log(
+          chalk.yellow(
+            `[bundle] 第 ${attempt + 1} 轮排除 ${[...excluded].join(",")} 后重建：${
+              (current[0]?.routeLabels || []).join(" > ") || "unknown"
+            }`,
+          ),
+        );
+      } catch (error) {
+        console.log(
+          chalk.yellow(
+            `[bundle] 排除 ${[...excluded].join(",")} 后无可用路由（${error.message}），回退原路由`,
+          ),
         );
         return prefetched;
       }
-      console.log(
-        chalk.green(
-          `[bundle] 排除 ${exclude} 后路由干净：${
-            (rebuilt[0].routeLabels || []).join(" > ") || "unknown"
-          }`,
-        ),
-      );
-      jupRouteMarkerCache.set(token, { at: Date.now(), excludeDexes: exclude });
-      return rebuilt;
-    } catch (error) {
-      console.log(
-        chalk.yellow(
-          `[bundle] 排除 ${exclude} 后无可用路由（${error.message}），回退原路由`,
-        ),
-      );
-      return prefetched;
     }
+
+    console.log(
+      chalk.red(`[bundle] ${token} 连续 3 轮排除后仍带 vote 账户，回退原路由`),
+    );
+    return prefetched;
   }
 
   /** 只用来检查账户构成，不签名也不发送 */
@@ -539,35 +567,47 @@ class PumpFun extends Service {
           connection,
           excludeDexes,
         });
-      // 2 分钟内确认过这个币要排除暗池的话，直接按结论取价
+      // 已知要排除哪些 DEX 时先用结论取价，省掉重建的一轮报价
       const markedRoute = jupRoute.useJup ? jupRouteMarkerCache.get(token) : null;
       const cachedExclude =
         markedRoute && Date.now() - markedRoute.at < JUP_ROUTE_MARKER_TTL_MS
-          ? markedRoute.excludeDexes
+          ? markedRoute.excludeDexes || undefined
           : undefined;
 
-      let jupBuyData = jupRoute.useJup
-        ? await Promise.all(
-            wallets.map((wallet) => buildJupBuy(wallet, cachedExclude || undefined)),
-          )
-        : [];
+      let jupBuyData = [];
+      if (jupRoute.useJup) {
+        try {
+          jupBuyData = await Promise.all(
+            wallets.map((wallet) => buildJupBuy(wallet, cachedExclude)),
+          );
+        } catch (error) {
+          // 缓存里的排除项可能把路由排没了，退回默认路由再取一次
+          if (!cachedExclude) throw error;
+          console.log(
+            chalk.yellow(
+              `[bundle] 用缓存排除 ${cachedExclude} 取价失败（${error.message}），改为默认路由`,
+            ),
+          );
+          jupRouteMarkerCache.delete(token);
+          jupBuyData = await Promise.all(
+            wallets.map((wallet) => buildJupBuy(wallet)),
+          );
+        }
+      }
       if (jupRoute.useJup) {
         if (jupBuyData[0]?.routeLabels?.length) {
           console.log(
             chalk.gray(`[jup] route ${jupBuyData[0].routeLabels.join(" > ")}`),
           );
         }
-        if (cachedExclude === undefined) {
-          // 路由命中带 vote 账户标记的暗池时，bundle 会被 Jito 拒收，
-          // 先尝试排除这些 DEX 重建，让交易还能进 bundle
-          jupBuyData = await this.rebuildJupWithoutVoteMarkers(
-            ctx,
-            token,
-            wallets,
-            jupBuyData,
-            buildJupBuy,
-          );
-        }
+        // 每笔都要探测：Jupiter 几秒内就会换路由，上一笔干净不代表这一笔干净
+        jupBuyData = await this.rebuildJupWithoutVoteMarkers(
+          ctx,
+          token,
+          wallets,
+          jupBuyData,
+          buildJupBuy,
+        );
       }
       for (let i = 0; i < wallets.length; i++) {
         const wallet = wallets[i];
@@ -901,6 +941,13 @@ class PumpFun extends Service {
           const voteAccounts = await findVoteAccounts(connection, buyTxns).catch(
             () => [],
           );
+          if (REQUIRE_BUNDLE) {
+            throw new Error(
+              `[bundle] ${token} 交易带 vote 账户 ${
+                voteAccounts.join(", ") || "(未定位到)"
+              }，PUMP_REQUIRE_BUNDLE=true 时不允许降级逐笔发送`,
+            );
+          }
           console.error(
             chalk.red(
               `[bundle] ${token} 交易里含 vote 账户 ${voteAccounts.join(", ") || "(未定位到，可能是 ALT 内账户)"}；` +
