@@ -4,8 +4,8 @@
  * pumpfundata 定时采集。
  *
  * - 应用启动后立刻跑一次（immediate）
- * - 之后按 ingestCron 每天跑一次（默认 03:10）
- * - 只补「Mongo 里还没有的小时」，所以稳态成本约 24 credit/天/交易所，
+ * - 之后按 ingestCron 每小时跑一次（默认每小时 05 分）
+ * - 每小时补「Mongo 里还没有的完整小时」，稳态成本约 24 credit/天/交易所，
  *   首次回补是 warmDays × 24 × 交易所数
  *
  * 开关与时间都在 config.pumpFunData 里，也可以用环境变量覆盖：

@@ -50,6 +50,7 @@ module.exports = (app) => {
   schema.index({ exchange: 1, quoteKind: 1, graduatedAt: 1, mcapQuote: 1 });
   schema.index({ exchange: 1, quoteKind: 1, mcapUsd: -1 });
   schema.index({ exchange: 1, createAt: 1 });
+  schema.index({ exchange: 1, lastAt: -1 });
 
   return mongoose.model("PfdToken", schema);
 };

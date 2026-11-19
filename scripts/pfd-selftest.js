@@ -26,6 +26,7 @@ const {
 } = require("../app/libs/pfd/indexer");
 const { buildTailStats, toAveToken } = require("../app/libs/pfd/aveShape");
 const { buildTokenQuery, categoryMode } = require("../app/libs/pfd/manager");
+const { PfdStore } = require("../app/libs/pfd/store");
 
 const AVE_KEYS = [
   "token",
@@ -197,6 +198,15 @@ async function main() {
   fs.writeFileSync(file, buffer);
   console.log(`✓ 生成测试 parquet：${file} (${buffer.length} bytes, ${rows.length} 行)`);
 
+  const transientStore = new PfdStore({ apiKey: "test", cacheDir: path.join(tmpDir, "cache") });
+  transientStore.request = async () => buffer;
+  await transientStore.getHour("pump_fun", "2026-01-01", 0, { force: true, cache: false });
+  assert.strictEqual(
+    transientStore.hasHour("pump_fun", "2026-01-01", 0),
+    false,
+    "当前小时临时下载不得写入完整小时缓存",
+  );
+
   // ---- 1. 分块读取 + 聚合
   const trades = [];
   const aggregator = new HourAggregator("pump_fun", {
@@ -266,6 +276,18 @@ async function main() {
   assert.strictEqual(aveToken.token1_address, WSOL);
   assert.strictEqual(aveToken.wallet_count, 2, "15m 内两个不同钱包");
   assert.strictEqual(aveToken.holders, 0, "数据源没有 holders");
+
+  const separateWindowStats = buildTailStats(
+    [
+      { m: TOKEN_MINT_A, t: Date.now() - 10 * 60 * 1000, q: 1, p: 1, k: "sol" },
+      { m: TOKEN_MINT_A, t: Date.now() - 4 * 60 * 1000, q: 2, p: 2, k: "sol" },
+    ],
+    Date.now(),
+    new Set([TOKEN_MINT_A]),
+  ).get(TOKEN_MINT_A);
+  const windowToken = toAveToken(a, { solUsd, stats: separateWindowStats });
+  assert.strictEqual(windowToken.volume_u_5m, 400, "5m 成交额只包含最近 5 分钟");
+  assert.strictEqual(windowToken.volume_u_1h, 600, "1h 成交额包含最近 1 小时");
   console.log(
     `✓ AVE 结构对齐：${Object.keys(aveToken).length} 个字段，mkt_cap=$${aveToken.mkt_cap.toFixed(2)}`,
   );

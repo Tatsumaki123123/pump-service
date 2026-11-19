@@ -28,7 +28,7 @@ const { buildTailStats, toAveToken, TAIL_RETENTION_MS } = require("./aveShape");
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
-// 外盘需要在内存里筛，给一个上限避免异常数据把内存打爆
+// 外盘在内存里筛，按 AMM 最新成交截取活跃候选
 const OUT_CANDIDATE_LIMIT = 5000;
 
 function pad2(value) {
@@ -183,7 +183,7 @@ class PfdManager {
     this.tailHours = Math.max(2, Number(config.tailHours) || 2);
     // 入库后保留多少小时的 parquet 文件，其余删掉省磁盘（0 = 不清理）
     this.cacheKeepHours = Math.max(0, Number(config.cacheKeepHours ?? 72));
-    // 定时任务覆盖最近多少天；每天只补「库里没有的小时」，稳态成本约 24 credit/天
+    // 定时任务覆盖最近多少天；每小时补缺失的完整小时，稳态约 24 credit/天/交易所
     this.warmDays = Math.max(1, Number(config.warmDays) || 30);
     // 下面两个上限跟着 warmDays 走，避免改了窗口却忘记放大上限、回补被截断
     this.dailyMaxFiles = Math.max(
@@ -203,7 +203,7 @@ class PfdManager {
     this._tracked = { pump_fun: new Set(), pump_amm: new Set() };
     this._tail = [];
     this._initPromise = null;
-    this._currentHourFetchedAt = 0;
+    this._currentHourFetchedAt = new Map();
     this._creditsUsedToday = { date: "", count: 0 };
     this.lastWarmSummary = null;
   }
@@ -345,19 +345,22 @@ class PfdManager {
 
   async _rebuildTail() {
     if (!this.enabled) return;
+    this._tail = [];
     const now = Date.now();
     const slots = slotsBetween(now - this.tailHours * HOUR_MS, now - HOUR_MS);
+    const exchanges = this.ingestAmm ? ["pump_fun", "pump_amm"] : ["pump_fun"];
     let loaded = 0;
-    for (const slot of slots) {
-      try {
-        // 命中磁盘缓存则免费；新机器上会补下 1~2 个小时文件，保证重启后
-        // 5m/15m/1h 指标不为空
-        await this._ingestSlot("pump_fun", slot, { persistIndex: false });
-        loaded += 1;
-      } catch (error) {
-        this.logger.warn(
-          `[pfd] 重建尾窗 ${slotKey(slot.date, slot.hour)} 失败: ${error.message}`,
-        );
+    for (const exchange of exchanges) {
+      for (const slot of slots) {
+        try {
+          // 命中磁盘缓存则免费；缺文件时补近期窗口，恢复重启后的成交指标
+          await this._ingestSlot(exchange, slot, { persistIndex: false });
+          loaded += 1;
+        } catch (error) {
+          this.logger.warn(
+            `[pfd] 重建尾窗 ${exchange} ${slotKey(slot.date, slot.hour)} 失败: ${error.message}`,
+          );
+        }
       }
     }
     if (loaded) {
@@ -375,6 +378,7 @@ class PfdManager {
 
     const buffer = await this.store.getHour(exchange, slot.date, slot.hour, {
       force: Boolean(options.force),
+      cache: options.cache,
     });
     const aggregator = new HourAggregator(exchange, {
       onSwap: (record) => this._pushTail(record),
@@ -449,9 +453,11 @@ class PfdManager {
       (slot) => !this._isIngested(exchange, slotKey(slot.date, slot.hour)),
     );
 
+    const currentHourFetchedAt = this._currentHourFetchedAt.get(exchange) || 0;
     const needCurrentHour =
+      options.refreshCurrentHour !== false &&
       toMs >= Math.floor(now / HOUR_MS) * HOUR_MS &&
-      Date.now() - this._currentHourFetchedAt > this.refreshLatestMinutes * 60 * 1000;
+      Date.now() - currentHourFetchedAt > this.refreshLatestMinutes * 60 * 1000;
 
     if (order === "desc") missing = missing.reverse();
 
@@ -510,7 +516,7 @@ class PfdManager {
     }
     plan.keys = done;
 
-    // 当前小时（未结束）单独节流刷新，用于让市值尽量新
+    // 手动补数时可节流刷新当前小时；定时采集只补完整小时，避免重复消耗 credit
     if (needCurrentHour && persistIndex && this._budgetLeft() > 0) {
       const currentSlot = slotFromTs(Math.floor(now / HOUR_MS) * HOUR_MS);
       try {
@@ -518,13 +524,14 @@ class PfdManager {
           persistIndex: true,
           solUsd,
           force: true,
+          cache: false,
         });
-        this._currentHourFetchedAt = Date.now();
+        this._currentHourFetchedAt.set(exchange, Date.now());
         this._spendCredit(1);
         plan.currentHour = slotKey(currentSlot.date, currentSlot.hour);
       } catch (error) {
         plan.errors.push({ key: "current", code: error.code, message: error.message });
-        this._currentHourFetchedAt = Date.now();
+        this._currentHourFetchedAt.set(exchange, Date.now());
       }
     }
 
@@ -535,8 +542,8 @@ class PfdManager {
   // ---------------------------------------------------------------- 定时采集
 
   /**
-   * 采集入口：启动后跑一次 + 每天定时跑一次。
-   * 只补「库里没有的小时」，所以稳态成本 ≈ 24 credit/天/交易所。
+   * 采集入口：启动后跑一次 + 每小时补齐已结束小时。
+   * 稳态成本约 24 credit/天/交易所；定时任务不重复下载未结束的当前小时。
    */
   async dailyIngest() {
     if (this.ingestRunning) {
@@ -560,9 +567,12 @@ class PfdManager {
         summary[exchange] = await this.ensureRange(exchange, from, startedAt, {
           order: "asc",
           maxFiles: this.dailyMaxFiles,
+          refreshCurrentHour: false,
         });
       }
-
+      await this._rebuildTail().catch((error) => {
+        this.logger.warn(`[pfd] rebuild tail failed: ${error.message}`);
+      });
       const pruned = await this.prune();
       // 采集循环里是「下完就删」，历史残留/半成品靠这一遍全量扫描兜底
       const cachePruned = await this.pruneDiskCache();
@@ -701,17 +711,32 @@ class PfdManager {
         .limit(params.pageSize)
         .lean();
     } else {
-      // 外盘的市值来自 AMM，内盘最后成交价（≈毕业线）不能拿来筛选，
-      // 否则 50 万~1000 万这种区间会全部筛空。
-      // 毕业 token 数量有限，直接取窗口内全量，叠 AMM 状态后在内存里筛/排/分页。
-      const candidates = await Token.find({
-        exchange: "pump_fun",
-        createAt: { $gte: createFrom, $lte: createTo },
-        graduatedAt: { $ne: null },
-      })
-        .sort({ createAt: 1 })
+      // 外盘市值来自 AMM，先按 AMM 最新成交截取活跃 token，再叠泵曲线记录筛选。
+      // 内盘最后成交价（≈毕业线）不能用于外盘市值筛选。
+      const activePools = await Token.find(
+        {
+          exchange: "pump_amm",
+          lastAt: { $gte: createFrom },
+        },
+        { _id: 0, token: 1, lastAt: 1 },
+      )
+        .sort({ lastAt: -1 })
         .limit(OUT_CANDIDATE_LIMIT)
         .lean();
+      const activeByToken = new Map(activePools.map((row) => [row.token, row]));
+      const candidates = activePools.length
+        ? await Token.find({
+            exchange: "pump_fun",
+            token: { $in: activePools.map((row) => row.token) },
+            createAt: { $gte: createFrom, $lte: createTo },
+            graduatedAt: { $ne: null },
+          }).lean()
+        : [];
+      candidates.sort(
+        (a, b) =>
+          (activeByToken.get(b.token)?.lastAt || 0) -
+          (activeByToken.get(a.token)?.lastAt || 0),
+      );
 
       const ammMap = new Map();
       if (candidates.length) {

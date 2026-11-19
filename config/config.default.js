@@ -61,10 +61,10 @@ module.exports = (appInfo) => {
     timeoutMs: 60000,
 
     // ---- 定时采集 ----
-    // 启动后自动跑一次，之后按 ingestCron 每天一次
+    // 启动后自动跑一次，之后按 ingestCron 定时采集
     autoIngest: process.env.PFD_AUTO_INGEST !== "false",
-    // 六段式 cron：秒 分 时 日 月 周。改成 "0 5 * * * *" 即每小时一次（成本不变）
-    ingestCron: process.env.PFD_INGEST_CRON || "0 10 3 * * *",
+    // 六段式 cron：秒 分 时 日 月 周。每小时补齐已结束小时；当前小时仅由手动 warm 刷新
+    ingestCron: process.env.PFD_INGEST_CRON || "0 5 * * * *",
     warmDays,
     // 单次采集最多下载多少个小时文件：留出一天余量，保证一次能把窗口补齐
     dailyMaxFiles:

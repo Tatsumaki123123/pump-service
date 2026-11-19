@@ -147,7 +147,7 @@ function toAveToken(row, context = {}) {
         ? () => 0
         : (value) => value * solUsd;
 
-  base.volume_u_5m = convert(stats.vol15m);
+  base.volume_u_5m = convert(stats.vol5m);
   base.volume_u_1h = convert(stats.vol1h);
   base.gas_fee_sum = convert(stats.fee15m);
   base.wallet_count = stats.wallets.size;

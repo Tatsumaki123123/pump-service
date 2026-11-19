@@ -221,7 +221,9 @@ class PfdStore {
   async getHour(exchange, date, hour, options = {}) {
     const file = this.hourPath(exchange, date, hour);
 
-    if (!options.force && this.hasHour(exchange, date, hour)) {
+    const useCache = options.cache !== false;
+    const inflightKey = useCache ? file : `${file}:transient`;
+    if (!options.force && useCache && this.hasHour(exchange, date, hour)) {
       try {
         const buf = await this.readHour(exchange, date, hour);
         this.stats.cacheHits += 1;
@@ -236,7 +238,7 @@ class PfdStore {
       }
     }
 
-    const inflight = this._inflight.get(file);
+    const inflight = this._inflight.get(inflightKey);
     if (inflight) {
       return inflight;
     }
@@ -270,21 +272,23 @@ class PfdStore {
         );
       }
 
+      this.stats.downloads += 1;
+      this.stats.bytes += buf.length;
+      if (!useCache) return buf;
+
       await fsp.mkdir(path.dirname(file), { recursive: true });
       const tmp = `${file}.${process.pid}.${Date.now()}.part`;
       await fsp.writeFile(tmp, buf);
       await fsp.rename(tmp, file);
 
-      this.stats.downloads += 1;
-      this.stats.bytes += buf.length;
       return buf;
     })();
 
-    this._inflight.set(file, task);
+    this._inflight.set(inflightKey, task);
     try {
       return await task;
     } finally {
-      this._inflight.delete(file);
+      this._inflight.delete(inflightKey);
     }
   }
   /**
