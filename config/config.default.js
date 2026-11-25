@@ -1,5 +1,8 @@
 /* eslint valid-jsdoc: "off" */
 
+const path = require("node:path");
+const dotenv = require("dotenv");
+
 /**
  * @param {Egg.EggAppInfo} appInfo app info
  */
@@ -48,7 +51,11 @@ module.exports = (appInfo) => {
   //
   // warmDays 是唯一需要调的旋钮：它同时决定「往库里采多久」「库保留多久」
   // （清理按 warmDays+2 天），下面两个上限按它自动推导，不用单独配。
-  const warmDays = Number(process.env.PFD_WARM_DAYS) || 10;
+  const envFile = dotenv.config({
+    path: path.resolve(__dirname, "../.env"),
+    processEnv: {},
+  }).parsed;
+  const warmDays = Number(process.env.PFD_WARM_DAYS ?? envFile?.PFD_WARM_DAYS) || 10;
 
   config.pumpFunData = {
     apiKey: process.env.PFD_API_KEY || "pfd_aabbc0fc2ddc43f1a0a495a1f5cbd8c6",
