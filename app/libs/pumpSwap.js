@@ -52,14 +52,7 @@ const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = getAssociatedTokenAddressSync(
   TOKEN_PROGRAM_ID,
 );
 
-const PUMP_AMM_FEE = new PublicKey(
-  process.env.PUMP_AMM_PROTOCOL_FEE_RECIPIENT ||
-    "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
-);
-const PUMP_AMM_FEE_TOKEN_ACCOUNT = new PublicKey(
-  process.env.PUMP_AMM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT ||
-    "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
-);
+const { getPumpAmmWsolProtocolFeeAccounts } = require("./constants");
 const EVENT_AUTHORITY = new PublicKey(
   "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
 );
@@ -126,13 +119,13 @@ const defaultBuyAccounts = {
     label: "pool_quote_token_account",
   },
   protocol_fee_recipient: {
-    account: PUMP_AMM_FEE,
+    account: null,
     signer: false,
     writable: false,
     label: "protocol_fee_recipient",
   },
   protocol_fee_recipient_token_account: {
-    account: PUMP_AMM_FEE_TOKEN_ACCOUNT,
+    account: null,
     signer: false,
     writable: true,
     label: "protocol_fee_recipient_token_account",
@@ -481,7 +474,19 @@ class PumpSwapSDK {
     sellNewAccount,
     tokenProgramId,
   }) {
-    const accountObj = { ...defaultBuyAccounts };
+    const { recipient, tokenAccount } =
+      getPumpAmmWsolProtocolFeeAccounts(poolDetail.poolData.is_mayhem);
+    const accountObj = {
+      ...defaultBuyAccounts,
+      protocol_fee_recipient: {
+        ...defaultBuyAccounts.protocol_fee_recipient,
+        account: recipient,
+      },
+      protocol_fee_recipient_token_account: {
+        ...defaultBuyAccounts.protocol_fee_recipient_token_account,
+        account: tokenAccount,
+      },
+    };
 
     // Get user's token accounts
     const userBaseTokenAccount = await getAssociatedTokenAddress(

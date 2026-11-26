@@ -21,7 +21,12 @@ const {
   connection,
 } = require("../constants");
 const PUMPSWAP_IDL = require("../IDL/pumpswap-idl.json");
-const { RENT_SYSVAR, GLOBAL_CONFIG, EVENT_AUTHORITY } = require("./constants");
+const {
+  RENT_SYSVAR,
+  GLOBAL_CONFIG,
+  EVENT_AUTHORITY,
+  getPumpAmmWsolProtocolFeeAccounts,
+} = require("./constants");
 const { buyQuoteInputInternal } = require("./pumpfun/sdk/buy");
 
 const {
@@ -40,14 +45,6 @@ const AVE_FEE_TOKEN_ACCOUNT_1 = new PublicKey(
 const AVE_FEE_TOKEN_ACCOUNT_2 = new PublicKey(
   process.env.AVE_FEE_TOKEN_ACCOUNT_2 ||
     "7kRfYgbpichh83KfYGubHrNrzNukesSzgD4xvf6CcB5D",
-);
-const AVE_PROTOCOL_FEE_RECIPIENT = new PublicKey(
-  process.env.AVE_PROTOCOL_FEE_RECIPIENT ||
-    "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
-);
-const AVE_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
-  process.env.AVE_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT ||
-    "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
 );
 const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey(
   "C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw",
@@ -227,14 +224,14 @@ const defaultBuyAccounts = {
   protocol_fee_recipient: {
     label: "protocol_fee_recipient",
     order: 22,
-    account: AVE_PROTOCOL_FEE_RECIPIENT,
+    account: null,
     signer: false,
     writable: true,
   },
   protocol_fee_recipient_token_account: {
     label: "protocol_fee_recipient_token_account",
     order: 23,
-    account: AVE_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT,
+    account: null,
     signer: false,
     writable: true,
   },
@@ -467,7 +464,19 @@ class AvePumpSwapSDK {
     sellNewAccount,
     tokenProgramId = TOKEN_PROGRAM_ID,
   }) {
-    const accountObj = { ...defaultBuyAccounts };
+    const { recipient, tokenAccount } =
+      getPumpAmmWsolProtocolFeeAccounts(poolDetail.poolData.is_mayhem, "AVE");
+    const accountObj = {
+      ...defaultBuyAccounts,
+      protocol_fee_recipient: {
+        ...defaultBuyAccounts.protocol_fee_recipient,
+        account: recipient,
+      },
+      protocol_fee_recipient_token_account: {
+        ...defaultBuyAccounts.protocol_fee_recipient_token_account,
+        account: tokenAccount,
+      },
+    };
 
     const userBaseTokenAccount = await getAssociatedTokenAddress(
       tokenMint,

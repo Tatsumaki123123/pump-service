@@ -68,14 +68,7 @@ const PUMP_AMM_GLOBAL_VOLUME = new PublicKey(
 const PUMP_AMM_FEE_CONFIG = new PublicKey(
   "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx",
 );
-const PUMP_AMM_PROTOCOL_FEE_RECIPIENT = new PublicKey(
-  process.env.PUMP_AMM_PROTOCOL_FEE_RECIPIENT ||
-    "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
-);
-const PUMP_AMM_PROTOCOL_FEE_TOKEN_ACCOUNT = new PublicKey(
-  process.env.PUMP_AMM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT ||
-    "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
-);
+const { getPumpAmmWsolProtocolFeeAccounts } = require("./constants");
 const PUMP_AMM_BUYBACK_RECIPIENT = new PublicKey(
   process.env.PUMP_AMM_BUYBACK_FEE_RECIPIENT ||
     "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD",
@@ -317,6 +310,8 @@ function getPumpAmmAccounts({
     throw new Error("Pump AMM pool detail is required for the OKX route");
   }
   const { poolData } = poolDetail;
+  const { recipient, tokenAccount: protocolFeeAta } =
+    getPumpAmmWsolProtocolFeeAccounts(poolData.is_mayhem);
   const coinCreatorVaultAuthority = getCoinCreatorVaultAuthorityPda(
     poolData.coinCreator,
     PUMP_AMM_PROGRAM_ID,
@@ -344,8 +339,8 @@ function getPumpAmmAccounts({
     account(NATIVE_MINT),
     account(poolData.poolBaseTokenAccount, true),
     account(poolData.poolQuoteTokenAccount, true),
-    account(PUMP_AMM_PROTOCOL_FEE_RECIPIENT),
-    account(PUMP_AMM_PROTOCOL_FEE_TOKEN_ACCOUNT, true),
+    account(recipient),
+    account(protocolFeeAta, true),
     account(tokenProgramId),
     account(TOKEN_PROGRAM_ID),
     account(SystemProgram.programId),

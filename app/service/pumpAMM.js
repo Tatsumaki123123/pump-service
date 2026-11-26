@@ -838,8 +838,16 @@ class PumpAMM extends Service {
                 }
             }
 
+            const buyExactQuoteInIx =
+              pSwap.getBuyExactQuoteInInstruction(txInstructions);
+            const proxyBuyIx = getProxyBuyInstruction(txInstructions);
+            // These builders start at u64::MAX to obtain the actual output from
+            // the simulation error. Never send the probe, including in production.
             let simulationResult = null;
-            if (isDevelopmentEnvironment(ctx) || wallet.isGmgn || isJupiter) {
+            if (
+              buyExactQuoteInIx || proxyBuyIx || isDevelopmentEnvironment(ctx) ||
+              wallet.isGmgn || isJupiter
+            ) {
               simulationResult = await connection.simulateTransaction(tx, {
                 commitment: "confirmed",
               });
@@ -900,9 +908,6 @@ class PumpAMM extends Service {
               const chainBaseAmountOut = getChainBuyBaseAmountOut(
                 simulationResult.value.logs,
               );
-              const buyExactQuoteInIx =
-                pSwap.getBuyExactQuoteInInstruction(txInstructions);
-              const proxyBuyIx = getProxyBuyInstruction(txInstructions);
               const aveBuyIx = buyExactQuoteInIx || proxyBuyIx
                 ? null
                 : avePumpSwap.getBuyInstruction(txInstructions);

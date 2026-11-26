@@ -52,12 +52,7 @@ const PUMP_AMM_FEE_CONFIG = new PublicKey(
 const PUMP_AMM_FEE_PROGRAM = new PublicKey(
   "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
 );
-const NORMAL_PROTOCOL_FEE = new PublicKey(
-  "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
-);
-const MAYHEM_PROTOCOL_FEE = new PublicKey(
-  "GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS",
-);
+const { getPumpAmmWsolProtocolFeeAccounts } = require("./constants");
 const PADRE_BUYBACK_RECIPIENTS = [
   "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD",
   "9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7",
@@ -252,15 +247,8 @@ function createPadrePumpAmmHopKeys({
   const { poolData } = poolDetail;
   const readonly = (pubkey) => ({ pubkey, isSigner: false, isWritable: false });
   const writable = (pubkey) => ({ pubkey, isSigner: false, isWritable: true });
-  const protocolFee = poolData.is_mayhem
-    ? MAYHEM_PROTOCOL_FEE
-    : NORMAL_PROTOCOL_FEE;
-  const protocolFeeAta = getAssociatedTokenAddressSync(
-    NATIVE_MINT,
-    protocolFee,
-    true,
-    TOKEN_PROGRAM_ID,
-  );
+  const { recipient: protocolFee, tokenAccount: protocolFeeAta } =
+    getPumpAmmWsolProtocolFeeAccounts(poolData.is_mayhem);
   const coinCreator = poolData.coinCreator;
   const coinCreatorVault = getCoinCreatorVaultAuthorityPda(
     coinCreator,

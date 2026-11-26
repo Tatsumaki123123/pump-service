@@ -1,14 +1,79 @@
 const { strict: assert } = require("node:assert");
 const bs58 = require("bs58");
 const { PublicKey } = require("@solana/web3.js");
+const { TOKEN_2022_PROGRAM_ID } = require("@solana/spl-token");
+const PumpSwapSDK = require("../../../app/libs/pumpSwap");
+const { getPumpAmmWsolProtocolFeeAccounts } = require("../../../app/libs/constants");
 const {
   createProxyBuyInstruction,
   getProxyBuyInstruction,
   setProxyBuyMinBaseAmountOut,
 } = require("../../../app/libs/pumpProxy");
 
+describe("Pump AMM v1 protocol fees", () => {
+  it("puts the new fee pair in the direct buy instruction without changing its ABI", async () => {
+    const sdk = new PumpSwapSDK();
+    const tokenMint = new PublicKey("GFmaQAffLD1B4BxJuuQHmqxHqWavaSJGrYFCXQAypump");
+    const poolData = {
+      poolBaseTokenAccount: new PublicKey("A2xmjeJWWEjq5c1G3AvsWn6dJmAiCtTtjioRidon6XiF"),
+      poolQuoteTokenAccount: new PublicKey("BFQ5cYwwRqSAE1ooQkaRE1rM2kqeVcC9GhfH8D1VA1ey"),
+      coinCreator: new PublicKey("CPM9ey7xqLug3LFk6L9L8sJXCR7XptJViJXojMjoe4ge"),
+      is_cashback: false,
+    };
+    const user = new PublicKey("EhB7Ny4MD7XyWovLFHnmZMZR9f8jRBrY63RFULfpwXtE");
+    const params = {
+      user,
+      tokenMint,
+      buyAmount: 0.4,
+      tokenProgramId: TOKEN_2022_PROGRAM_ID,
+      poolDetail: {
+        address: new PublicKey("FocsQEiR3miFMAsqgYxouCHZkyoMzc63B9yHEgo4L6xF"),
+        poolData,
+      },
+    };
+    const ix = await sdk.createBuyExactQuoteInInstruction(params);
+    assert.equal(sdk.getBuyExactQuoteInInstruction([ix]), ix);
+    assert.equal(ix.data.subarray(0, 8).toString("hex"), "c62e1552b4d9e870");
+    assert.equal(ix.data.readBigUInt64LE(8), 400000000n);
+    assert.equal(ix.data.readBigUInt64LE(16), (1n << 64n) - 1n);
+    assert.equal(ix.keys.length, 26);
+    assert.equal(ix.keys[9].pubkey.toBase58(), "2aSWZ3QXsNLVVBr1UB1HxSw7sqMRR2pv2qa5ohsTi5Gp");
+    assert.equal(ix.keys[10].pubkey.toBase58(), "CsDLPvWtEm5hZHVzPwxsZaurz19Lu4aGWo6twx65tZ1r");
+    assert.equal(ix.keys[10].isWritable, true);
+    assert(ix.keys[11].pubkey.equals(TOKEN_2022_PROGRAM_ID));
+
+    poolData.is_mayhem = true;
+    const mayhemIx = await sdk.createBuyExactQuoteInInstruction(params);
+    assert.equal(mayhemIx.keys[9].pubkey.toBase58(), "GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS");
+    assert.equal(ix.keys[9].pubkey.toBase58(), "2aSWZ3QXsNLVVBr1UB1HxSw7sqMRR2pv2qa5ohsTi5Gp");
+  });
+
+  it("derives the ATA from the override and rejects stale fee configurations", () => {
+    const prefix = "TEST_PUMP_AMM";
+    const recipientKey = `${prefix}_PROTOCOL_FEE_RECIPIENT`;
+    const ataKey = `${recipientKey}_TOKEN_ACCOUNT`;
+    try {
+      process.env[recipientKey] = "DrcDxWxLi3i7Yd7cTyCyd44DE7pwS9BvFxSsPx1c7XTv";
+      const { recipient, tokenAccount } = getPumpAmmWsolProtocolFeeAccounts(false, prefix);
+      assert.equal(recipient.toBase58(), process.env[recipientKey]);
+      assert.equal(tokenAccount.toBase58(), "FLZwYtTwLegv9LhG5bwn5NBS93RiAoQVnwBKqoxv2zhM");
+      process.env[ataKey] = tokenAccount.toBase58();
+      assert(getPumpAmmWsolProtocolFeeAccounts(false, prefix).tokenAccount.equals(tokenAccount));
+      process.env[ataKey] = "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb";
+      assert.throws(() => getPumpAmmWsolProtocolFeeAccounts(false, prefix), /must match the WSOL ATA/);
+      process.env[recipientKey] = "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV";
+      assert.throws(() => getPumpAmmWsolProtocolFeeAccounts(false, prefix), /is retired/);
+      assert.equal(getPumpAmmWsolProtocolFeeAccounts(true, prefix).recipient.toBase58(),
+        "GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS");
+    } finally {
+      delete process.env[recipientKey];
+      delete process.env[ataKey];
+    }
+  });
+});
+
 describe("Pump AMM proxy buy", () => {
-  it("matches the supplied transaction's data and account order", async () => {
+  it("preserves the proxy ABI using the rotated protocol fee accounts", async () => {
     const addresses = [
       "7EL3TNBKnRDFsGe1zGZt2BpjXeJGDyAM5mSSfLsKKVcx",
       "7LmPhLf1pRK6nWDzc9fDk1NBJ29wHZ1LFq15AQi6rnV9",
@@ -19,8 +84,8 @@ describe("Pump AMM proxy buy", () => {
       "HZzyJ5KK13ExugfuzH6vc7GqUjHtdESQ9GA5v9NuyxPW",
       "69GjHB824LqnkqgcV66Z67hLe33R774ixNktfU87L7MW",
       "EXgtbgK8ppibrqnxQ52cSSzgftWfzkFbunQa7JuAP7p6",
-      "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
-      "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
+      "2aSWZ3QXsNLVVBr1UB1HxSw7sqMRR2pv2qa5ohsTi5Gp",
+      "CsDLPvWtEm5hZHVzPwxsZaurz19Lu4aGWo6twx65tZ1r",
       "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
       "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
       "11111111111111111111111111111111",

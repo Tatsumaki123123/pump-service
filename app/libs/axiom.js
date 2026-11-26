@@ -95,14 +95,7 @@ const BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
   process.env.AXIOM_BUYBACK_FEE_RECIPIENT_TOKEN_ACCOUNT ||
     "GAFuhgcd328SkkBYHpfadzmef9hTGAFRCi9QoCnsZQug",
 );
-const PROTOCOL_FEE_RECIPIENT = new PublicKey(
-  process.env.AXIOM_PROTOCOL_FEE_RECIPIENT ||
-    "7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ",
-);
-const PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT = new PublicKey(
-  process.env.AXIOM_PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT ||
-    "7GFUN3bWzJMKMRZ34JLsvcqdssDbXnp589SiE33KVwcC",
-);
+const { getPumpAmmWsolProtocolFeeAccounts } = require("./constants");
 const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey(
   "C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw",
 );
@@ -190,6 +183,8 @@ async function createAxiomBuyInstructions({
   tokenProgramId,
   feeLamports,
 }) {
+  const { recipient: protocolFeeRecipient, tokenAccount: protocolFeeAta } =
+    getPumpAmmWsolProtocolFeeAccounts(poolDetail.poolData.is_mayhem, "AXIOM");
   const [tempWsol, tempWsolBump] = PublicKey.findProgramAddressSync(
     [Buffer.from("wrapped_sol_account"), user.toBuffer()],
     AXIOM_PROGRAM_ID,
@@ -310,9 +305,9 @@ async function createAxiomBuyInstructions({
       { pubkey: tempWsol, isSigner: false, isWritable: true },
       { pubkey: poolBaseTokenAccount, isSigner: false, isWritable: true },
       { pubkey: poolQuoteTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: PROTOCOL_FEE_RECIPIENT, isSigner: false, isWritable: false },
+      { pubkey: protocolFeeRecipient, isSigner: false, isWritable: false },
       {
-        pubkey: PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT,
+        pubkey: protocolFeeAta,
         isSigner: false,
         isWritable: true,
       },
